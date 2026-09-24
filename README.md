@@ -1,23 +1,23 @@
-# device-proxy
+# 我的反向代理 (mrp)
 
-基于 Go 的单二进制反向代理服务。监听 HTTP/HTTPS 端口，依据 YAML 路由配置，按请求的域名（SNI / Host）与路径前缀匹配自定义规则，将请求转发到不同的服务器。适用于把移动 App 固定访问的域名劫持转发到自有服务器进行联调。
+基于 Go 的单文件反向代理服务。监听 HTTP/HTTPS 端口，依据 YAML 路由配置，按请求的域名（SNI / Host）与路径前缀匹配自定义规则，将请求转发到不同的服务器。适用于把移动 App 固定访问的域名劫持转发到自有服务器进行联调。
 
-需求与设计文档见 `.monkeycode/specs/device-reverse-proxy/`。
+需求与设计文档见 `.monkeycode/specs/mrp/`。
 
 ## 快速开始
 
 ```bash
 # 本机构建
-go build -trimpath -ldflags "-s -w" -o proxyd ./cmd/proxyd
+go build -trimpath -ldflags "-s -w" -o mrp .
 
 # 交叉编译（示例：Android arm64）
-GOOS=android GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o proxyd-android-arm64 ./cmd/proxyd
+GOOS=android GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o mrp-android-arm64 .
 
 # 启动服务
-./proxyd --config routing.yaml --http :80 --https :443 --tls-cert certs/server.crt --tls-key certs/server.key
+./mrp --config routing.yaml --http :80 --https :443 --tls-cert certs/server.crt --tls-key certs/server.key
 ```
 
-支持平台：android/arm64、ios/arm64、linux/arm64、windows/amd64。
+支持平台：android/arm64、ios/arm64、linux/arm64、windows/amd64。项目结构：全部实现逻辑位于根目录 `main.go`，测试位于 `main_test.go`。
 
 ## 证书创建
 

@@ -1,15 +1,15 @@
 # Requirements Document
 
-Feature Name: device-reverse-proxy
+Feature Name: mrp
 Updated: 2026-09-24
 
 ## Introduction
 
-基于 Go 实现的单二进制反向代理服务。直接运行后监听 HTTP/HTTPS 端口，依据 YAML 路由配置文件，按请求的域名（SNI / Host）与路径前缀匹配自定义规则，将请求转发到不同的服务器。配置文件只承载路由规则，监听地址与 TLS 证书路径通过命令行参数指定。TLS 证书由使用者预先创建，程序仅加载使用，证书的创建与导入设备的步骤在 README.md 中以命令行方式给出。
+我的反向代理（My Reverse Proxy，缩写 mrp）：基于 Go 实现的单文件反向代理服务。直接运行后监听 HTTP/HTTPS 端口，依据 YAML 路由配置文件，按请求的域名（SNI / Host）与路径前缀匹配自定义规则，将请求转发到不同的服务器。配置文件只承载路由规则，监听地址与 TLS 证书路径通过命令行参数指定。TLS 证书由使用者预先创建，程序仅加载使用，证书的创建与导入设备的步骤在 README.md 中以命令行方式给出。
 
 ## Glossary
 
-- **代理服务**: 本需求要开发的 Go 单二进制程序
+- **代理服务 / mrp**: 本需求要开发的 Go 单文件程序，构建产物为静态单二进制 `mrp`
 - **目标域名**: 需要被劫持转发的域名
 - **上游 (Upstream)**: 路由配置中 proxy_pass 指定的目标服务器
 - **TLS 证书文件**: 使用者通过 openssl 预先生成的证书与私钥文件（含 CA 证书与覆盖目标域名的服务端证书）
@@ -22,8 +22,8 @@ Updated: 2026-09-24
 
 #### Acceptance Criteria
 
-1. THE 代理服务 SHALL 以纯 Go 静态链接单二进制发布，提供 android/arm64、ios/arm64、linux/arm64、windows/amd64 构建产物
-2. THE 代理服务 SHALL 从 YAML 配置文件加载路由规则，按域名划分 server，路由按路径前缀匹配并指定上游；监听地址与 TLS 证书路径通过命令行参数指定
+1. THE 代理服务 SHALL 以仓库根目录的单个 Go 源文件（main.go）实现全部逻辑，构建产物为静态链接单二进制 `mrp`，提供 android/arm64、ios/arm64、linux/arm64、windows/amd64 构建脚本
+2. THE 代理服务 SHALL 从 YAML 配置文件（routing.yaml）加载路由规则，按域名划分 server，路由按路径前缀匹配并指定上游；监听地址与 TLS 证书路径通过命令行参数指定
 3. WHEN 收到 SIGHUP，THE 代理服务 SHALL 在已有连接不中断的情况下重新加载路由配置
 4. IF 配置文件存在语法错误，THE 代理服务 SHALL 继续使用当前生效配置，并在日志输出错误行号与原因
 
