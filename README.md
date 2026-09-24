@@ -17,7 +17,7 @@ GOOS=android GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o mrp-android-arm
 ./mrp --config routing.yaml --http :80 --https :443 --tls-cert certs/server.crt --tls-key certs/server.key
 ```
 
-支持平台：android/arm64、ios/arm64、linux/arm64、windows/amd64。项目结构：全部实现逻辑位于根目录 `main.go`，测试位于 `main_test.go`。
+支持平台：android/arm64、ios/arm64、linux/arm64、windows/amd64。项目结构：源码按职责拆分为根目录 `main.go` / `config.go` / `route.go` / `proxy.go` / `server.go`，测试位于 `main_test.go`，命名规范见 `AGENTS.md`。
 
 ## 证书创建
 

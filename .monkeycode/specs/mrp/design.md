@@ -5,7 +5,7 @@ Updated: 2026-09-24
 
 ## Description
 
-我的反向代理（My Reverse Proxy，缩写 mrp）：Go 实现的反向代理服务，全部逻辑收敛在仓库根目录单个 main.go 中。单二进制 + YAML 路由配置（仅承载路由规则），监听 HTTP/HTTPS 端口，按域名（SNI / Host）与路径前缀路由转发到不同上游。TLS 证书由使用者预先创建并经命令行参数指定路径，程序启动时加载。同一监听端口兼容 HTTP 代理协议（CONNECT），可直接作为显式代理使用。证书创建与设备导入步骤见仓库根目录 README.md。
+我的反向代理（My Reverse Proxy，缩写 mrp）：Go 实现的反向代理服务，源码按职责拆分为多个文件，构建产物为单一静态二进制。YAML 路由配置（仅承载路由规则），监听 HTTP/HTTPS 端口，按域名（SNI / Host）与路径前缀路由转发到不同上游。TLS 证书由使用者预先创建并经命令行参数指定路径，程序启动时加载。同一监听端口兼容 HTTP 代理协议（CONNECT），可直接作为显式代理使用。证书创建与设备导入步骤见仓库根目录 README.md。
 
 ## Architecture
 
@@ -18,7 +18,7 @@ graph TD
     C --> F["CONNECT 代理协议"]
     E --> G["加载用户证书 TLS 终结"]
     F --> G
-    D --> H["路由器 server 匹配 + location 最长前缀"]
+    D --> H["route_table 域名匹配 + 最长前缀"]
     G --> H
     H --> I["httputil.ReverseProxy"]
     I --> J["上游服务器"]
@@ -30,33 +30,36 @@ graph TD
 流量路径说明：
 
 1. 客户端流量经设备侧 hosts / DNS 指向或显式代理设置到达监听端口（引导方式由使用者负责）
-2. 依据 Host 头或 SNI 识别域名，匹配 server 块；块内按最长路径前缀匹配 location
+2. 依据 Host 头或 SNI 识别域名，匹配 server 块；块内按最长路径前缀匹配路由
 3. ReverseProxy 完成转发与 Host/路径改写；无匹配域名直接透传原始目标
-4. HTTPS 连接使用配置指定的证书完成 TLS 终结，再进入同一路由流程
+4. HTTPS 连接使用命令行参数指定的证书完成 TLS 终结，再进入同一路由流程
 
-## Components and Interfaces
+## File Layout
 
-仓库根目录单文件结构：
+仓库根目录按职责拆分（保持精简，单 package main）：
 
 ```
 mrp/
-├── go.mod           # module mrp，依赖 gopkg.in/yaml.v3
-├── main.go          # 全部实现逻辑
-├── main_test.go     # 单元与集成测试
-└── routing.yaml     # 示例路由配置
+├── go.mod            # module mrp，依赖 gopkg.in/yaml.v3
+├── main.go           # 入口：flags、信号循环、run、fatal
+├── config.go         # YAML 配置结构与 load_config 解析
+├── route.go          # route_entry / route_table 与 pick
+├── proxy.go          # proxy 结构：路由、转发、CONNECT、tunnel
+├── server.go         # TLS 监听、SNI 注入、one_conn_listener、辅助函数、log_writer
+├── main_test.go      # 单元与集成测试
+├── routing.yaml      # 示例路由配置
+├── README.md         # 证书创建与设备导入指引
+└── AGENTS.md         # 代码规范
 ```
 
-main.go 内部按职责分段组织（同文件内顺序）：
+职责边界：
 
-1. flags 与入口：命令行参数解析、SIGHUP 处理
-2. 配置结构体与 YAML 解析
-3. 路由器：域名/路径匹配
-4. TLS：证书加载与 SNI 识别
-5. 监听处理：HTTP / HTTPS / CONNECT
-6. 转发：httputil.ReverseProxy 封装
-7. 日志：slog 请求日志
+- `config.go` 仅负责把 YAML 解析为 `route_table`，不依赖 proxy / 传输
+- `route.go` 仅负责路由匹配数据结构，纯函数无副作用
+- `proxy.go` 持有运行期依赖（传输、TLS、路由表原子指针），编排请求处理
+- `server.go` 处理连接级服务（TLS 握手、SNI 注入、单连接 listener）与无状态工具函数
 
-### CLI 接口
+## CLI
 
 ```
 mrp --config routing.yaml \
@@ -65,11 +68,11 @@ mrp --config routing.yaml \
   --log-level info
 ```
 
-- `--http` / `--https`：监听地址，默认 `:80` / `:443`；`--https` 为空则仅启动 HTTP 监听
+- `--http` / `--https`：监听地址，默认 `:80` / `:443`；传空禁用
 - `--tls-cert` / `--tls-key`：证书与私钥路径，启用 HTTPS 时必填
 - SIGHUP 仅热加载路由配置，证书在启动时加载
 
-### 配置解析
+## Configuration
 
 gopkg.in/yaml.v3 解析，配置文件只承载路由规则：
 
@@ -90,63 +93,162 @@ servers:
 ```
 
 ```go
-type Config struct {
-    Servers []Server `yaml:"servers"`
+type config struct {
+    Servers []server_config `yaml:"servers"`
 }
-type Server struct {
-    Domain string  `yaml:"domain"`
-    Routes []Route `yaml:"routes"`
+type server_config struct {
+    Domain string         `yaml:"domain"`
+    Routes []route_config `yaml:"routes"`
 }
-type Route struct {
-    Prefix    string  `yaml:"prefix"`
-    Upstream  string  `yaml:"upstream"`
-    Host      string  `yaml:"host"`       // 可选，改写转发 Host 头
-    TLSVerify *bool   `yaml:"tls_verify"` // 可选，默认 true
+type route_config struct {
+    Prefix    string `yaml:"prefix"`
+    Upstream  string `yaml:"upstream"`
+    Host      string `yaml:"host"`
+    TLSVerify *bool  `yaml:"tls_verify"`
 }
 ```
 
-### 路由器
+注：YAML 反射要求结构体字段导出（PascalCase），其余类型与字段一律采用单词式命名，详见 AGENTS.md。
 
-- `pick(domain, path) (*Route, bool)`：server 块域名精确匹配，路由最长前缀匹配
-- SNI 识别：crypto/tls `GetConfigForClient` 读取 ClientHelloInfo.ServerName
-- HTTP 识别：请求 Host 头 / CONNECT 目标
-- 加载期构建 `map[domain][]Route`，热加载整体原子替换（atomic.Pointer）
+## UML Class Diagram
 
-### 监听与转发
+```mermaid
+classDiagram
+    class config {
+        +Servers []server_config
+    }
+    class server_config {
+        +Domain string
+        +Routes []route_config
+    }
+    class route_config {
+        +Prefix string
+        +Upstream string
+        +Host string
+        +TLSVerify *bool
+    }
+    class route_entry {
+        -prefix string
+        -target *url.URL
+        -host string
+        -skip_verify bool
+        -reverse_proxy *ReverseProxy
+    }
+    class route_table {
+        -by_domain map[string][]*route_entry
+        +pick(domain, path) (*route_entry, bool)
+    }
+    class proxy {
+        -config_path string
+        -table atomic.Pointer[route_table]
+        -transport_verify *http.Transport
+        -transport_insecure *http.Transport
+        -tls_config *tls.Config
+        -passthrough *ReverseProxy
+        +ServeHTTP(w, r)
+        -reload() error
+        -build_route_proxy(entry, transport) *ReverseProxy
+        -on_error(w, r, err)
+        -handle_connect(w, r)
+        -tunnel(client, target)
+    }
+    class log_writer {
+        -ResponseWriter http.ResponseWriter
+        -status int
+        +WriteHeader(code)
+        +Unwrap() http.ResponseWriter
+    }
+    class one_conn_listener {
+        -conn net.Conn
+        +Accept() (net.Conn, error)
+        +Close() error
+        +Addr() net.Addr
+    }
 
-- HTTP 监听：读取 Host 头进路由器
-- HTTPS 监听：tls.Server + GetConfigForClient 完成 SNI 识别，证书来自配置加载的 tls.Certificate
-- CONNECT：回 200 后接管裸流，按目标地址透传或经 SNI 路由（复用 HTTPS 流程）
-- 转发统一走 httputil.ReverseProxy，Rewrite 函数处理 Host 改写与路径前缀映射，ErrorHandler 返回 502
-- 日志：slog 结构化输出 stdout：domain、path、matched rule、upstream、status、latency，级别经 --log-level 控制
+    config ..> server_config
+    server_config ..> route_config
+    route_config ..> route_entry : 编译
+    route_table o-- route_entry
+    proxy --> route_table : 持有原子指针
+    proxy ..> log_writer : 包裹响应
+    proxy ..> one_conn_listener : MITM 单连接服务
+    route_entry ..> ReverseProxy : 内嵌
+```
 
-## Data Models
+## Sequence Diagrams
 
-- 路由表：`map[domain][]Route`，热加载原子替换
-- TLS：启动时从命令行参数路径加载 `tls.Certificate`
+### HTTP 请求路由转发
+
+```mermaid
+sequenceDiagram
+    participant Client as 客户端
+    participant Server as proxy.ServeHTTP
+    participant Table as route_table
+    participant Reverse as ReverseProxy
+    participant Upstream as 上游
+
+    Client->>Server: GET /v1/users Host: api.example.com
+    Server->>Table: pick(domain, /v1/users)
+    Table-->>Server: route_entry(prefix=/v1/)
+    Server->>Reverse: ServeHTTP
+    Reverse->>Reverse: SetURL + 路径前缀映射
+    Reverse->>Upstream: GET /v1/users
+    Upstream-->>Reverse: 200 OK
+    Reverse-->>Server: 响应
+    Server-->>Client: 200 OK
+    Server->>Server: slog 记录 domain/path/status/elapsed
+```
+
+### HTTPS 经 CONNECT 的 MITM 流程
+
+```mermaid
+sequenceDiagram
+    participant Client as 客户端
+    participant Proxy as proxy.handle_connect
+    participant TLS as serve_tls_with_sni
+    participant Table as route_table
+    participant Reverse as ReverseProxy
+    participant Upstream as 上游
+
+    Client->>Proxy: CONNECT api.example.com:443
+    Proxy->>Table: pick(api.example.com, /)
+    Table-->>Proxy: 命中
+    Proxy-->>Client: 200 Connection Established
+    Client->>TLS: TLS ClientHello(SNI=api.example.com)
+    TLS->>TLS: GetConfigForClient 捕获 SNI
+    TLS-->>Client: 服务端证书握手完成
+    Client->>TLS: GET /v1/data
+    TLS->>Proxy: 请求(注入 sni 上下文)
+    Proxy->>Table: pick(sni, /v1/data)
+    Table-->>Proxy: route_entry
+    Proxy->>Reverse: ServeHTTP
+    Reverse->>Upstream: GET /v1/data
+    Upstream-->>Reverse: 200 OK
+    Reverse-->>Client: 200 OK
+```
 
 ## Correctness Properties
 
-1. 路由匹配遵循最长前缀；等长前缀冲突时启动期报错
+1. 路由匹配遵循最长前缀；同域等长前缀冲突时加载期报错
 2. 加载的服务端证书 SAN 覆盖全部被服务域名（由使用者生成证书时保证，README 提供命令）
-3. 热加载失败时旧配置继续生效；成功时路由表原子替换，存量连接不受影响
+3. 热加载失败时旧路由表继续生效；成功时 `atomic.Pointer` 原子替换，存量连接不受影响
 4. 无匹配域名透传语义与无代理直连等价
 
 ## Error Handling
 
 | 场景 | 处理 |
 |------|------|
-| 上游连接失败/超时 | 客户端收到 502，日志记录上游地址与错误 |
-| 监听端口被占用 | 启动失败并列出冲突端口 |
-| YAML 语法错误 | 保留旧配置，日志输出错误行号与原因 |
+| 上游连接失败/超时 | on_error 返回 502，日志记录上游地址与错误 |
+| 监听端口被占用 | fatal 退出并列出冲突端口 |
+| YAML 语法错误 | reload 返回错误，保留旧路由表，日志输出原因 |
 | 证书文件缺失或解析失败 | 启动失败，输出证书路径与原因 |
 | 客户端未信任导入的 CA | 客户端证书报错；按 README 步骤导入 CA |
 
 ## Test Strategy
 
-1. 单元测试（main_test.go）：YAML 解析（合法/非法/冲突前缀样例）、最长前缀匹配、证书加载
-2. 集成测试：httptest 模拟上游 + 测试内临时生成的证书 + 随机端口，覆盖 HTTP / HTTPS / CONNECT / 无匹配透传 / 502 / SIGHUP 热加载
-3. 构建验证：构建脚本产出 mrp-android-arm64、mrp-ios-arm64、mrp-linux-arm64、mrp-windows-amd64.exe 四种纯静态二进制并在 CI 校验
+1. 单元测试（main_test.go）：`load_config` 合法/非法/冲突前缀样例、`pick` 最长前缀匹配
+2. 集成测试：httptest 模拟上游 + 测试内临时生成证书 + 随机端口，覆盖 HTTP 路由 / Host 改写 / 透传 / HTTPS 经 CONNECT 的 MITM / 502 / reload 热加载切换路由
+3. 构建验证：交叉编译产出 android/arm64、ios/arm64、linux/arm64、windows/amd64 纯静态二进制
 
 ## References
 

@@ -22,7 +22,7 @@ Updated: 2026-09-24
 
 #### Acceptance Criteria
 
-1. THE 代理服务 SHALL 以仓库根目录的单个 Go 源文件（main.go）实现全部逻辑，构建产物为静态链接单二进制 `mrp`，提供 android/arm64、ios/arm64、linux/arm64、windows/amd64 构建脚本
+1. THE 代理服务 SHALL 以仓库根目录多文件 Go 源码实现全部逻辑（main.go / config.go / route.go / proxy.go / server.go，同属 package main），构建产物为静态链接单二进制 `mrp`，提供 android/arm64、ios/arm64、linux/arm64、windows/amd64 构建脚本
 2. THE 代理服务 SHALL 从 YAML 配置文件（routing.yaml）加载路由规则，按域名划分 server，路由按路径前缀匹配并指定上游；监听地址与 TLS 证书路径通过命令行参数指定
 3. WHEN 收到 SIGHUP，THE 代理服务 SHALL 在已有连接不中断的情况下重新加载路由配置
 4. IF 配置文件存在语法错误，THE 代理服务 SHALL 继续使用当前生效配置，并在日志输出错误行号与原因
