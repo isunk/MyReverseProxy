@@ -4,12 +4,12 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 ## 命名风格
 
-- 不使用小驼峰。变量、字段、函数、方法、类型名一律采用**单词式**命名，多词用下划线连接（snake_case）。
-  - 正例：`transport_verify`、`route_table`、`http_listen`、`new_proxy`、`handle_connect`、`by_domain`
-  - 反例：`trVerify`、`routeTable`、`httpListen`、`newProxy`、`handleConnect`、`byDomain`
-- 单词尽量完整，避免缩写：`transport` 不写 `tr`、`entry` 不写 `r`、`server` 不写 `s`。循环局部变量允许使用 `i`、`k`、`v` 等约定单字母。
-- 类型名同样单词式小写（如 `proxy`、`route_table`、`route_entry`、`log_writer`、`one_conn_listener`、`context_key`），项目内无跨包导出需求。
-- **唯一例外**：需要被 `gopkg.in/yaml.v3` 反射注入的结构体字段必须导出，采用 PascalCase，如 `Domain`、`Routes`、`Prefix`、`Upstream`、`Host`、`TLSVerify`。
+- 遵循 Go 惯例 camelCase：类型名大驼峰，变量、字段、函数、方法小驼峰。不用下划线分隔。
+  - 正例：`transportVerify`、`routeTable`、`httpListen`、`newProxy`、`handleConnect`、`byDomain`、`oneConnListener`、`logWriter`
+  - 反例：`trVerify`（缩写）、`transport_verify`（下划线）、`route_table`（下划线）
+- 单词尽量完整，避免缩写：`transport` 不写 `tr`、`entry` 不写 `r`、`server` 不写 `s`。循环局部变量允许使用 `i`、`k`、`v` 等约定单字母，紧邻上下文允许 `r`（request）、`w`（writer）、`c`（conn）。
+- 类型名大驼峰导出或小驼峰非导出（如 `route`、`routeTable`、`routeEntry`、`logWriter`、`oneConnListener`、`ctxKey`）。
+- **YAML 反射字段**：`gopkg.in/yaml.v3` 要求结构体字段导出，采用大驼峰，如 `Domain`、`Routes`、`Prefix`、`Upstream`、`Host`、`TLSVerify`。
 - **标准库接口方法**保持其原始拼写，如 `ServeHTTP`、`Accept`、`Close`、`Addr`、`WriteHeader`、`Unwrap`，因为须满足 `http.Handler` / `net.Listener` / `http.ResponseWriter` 等接口。
 
 ## 文件组织
@@ -19,10 +19,10 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 | 文件 | 职责 | 不应包含 |
 |------|------|----------|
 | `main.go` | flags 解析、信号循环、`run`、`fatal` | 路由/转发逻辑 |
-| `config.go` | YAML 配置结构、`load_config` | 任何运行期依赖 |
-| `route.go` | `route_entry`、`route_table`、`pick` | I/O、日志 |
-| `proxy.go` | `proxy` 结构、`ServeHTTP`、`handle_connect`、`tunnel`、`reload`、转发构建 | 连接级 TLS 服务细节 |
-| `server.go` | TLS 监听、SNI 注入、`one_conn_listener`、纯工具函数、`log_writer` | 路由决策逻辑 |
+| `config.go` | YAML 配置结构、`loadTable` | 任何运行期依赖 |
+| `route.go` | `route`、`routeTable`、`pick` | I/O、日志 |
+| `proxy.go` | `proxy` 结构、`ServeHTTP`、`handleConnect`、`tunnel`、`reload`、转发构建 | 连接级 TLS 服务细节 |
+| `server.go` | TLS 监听、SNI 注入、`oneConnListener`、纯工具函数、`logWriter` | 路由决策逻辑 |
 | `main_test.go` | 单元与集成测试 | — |
 
 新增文件时保持单一职责，文件名单词式小写。
@@ -39,7 +39,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 ## 并发与热加载
 
-- 路由表通过 `atomic.Pointer[route_table]` 持有，`reload` 整体替换，禁止对存量 `route_table` 做原地修改。
+- 路由表通过 `atomic.Pointer[routeTable]` 持有，`reload` 整体替换，禁止对存量 `routeTable` 做原地修改。
 - `reload` 失败时保留旧路由表，仅记录错误，不影响存量连接。
 - TLS 配置在启动时加载一次，`SIGHUP` 只热加载路由配置，不重载证书。
 
@@ -47,8 +47,8 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 - 新增/修改路由或配置逻辑须配套测试用例。
 - 集成测试使用 `httptest` 模拟上游与随机端口，禁止依赖外部网络。
-- 测试内证书通过 `self_signed_cert` 辅助函数现场生成，禁止硬编码证书文件。
-- 测试辅助函数命名同样单词式：`write_config_file`、`recording_server`、`start_proxy`、`proxy_client`、`request_body`。
+- 测试内证书通过 `selfSignedCert` 辅助函数现场生成，禁止硬编码证书文件。
+- 测试辅助函数命名同样单词式：`writeConfigFile`、`recordingServer`、`startProxy`、`proxyClient`、`requestBody`。
 
 ## 构建与验证
 
@@ -61,4 +61,4 @@ go build -o mrp .
 go test ./...
 ```
 
-交叉编译目标：`android/arm64`、`ios/arm64`、`linux/arm64`、`windows/amd64`，均 `CGO_ENABLED=0` 纯静态。
+交叉编译纯静态目标：`android/arm64`、`linux/arm64`、`windows/amd64`，均 `CGO_ENABLED=0`；`ios/arm64` 需 Apple SDK 与 cgo 链接（以 `-buildmode=c-archive` 嵌入应用），不支持纯静态二进制。

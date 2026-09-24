@@ -8,71 +8,71 @@ import (
 	"strings"
 )
 
-type context_key int
+type ctxKey int
 
-const sni_key context_key = 1
+const sniKey ctxKey = 1
 
-type one_conn_listener struct {
+type oneConnListener struct {
 	conn net.Conn
 }
 
-func new_one_conn_listener(conn net.Conn) *one_conn_listener {
-	return &one_conn_listener{conn: conn}
+func newOneConnListener(conn net.Conn) *oneConnListener {
+	return &oneConnListener{conn: conn}
 }
 
-func (l *one_conn_listener) Accept() (net.Conn, error) { return l.conn, nil }
+func (l *oneConnListener) Accept() (net.Conn, error) { return l.conn, nil }
 
-func (l *one_conn_listener) Close() error { return l.conn.Close() }
+func (l *oneConnListener) Close() error { return l.conn.Close() }
 
-func (l *one_conn_listener) Addr() net.Addr { return l.conn.LocalAddr() }
+func (l *oneConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
 
-func serve_https(listener net.Listener, tls_config *tls.Config, handler http.Handler) error {
+func serveHTTPS(listener net.Listener, tlsConfig *tls.Config, handler http.Handler) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			return err
 		}
-		go serve_tls_with_sni(conn, tls_config, handler)
+		go serveTLSConn(conn, tlsConfig, handler)
 	}
 }
 
-func serve_tls_with_sni(raw net.Conn, tls_config *tls.Config, handler http.Handler) {
+func serveTLSConn(raw net.Conn, tlsConfig *tls.Config, handler http.Handler) {
 	defer raw.Close()
 	var sni string
-	cfg := tls_config.Clone()
+	cfg := tlsConfig.Clone()
 	cfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		sni = hello.ServerName
 		return nil, nil
 	}
-	tls_conn := tls.Server(raw, cfg)
+	tlsConn := tls.Server(raw, cfg)
 	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if sni != "" {
-			request = request.WithContext(with_sni(request, sni))
+			request = request.WithContext(withSNI(request, sni))
 		}
 		handler.ServeHTTP(writer, request)
 	})}
-	_ = server.Serve(new_one_conn_listener(tls_conn))
+	_ = server.Serve(newOneConnListener(tlsConn))
 }
 
-func with_sni(request *http.Request, sni string) context.Context {
-	return context.WithValue(request.Context(), sni_key, sni)
+func withSNI(request *http.Request, sni string) context.Context {
+	return context.WithValue(request.Context(), sniKey, sni)
 }
 
-func domain_of(request *http.Request) string {
-	if value, ok := request.Context().Value(sni_key).(string); ok && value != "" {
+func domainOf(request *http.Request) string {
+	if value, ok := request.Context().Value(sniKey).(string); ok && value != "" {
 		return value
 	}
-	return host_only(request.Host)
+	return hostOnly(request.Host)
 }
 
-func host_only(host string) string {
+func hostOnly(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		return h
 	}
 	return host
 }
 
-func join_path(base, rest string) string {
+func joinPath(base, rest string) string {
 	if rest == "" {
 		rest = "/"
 	}
@@ -85,16 +85,16 @@ func join_path(base, rest string) string {
 	return strings.TrimSuffix(base, "/") + rest
 }
 
-type log_writer struct {
+type logWriter struct {
 	http.ResponseWriter
 	status int
 }
 
-func (l *log_writer) WriteHeader(code int) {
+func (l *logWriter) WriteHeader(code int) {
 	l.status = code
 	l.ResponseWriter.WriteHeader(code)
 }
 
-func (l *log_writer) Unwrap() http.ResponseWriter {
+func (l *logWriter) Unwrap() http.ResponseWriter {
 	return l.ResponseWriter
 }

@@ -25,7 +25,7 @@ func init() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
-func write_config_file(t *testing.T, name, content string) string {
+func writeConfigFile(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -34,7 +34,7 @@ func write_config_file(t *testing.T, name, content string) string {
 	return path
 }
 
-func self_signed_cert(t *testing.T, domains []string) tls.Certificate {
+func selfSignedCert(t *testing.T, domains []string) tls.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -57,7 +57,7 @@ func self_signed_cert(t *testing.T, domains []string) tls.Certificate {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
-func recording_server(t *testing.T, tag string) *httptest.Server {
+func recordingServer(t *testing.T, tag string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		io.WriteString(writer, tag+":"+request.URL.Path+"|host="+request.Host)
@@ -66,17 +66,17 @@ func recording_server(t *testing.T, tag string) *httptest.Server {
 	return srv
 }
 
-func start_proxy(t *testing.T, config_path string, tls_config *tls.Config) (string, *proxy) {
+func startProxy(t *testing.T, configPath string, tlsConfig *tls.Config) (string, *proxy) {
 	t.Helper()
-	transport_verify := http.DefaultTransport.(*http.Transport).Clone()
-	transport_verify.Proxy = nil
-	transport_verify.DialContext = (&net.Dialer{Timeout: 2 * time.Second}).DialContext
-	transport_verify.ResponseHeaderTimeout = 2 * time.Second
-	transport_insecure := transport_verify.Clone()
-	transport_insecure.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	p, err := new_proxy(config_path, transport_verify, transport_insecure, tls_config)
+	transportVerify := http.DefaultTransport.(*http.Transport).Clone()
+	transportVerify.Proxy = nil
+	transportVerify.DialContext = (&net.Dialer{Timeout: 2 * time.Second}).DialContext
+	transportVerify.ResponseHeaderTimeout = 2 * time.Second
+	transportInsecure := transportVerify.Clone()
+	transportInsecure.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	p, err := newProxy(configPath, transportVerify, transportInsecure, tlsConfig)
 	if err != nil {
-		t.Fatalf("new_proxy: %v", err)
+		t.Fatalf("newProxy: %v", err)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -87,8 +87,8 @@ func start_proxy(t *testing.T, config_path string, tls_config *tls.Config) (stri
 	return "http://" + listener.Addr().String(), p
 }
 
-func proxy_client(proxy_url string) *http.Client {
-	parsed, _ := url.Parse(proxy_url)
+func proxyClient(proxyURL string) *http.Client {
+	parsed, _ := url.Parse(proxyURL)
 	return &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
@@ -98,19 +98,19 @@ func proxy_client(proxy_url string) *http.Client {
 	}
 }
 
-func request_body(t *testing.T, client *http.Client, raw_url string) string {
+func requestBody(t *testing.T, client *http.Client, rawURL string) string {
 	t.Helper()
-	resp, err := client.Get(raw_url)
+	resp, err := client.Get(rawURL)
 	if err != nil {
-		t.Fatalf("GET %s: %v", raw_url, err)
+		t.Fatalf("GET %s: %v", rawURL, err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	return strings.TrimSpace(string(body))
 }
 
-func TestLoadConfig_Valid(t *testing.T) {
-	path := write_config_file(t, "r.yaml", `
+func TestLoadTable_Valid(t *testing.T) {
+	path := writeConfigFile(t, "r.yaml", `
 servers:
   - domain: a.example.com
     routes:
@@ -124,23 +124,23 @@ servers:
         upstream: https://up-b
         tls_verify: false
 `)
-	table, err := load_config(path)
+	table, err := loadTable(path)
 	if err != nil {
-		t.Fatalf("load_config: %v", err)
+		t.Fatalf("loadTable: %v", err)
 	}
-	if len(table.by_domain) != 2 {
-		t.Fatalf("want 2 domains, got %d", len(table.by_domain))
+	if len(table.byDomain) != 2 {
+		t.Fatalf("want 2 domains, got %d", len(table.byDomain))
 	}
 	entry, ok := table.pick("a.example.com", "/v1/x")
 	if !ok || entry.prefix != "/v1/" {
 		t.Fatalf("pick /v1/: got %+v ok=%v", entry, ok)
 	}
-	if entry, ok := table.pick("b.example.com", "/"); !ok || !entry.skip_verify {
-		t.Fatalf("skip_verify not applied: %+v ok=%v", entry, ok)
+	if entry, ok := table.pick("b.example.com", "/"); !ok || !entry.insecure {
+		t.Fatalf("insecure not applied: %+v ok=%v", entry, ok)
 	}
 }
 
-func TestLoadConfig_Errors(t *testing.T) {
+func TestLoadTable_Errors(t *testing.T) {
 	cases := map[string]string{
 		"empty_domain": "servers:\n  - domain: \"\"\n    routes: []",
 		"dup_domain":   "servers:\n  - domain: a\n    routes: []\n  - domain: a\n    routes: []",
@@ -151,8 +151,8 @@ func TestLoadConfig_Errors(t *testing.T) {
 	}
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
-			path := write_config_file(t, name+".yaml", content)
-			if _, err := load_config(path); err == nil {
+			path := writeConfigFile(t, name+".yaml", content)
+			if _, err := loadTable(path); err == nil {
 				t.Fatalf("expected error for %s", name)
 			}
 		})
@@ -160,7 +160,7 @@ func TestLoadConfig_Errors(t *testing.T) {
 }
 
 func TestPick_LongestPrefix(t *testing.T) {
-	table := &route_table{by_domain: map[string][]*route_entry{
+	table := &routeTable{byDomain: map[string][]*route{
 		"a": {
 			{prefix: "/"},
 			{prefix: "/v1/"},
@@ -184,28 +184,28 @@ func TestPick_LongestPrefix(t *testing.T) {
 }
 
 func TestProxy_HTTPRoutingAndPassthrough(t *testing.T) {
-	up_a := recording_server(t, "A")
-	up_b := recording_server(t, "B")
+	upA := recordingServer(t, "A")
+	upB := recordingServer(t, "B")
 	content := "servers:\n" +
 		"  - domain: api.example.com\n" +
 		"    routes:\n" +
 		"      - prefix: /v1/\n" +
-		"        upstream: " + up_a.URL + "/v1/\n" +
+		"        upstream: " + upA.URL + "/v1/\n" +
 		"      - prefix: /api/\n" +
-		"        upstream: " + up_b.URL + "\n" +
+		"        upstream: " + upB.URL + "\n" +
 		"        host: override.example.com\n"
-	cfg := write_config_file(t, "r.yaml", content)
-	proxy_url, _ := start_proxy(t, cfg, nil)
-	client := proxy_client(proxy_url)
+	cfg := writeConfigFile(t, "r.yaml", content)
+	proxyURL, _ := startProxy(t, cfg, nil)
+	client := proxyClient(proxyURL)
 
-	if got := request_body(t, client, "http://api.example.com/v1/users"); !strings.HasPrefix(got, "A:/v1/users") {
+	if got := requestBody(t, client, "http://api.example.com/v1/users"); !strings.HasPrefix(got, "A:/v1/users") {
 		t.Fatalf("prefix mapping: got %q", got)
 	}
-	got := request_body(t, client, "http://api.example.com/api/x?q=1")
+	got := requestBody(t, client, "http://api.example.com/api/x?q=1")
 	if !strings.HasPrefix(got, "B:/x") || !strings.Contains(got, "host=override.example.com") {
 		t.Fatalf("host override: got %q", got)
 	}
-	if got := request_body(t, client, up_a.URL+"/misc"); !strings.HasPrefix(got, "A:/misc") {
+	if got := requestBody(t, client, upA.URL+"/misc"); !strings.HasPrefix(got, "A:/misc") {
 		t.Fatalf("passthrough: got %q", got)
 	}
 }
@@ -215,19 +215,19 @@ func TestProxy_HTTPSViaConnect(t *testing.T) {
 		io.WriteString(writer, "TLS:"+request.URL.Path)
 	}))
 	t.Cleanup(up.Close)
-	cert := self_signed_cert(t, []string{"api.example.com"})
-	tls_config := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"http/1.1"}, MinVersion: tls.VersionTLS12}
+	cert := selfSignedCert(t, []string{"api.example.com"})
+	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"http/1.1"}, MinVersion: tls.VersionTLS12}
 	content := "servers:\n" +
 		"  - domain: api.example.com\n" +
 		"    routes:\n" +
 		"      - prefix: /\n" +
 		"        upstream: " + up.URL + "\n" +
 		"        tls_verify: false\n"
-	cfg := write_config_file(t, "r.yaml", content)
-	proxy_url, _ := start_proxy(t, cfg, tls_config)
-	client := proxy_client(proxy_url)
+	cfg := writeConfigFile(t, "r.yaml", content)
+	proxyURL, _ := startProxy(t, cfg, tlsConfig)
+	client := proxyClient(proxyURL)
 
-	got := request_body(t, client, "https://api.example.com/v1/data")
+	got := requestBody(t, client, "https://api.example.com/v1/data")
 	if got != "TLS:/v1/data" {
 		t.Fatalf("https via connect: got %q", got)
 	}
@@ -241,9 +241,9 @@ func TestProxy_502OnUnreachable(t *testing.T) {
 		"    routes:\n" +
 		"      - prefix: /\n" +
 		"        upstream: " + closed.URL + "\n"
-	cfg := write_config_file(t, "r.yaml", content)
-	proxy_url, _ := start_proxy(t, cfg, nil)
-	client := proxy_client(proxy_url)
+	cfg := writeConfigFile(t, "r.yaml", content)
+	proxyURL, _ := startProxy(t, cfg, nil)
+	client := proxyClient(proxyURL)
 
 	resp, err := client.Get("http://api.example.com/x")
 	if err != nil {
@@ -256,22 +256,22 @@ func TestProxy_502OnUnreachable(t *testing.T) {
 }
 
 func TestReload_SwitchesRoute(t *testing.T) {
-	up_a := recording_server(t, "A")
-	up_b := recording_server(t, "B")
-	cfg := write_config_file(t, "r.yaml",
-		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+up_a.URL+"\n")
-	proxy_url, p := start_proxy(t, cfg, nil)
-	client := proxy_client(proxy_url)
+	upA := recordingServer(t, "A")
+	upB := recordingServer(t, "B")
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upA.URL+"\n")
+	proxyURL, p := startProxy(t, cfg, nil)
+	client := proxyClient(proxyURL)
 
-	if got := request_body(t, client, "http://api.example.com/x"); !strings.HasPrefix(got, "A:/x") {
+	if got := requestBody(t, client, "http://api.example.com/x"); !strings.HasPrefix(got, "A:/x") {
 		t.Fatalf("before reload: %q", got)
 	}
 	_ = os.WriteFile(cfg, []byte(
-		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+up_b.URL+"\n"), 0o644)
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upB.URL+"\n"), 0o644)
 	if err := p.reload(); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got := request_body(t, client, "http://api.example.com/x"); !strings.HasPrefix(got, "B:/x") {
+	if got := requestBody(t, client, "http://api.example.com/x"); !strings.HasPrefix(got, "B:/x") {
 		t.Fatalf("after reload: %q", got)
 	}
 }

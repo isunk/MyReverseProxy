@@ -14,20 +14,20 @@ import (
 )
 
 type proxy struct {
-	config_path        string
-	table              atomic.Pointer[route_table]
-	transport_verify   *http.Transport
-	transport_insecure *http.Transport
-	tls_config         *tls.Config
-	passthrough        *httputil.ReverseProxy
+	configPath        string
+	table             atomic.Pointer[routeTable]
+	transportVerify   *http.Transport
+	transportInsecure *http.Transport
+	tlsConfig         *tls.Config
+	passthrough       *httputil.ReverseProxy
 }
 
-func new_proxy(config_path string, transport_verify, transport_insecure *http.Transport, tls_config *tls.Config) (*proxy, error) {
+func newProxy(configPath string, transportVerify, transportInsecure *http.Transport, tlsConfig *tls.Config) (*proxy, error) {
 	p := &proxy{
-		config_path:        config_path,
-		transport_verify:   transport_verify,
-		transport_insecure: transport_insecure,
-		tls_config:         tls_config,
+		configPath:        configPath,
+		transportVerify:   transportVerify,
+		transportInsecure: transportInsecure,
+		tlsConfig:         tlsConfig,
 	}
 	p.passthrough = &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
@@ -38,8 +38,8 @@ func new_proxy(config_path string, transport_verify, transport_insecure *http.Tr
 			request.SetURL(&url.URL{Scheme: scheme, Host: request.In.Host})
 			request.Out.Host = request.In.Host
 		},
-		Transport:    transport_verify,
-		ErrorHandler: p.on_error,
+		Transport:    transportVerify,
+		ErrorHandler: p.errorHandler,
 	}
 	if err := p.reload(); err != nil {
 		return nil, err
@@ -48,39 +48,39 @@ func new_proxy(config_path string, transport_verify, transport_insecure *http.Tr
 }
 
 func (p *proxy) reload() error {
-	table, err := load_config(p.config_path)
+	table, err := loadTable(p.configPath)
 	if err != nil {
 		return err
 	}
-	for _, entries := range table.by_domain {
+	for _, entries := range table.byDomain {
 		for _, entry := range entries {
-			transport := p.transport_verify
-			if entry.skip_verify {
-				transport = p.transport_insecure
+			transport := p.transportVerify
+			if entry.insecure {
+				transport = p.transportInsecure
 			}
-			entry.reverse_proxy = p.build_route_proxy(entry, transport)
+			entry.proxy = p.newRouteProxy(entry, transport)
 		}
 	}
 	p.table.Store(table)
 	return nil
 }
 
-func (p *proxy) build_route_proxy(entry *route_entry, transport http.RoundTripper) *httputil.ReverseProxy {
+func (p *proxy) newRouteProxy(entry *route, transport http.RoundTripper) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
 			request.SetURL(entry.target)
-			request.Out.URL.Path = join_path(entry.target.Path, strings.TrimPrefix(request.In.URL.Path, entry.prefix))
+			request.Out.URL.Path = joinPath(entry.target.Path, strings.TrimPrefix(request.In.URL.Path, entry.prefix))
 			request.Out.URL.RawPath = ""
 			if entry.host != "" {
 				request.Out.Host = entry.host
 			}
 		},
 		Transport:    transport,
-		ErrorHandler: p.on_error,
+		ErrorHandler: p.errorHandler,
 	}
 }
 
-func (p *proxy) on_error(writer http.ResponseWriter, request *http.Request, err error) {
+func (p *proxy) errorHandler(writer http.ResponseWriter, request *http.Request, err error) {
 	slog.Error("上游请求失败", "host", request.Host, "path", request.URL.Path, "error", err)
 	writer.WriteHeader(http.StatusBadGateway)
 	io.WriteString(writer, "502 Bad Gateway")
@@ -88,26 +88,26 @@ func (p *proxy) on_error(writer http.ResponseWriter, request *http.Request, err 
 
 func (p *proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if request.Method == http.MethodConnect {
-		p.handle_connect(writer, request)
+		p.handleConnect(writer, request)
 		return
 	}
-	domain := domain_of(request)
+	domain := domainOf(request)
 	entry, matched := p.table.Load().pick(domain, request.URL.Path)
 	start := time.Now()
-	recorder := &log_writer{ResponseWriter: writer, status: http.StatusOK}
+	recorder := &logWriter{ResponseWriter: writer, status: http.StatusOK}
 	defer func() {
 		slog.Info("request", "domain", domain, "path", request.URL.Path, "status", recorder.status, "elapsed", time.Since(start))
 	}()
 	if matched {
 		slog.Debug("路由命中", "domain", domain, "prefix", entry.prefix, "upstream", entry.target.String())
-		entry.reverse_proxy.ServeHTTP(recorder, request)
+		entry.proxy.ServeHTTP(recorder, request)
 		return
 	}
 	slog.Debug("路由未命中，透传原始目标", "domain", domain)
 	p.passthrough.ServeHTTP(recorder, request)
 }
 
-func (p *proxy) handle_connect(writer http.ResponseWriter, request *http.Request) {
+func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request) {
 	hijacker, ok := writer.(http.Hijacker)
 	if !ok {
 		http.Error(writer, "hijack unsupported", http.StatusInternalServerError)
@@ -120,7 +120,7 @@ func (p *proxy) handle_connect(writer http.ResponseWriter, request *http.Request
 	}
 	defer client.Close()
 
-	domain := host_only(request.Host)
+	domain := hostOnly(request.Host)
 	_, matched := p.table.Load().pick(domain, "/")
 	if !matched {
 		slog.Info("connect", "target", request.Host, "mode", "tunnel")
@@ -129,7 +129,7 @@ func (p *proxy) handle_connect(writer http.ResponseWriter, request *http.Request
 		}
 		return
 	}
-	if p.tls_config == nil {
+	if p.tlsConfig == nil {
 		client.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
 	}
@@ -137,7 +137,7 @@ func (p *proxy) handle_connect(writer http.ResponseWriter, request *http.Request
 	if _, err := client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
 		return
 	}
-	serve_tls_with_sni(client, p.tls_config, p)
+	serveTLSConn(client, p.tlsConfig, p)
 }
 
 func (p *proxy) tunnel(client net.Conn, target string) {

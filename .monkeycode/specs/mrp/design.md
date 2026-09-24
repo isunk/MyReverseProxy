@@ -18,7 +18,7 @@ graph TD
     C --> F["CONNECT 代理协议"]
     E --> G["加载用户证书 TLS 终结"]
     F --> G
-    D --> H["route_table 域名匹配 + 最长前缀"]
+    D --> H["routeTable 域名匹配 + 最长前缀"]
     G --> H
     H --> I["httputil.ReverseProxy"]
     I --> J["上游服务器"]
@@ -42,10 +42,10 @@ graph TD
 mrp/
 ├── go.mod            # module mrp，依赖 gopkg.in/yaml.v3
 ├── main.go           # 入口：flags、信号循环、run、fatal
-├── config.go         # YAML 配置结构与 load_config 解析
-├── route.go          # route_entry / route_table 与 pick
+├── config.go         # YAML 配置结构与 loadTable 解析
+├── route.go          # route / routeTable 与 pick
 ├── proxy.go          # proxy 结构：路由、转发、CONNECT、tunnel
-├── server.go         # TLS 监听、SNI 注入、one_conn_listener、辅助函数、log_writer
+├── server.go         # TLS 监听、SNI 注入、oneConnListener、辅助函数、logWriter
 ├── main_test.go      # 单元与集成测试
 ├── routing.yaml      # 示例路由配置
 ├── README.md         # 证书创建与设备导入指引
@@ -54,7 +54,7 @@ mrp/
 
 职责边界：
 
-- `config.go` 仅负责把 YAML 解析为 `route_table`，不依赖 proxy / 传输
+- `config.go` 仅负责把 YAML 解析为 `routeTable`，不依赖 proxy / 传输
 - `route.go` 仅负责路由匹配数据结构，纯函数无副作用
 - `proxy.go` 持有运行期依赖（传输、TLS、路由表原子指针），编排请求处理
 - `server.go` 处理连接级服务（TLS 握手、SNI 注入、单连接 listener）与无状态工具函数
@@ -93,14 +93,14 @@ servers:
 ```
 
 ```go
-type config struct {
-    Servers []server_config `yaml:"servers"`
+type Config struct {
+    Servers []Server `yaml:"servers"`
 }
-type server_config struct {
-    Domain string         `yaml:"domain"`
-    Routes []route_config `yaml:"routes"`
+type Server struct {
+    Domain string  `yaml:"domain"`
+    Routes []Route `yaml:"routes"`
 }
-type route_config struct {
+type Route struct {
     Prefix    string `yaml:"prefix"`
     Upstream  string `yaml:"upstream"`
     Host      string `yaml:"host"`
@@ -108,71 +108,71 @@ type route_config struct {
 }
 ```
 
-注：YAML 反射要求结构体字段导出（PascalCase），其余类型与字段一律采用单词式命名，详见 AGENTS.md。
+注：YAML 反射要求结构体字段导出（大驼峰），其余类型与字段遵循 Go 惯例 camelCase，详见 AGENTS.md。
 
 ## UML Class Diagram
 
 ```mermaid
 classDiagram
-    class config {
-        +Servers []server_config
+    class Config {
+        +Servers []Server
     }
-    class server_config {
+    class Server {
         +Domain string
-        +Routes []route_config
+        +Routes []Route
     }
-    class route_config {
+    class Route {
         +Prefix string
         +Upstream string
         +Host string
         +TLSVerify *bool
     }
-    class route_entry {
+    class route {
         -prefix string
         -target *url.URL
         -host string
-        -skip_verify bool
-        -reverse_proxy *ReverseProxy
+        -insecure bool
+        -proxy *ReverseProxy
     }
-    class route_table {
-        -by_domain map[string][]*route_entry
-        +pick(domain, path) (*route_entry, bool)
+    class routeTable {
+        -byDomain map[string][]*route
+        +pick(domain, path) (*route, bool)
     }
     class proxy {
-        -config_path string
-        -table atomic.Pointer[route_table]
-        -transport_verify *http.Transport
-        -transport_insecure *http.Transport
-        -tls_config *tls.Config
+        -configPath string
+        -table atomic.Pointer[routeTable]
+        -transportVerify *http.Transport
+        -transportInsecure *http.Transport
+        -tlsConfig *tls.Config
         -passthrough *ReverseProxy
         +ServeHTTP(w, r)
         -reload() error
-        -build_route_proxy(entry, transport) *ReverseProxy
-        -on_error(w, r, err)
-        -handle_connect(w, r)
+        -newRouteProxy(entry, transport) *ReverseProxy
+        -errorHandler(w, r, err)
+        -handleConnect(w, r)
         -tunnel(client, target)
     }
-    class log_writer {
+    class logWriter {
         -ResponseWriter http.ResponseWriter
         -status int
         +WriteHeader(code)
         +Unwrap() http.ResponseWriter
     }
-    class one_conn_listener {
+    class oneConnListener {
         -conn net.Conn
         +Accept() (net.Conn, error)
         +Close() error
         +Addr() net.Addr
     }
 
-    config ..> server_config
-    server_config ..> route_config
-    route_config ..> route_entry : 编译
-    route_table o-- route_entry
-    proxy --> route_table : 持有原子指针
-    proxy ..> log_writer : 包裹响应
-    proxy ..> one_conn_listener : MITM 单连接服务
-    route_entry ..> ReverseProxy : 内嵌
+    Config ..> Server
+    Server ..> Route
+    Route ..> route : 编译
+    routeTable o-- route
+    proxy --> routeTable : 持有原子指针
+    proxy ..> logWriter : 包裹响应
+    proxy ..> oneConnListener : MITM 单连接服务
+    route ..> ReverseProxy : 内嵌
 ```
 
 ## Sequence Diagrams
@@ -183,13 +183,13 @@ classDiagram
 sequenceDiagram
     participant Client as 客户端
     participant Server as proxy.ServeHTTP
-    participant Table as route_table
+    participant Table as routeTable
     participant Reverse as ReverseProxy
     participant Upstream as 上游
 
     Client->>Server: GET /v1/users Host: api.example.com
     Server->>Table: pick(domain, /v1/users)
-    Table-->>Server: route_entry(prefix=/v1/)
+    Table-->>Server: route(prefix=/v1/)
     Server->>Reverse: ServeHTTP
     Reverse->>Reverse: SetURL + 路径前缀映射
     Reverse->>Upstream: GET /v1/users
@@ -204,9 +204,9 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client as 客户端
-    participant Proxy as proxy.handle_connect
-    participant TLS as serve_tls_with_sni
-    participant Table as route_table
+    participant Proxy as proxy.handleConnect
+    participant TLS as serveTLSConn
+    participant Table as routeTable
     participant Reverse as ReverseProxy
     participant Upstream as 上游
 
@@ -220,7 +220,7 @@ sequenceDiagram
     Client->>TLS: GET /v1/data
     TLS->>Proxy: 请求(注入 sni 上下文)
     Proxy->>Table: pick(sni, /v1/data)
-    Table-->>Proxy: route_entry
+    Table-->>Proxy: route
     Proxy->>Reverse: ServeHTTP
     Reverse->>Upstream: GET /v1/data
     Upstream-->>Reverse: 200 OK
@@ -238,7 +238,7 @@ sequenceDiagram
 
 | 场景 | 处理 |
 |------|------|
-| 上游连接失败/超时 | on_error 返回 502，日志记录上游地址与错误 |
+| 上游连接失败/超时 | errorHandler 返回 502，日志记录上游地址与错误 |
 | 监听端口被占用 | fatal 退出并列出冲突端口 |
 | YAML 语法错误 | reload 返回错误，保留旧路由表，日志输出原因 |
 | 证书文件缺失或解析失败 | 启动失败，输出证书路径与原因 |
@@ -246,7 +246,7 @@ sequenceDiagram
 
 ## Test Strategy
 
-1. 单元测试（main_test.go）：`load_config` 合法/非法/冲突前缀样例、`pick` 最长前缀匹配
+1. 单元测试（main_test.go）：`loadTable` 合法/非法/冲突前缀样例、`pick` 最长前缀匹配
 2. 集成测试：httptest 模拟上游 + 测试内临时生成证书 + 随机端口，覆盖 HTTP 路由 / Host 改写 / 透传 / HTTPS 经 CONNECT 的 MITM / 502 / reload 热加载切换路由
 3. 构建验证：交叉编译产出 android/arm64、ios/arm64、linux/arm64、windows/amd64 纯静态二进制
 
