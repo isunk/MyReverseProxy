@@ -66,7 +66,7 @@ Updated: 2026-09-24
 #### Acceptance Criteria
 
 1. THE README.md SHALL 提供通过 openssl 创建 CA 证书与覆盖全部目标域名的服务端证书（含 SAN）的完整命令
-2. THE README.md SHALL 分别提供 Android、iOS、HarmonyOS、Windows 四类设备导入 CA 证书的操作步骤或命令
+2. THE README.md SHALL 分别提供 Android、Windows、Linux 三类设备导入 CA 证书的操作步骤或命令
 3. THE README.md SHALL 说明 Android 7.0 以上第三方 App 不信任用户证书的约束及系统证书存储的处理方式
 
 ## Constraints & Assumptions
