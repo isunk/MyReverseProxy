@@ -21,7 +21,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 | `main.go` | flags 解析、信号循环、`run`、`fatal` | 路由/转发逻辑 |
 | `config.go` | YAML 配置结构、`loadTable` | 任何运行期依赖 |
 | `route.go` | `route`、`routeTable`、`pick` | I/O、日志 |
-| `proxy.go` | `proxy` 结构、`ServeHTTP`、`handleConnect`、`tunnel`、`reload`、转发构建 | 连接级 TLS 服务细节 |
+| `proxy.go` | `proxy` 结构、`ServeHTTP`、`handleConnect`、`tunnel`、`reload`、`watchFile` 热加载、转发构建 | 连接级 TLS 服务细节 |
 | `server.go` | 单端口监听、TLS/HTTP 协议识别、SNI 注入、`oneConnListener`、纯工具函数、`logWriter` | 路由决策逻辑 |
 | `main_test.go` | 单元与集成测试 | — |
 
@@ -41,7 +41,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 - 路由表通过 `atomic.Pointer[routeTable]` 持有，`reload` 整体替换，禁止对存量 `routeTable` 做原地修改。
 - `reload` 失败时保留旧路由表，仅记录错误，不影响存量连接。
-- TLS 配置在启动时加载一次，`SIGHUP` 只热加载路由配置，不重载证书。
+- TLS 配置在启动时加载一次；路由配置文件修改后自动热加载（轮询变更），`SIGHUP` 手动触发仍可用，均只重载路由、不重载证书。
 
 ## 测试要求
 

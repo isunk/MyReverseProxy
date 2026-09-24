@@ -73,6 +73,7 @@ func run(p *proxy) {
 			fatal("服务退出", err)
 		}
 	}()
+	go p.watchFile(time.Second, nil)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)

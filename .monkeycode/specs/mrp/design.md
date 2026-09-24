@@ -70,7 +70,7 @@ mrp --config routing.yaml \
 
 - `--listen`：监听地址，默认 `:443`，同一端口按首个字节自动识别 HTTP 与 TLS
 - `--tls-cert` / `--tls-key`：证书与私钥路径，成对提供；缺省时仅支持 HTTP 转发与 CONNECT 隧道，TLS 直连会被断开
-- SIGHUP 仅热加载路由配置，证书在启动时加载
+- 路由配置文件修改后自动热加载（轮询变更），`SIGHUP` 手动触发仍可用；证书在启动时加载
 
 ## Configuration
 

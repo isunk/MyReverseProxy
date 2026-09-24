@@ -302,3 +302,33 @@ func TestReload_SwitchesRoute(t *testing.T) {
 		t.Fatalf("after reload: %q", got)
 	}
 }
+
+func TestWatch_HotReload(t *testing.T) {
+	upA := recordingServer(t, "A")
+	upB := recordingServer(t, "B")
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upA.URL+"\n")
+	proxyURL, p := startProxy(t, cfg, nil)
+	client := proxyClient(proxyURL)
+
+	stop := make(chan struct{})
+	go p.watchFile(20*time.Millisecond, stop)
+	t.Cleanup(func() { close(stop) })
+
+	if got := requestBody(t, client, "http://api.example.com/x"); !strings.HasPrefix(got, "A:/x") {
+		t.Fatalf("before hot reload: %q", got)
+	}
+	_ = os.WriteFile(cfg, []byte(
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upB.URL+"\n"), 0o644)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if got := requestBody(t, client, "http://api.example.com/x"); strings.HasPrefix(got, "B:/x") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("配置变更未自动热加载")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}

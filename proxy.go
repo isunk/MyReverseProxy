@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"io"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -63,6 +65,40 @@ func (p *proxy) reload() error {
 	}
 	p.table.Store(table)
 	return nil
+}
+
+func (p *proxy) watchFile(interval time.Duration, stop <-chan struct{}) {
+	var previous []byte
+	if data, err := os.ReadFile(p.configPath); err == nil {
+		previous = data
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			previous = p.syncConfig(previous)
+		}
+	}
+}
+
+func (p *proxy) syncConfig(previous []byte) []byte {
+	data, err := os.ReadFile(p.configPath)
+	if err != nil {
+		slog.Warn("读取路由配置失败", "error", err)
+		return previous
+	}
+	if previous != nil && bytes.Equal(data, previous) {
+		return previous
+	}
+	if err := p.reload(); err != nil {
+		slog.Error("配置变更热加载失败，沿用旧配置", "error", err)
+	} else {
+		slog.Info("检测到配置变更，已热加载")
+	}
+	return data
 }
 
 func (p *proxy) newRouteProxy(entry *route, transport http.RoundTripper) *httputil.ReverseProxy {
