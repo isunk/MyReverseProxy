@@ -5,7 +5,7 @@ Updated: 2026-09-24
 
 ## Description
 
-Go 实现的反向代理服务。单二进制 + 类 nginx 配置，监听 HTTP/HTTPS 端口，按域名（SNI / Host）与路径前缀路由转发到不同上游。TLS 证书由使用者预先创建并配置路径，程序启动时加载。同一监听端口兼容 HTTP 代理协议（CONNECT），可直接作为显式代理使用。证书创建与设备导入步骤见仓库根目录 README.md。
+Go 实现的反向代理服务。单二进制 + YAML 路由配置（仅承载路由规则），监听 HTTP/HTTPS 端口，按域名（SNI / Host）与路径前缀路由转发到不同上游。TLS 证书由使用者预先创建并经命令行参数指定路径，程序启动时加载。同一监听端口兼容 HTTP 代理协议（CONNECT），可直接作为显式代理使用。证书创建与设备导入步骤见仓库根目录 README.md。
 
 ## Architecture
 
@@ -23,7 +23,7 @@ graph TD
     H --> I["httputil.ReverseProxy"]
     I --> J["上游服务器"]
     H --> K["无匹配 透传原始目标"]
-    L["类 nginx 配置文件"] --> B
+    L["YAML 路由配置"] --> B
     L --> H
 ```
 
@@ -48,63 +48,49 @@ device-proxy/
 ### cmd/proxyd
 
 ```
-proxyd --config /data/local/tmp/proxy.conf --log-level info
+proxyd --config routing.yaml \
+  --http :80 --https :443 \
+  --tls-cert certs/server.crt --tls-key certs/server.key \
+  --log-level info
 ```
 
-- SIGHUP 触发热加载（配置与证书同步重载）
+- `--http` / `--https`：监听地址，默认 `:80` / `:443`；`--https` 为空则仅启动 HTTP 监听
+- `--tls-cert` / `--tls-key`：证书与私钥路径，启用 HTTPS 时必填
+- SIGHUP 仅热加载路由配置，证书在启动时加载
 
 ### internal/config
 
-自定义递归下降解析器，解析子集：`listen`、`tls_certificate`、`tls_certificate_key`、`server`、`location`、`proxy_pass`、`proxy_set_header`、`proxy_tls_verify`、注释。
+gopkg.in/yaml.v3 解析，配置文件只承载路由规则：
+
+```yaml
+servers:
+  - domain: api.target-app.com
+    routes:
+      - prefix: /v1/
+        upstream: https://our-server-a.com/v1/
+      - prefix: /
+        upstream: http://192.168.1.50:8080
+        host: our-server-b.com
+  - domain: cdn.target-app.com
+    routes:
+      - prefix: /
+        upstream: https://our-server-b.com
+        tls_verify: false
+```
 
 ```go
 type Config struct {
-    Listen  ListenConfig
-    TLS     TLSConfig
-    Servers []Server
-}
-type ListenConfig struct {
-    HTTP  string // 默认 ":80"
-    HTTPS string // 默认 ":443"
-}
-type TLSConfig struct {
-    Certificate string
-    PrivateKey  string
+    Servers []Server `yaml:"servers"`
 }
 type Server struct {
-    Domain string
-    Routes []Route
+    Domain string  `yaml:"domain"`
+    Routes []Route `yaml:"routes"`
 }
 type Route struct {
-    Prefix             string
-    Upstream           *url.URL
-    HostOverride       string
-    InsecureSkipVerify bool
-}
-```
-
-配置示例：
-
-```nginx
-listen 80;
-listen 443;
-tls_certificate certs/server.crt;
-tls_certificate_key certs/server.key;
-
-server api.target-app.com {
-    location /v1/ {
-        proxy_pass https://our-server-a.com/v1/;
-    }
-    location / {
-        proxy_pass http://192.168.1.50:8080;
-        proxy_set_header Host our-server-b.com;
-    }
-}
-
-server cdn.target-app.com {
-    location / {
-        proxy_pass https://our-server-b.com;
-    }
+    Prefix    string  `yaml:"prefix"`
+    Upstream  string  `yaml:"upstream"`
+    Host      string  `yaml:"host"`       // 可选，改写转发 Host 头
+    TLSVerify *bool   `yaml:"tls_verify"` // 可选，默认 true
 }
 ```
 
@@ -160,4 +146,4 @@ server cdn.target-app.com {
 
 [^1]: (Website) - httputil.ReverseProxy https://pkg.go.dev/net/http/httputil#ReverseProxy
 [^2]: (Website) - crypto/tls ClientHelloInfo https://pkg.go.dev/crypto/tls#ClientHelloInfo
-[^3]: (Website) - openssl x509 https://www.openssl.org/docs/manmaster/apps/openssl-x509.html
+[^3]: (Website) - yaml.v3 https://pkg.go.dev/gopkg.in/yaml.v3

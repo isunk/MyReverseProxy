@@ -1,6 +1,6 @@
 # device-proxy
 
-基于 Go 的单二进制反向代理服务。监听 HTTP/HTTPS 端口，依据类 nginx 语法的配置文件，按请求的域名（SNI / Host）与路径前缀匹配自定义规则，将请求转发到不同的服务器。适用于把移动 App 固定访问的域名劫持转发到自有服务器进行联调。
+基于 Go 的单二进制反向代理服务。监听 HTTP/HTTPS 端口，依据 YAML 路由配置，按请求的域名（SNI / Host）与路径前缀匹配自定义规则，将请求转发到不同的服务器。适用于把移动 App 固定访问的域名劫持转发到自有服务器进行联调。
 
 需求与设计文档见 `.monkeycode/specs/device-reverse-proxy/`。
 
@@ -14,7 +14,7 @@ go build -trimpath -ldflags "-s -w" -o proxyd ./cmd/proxyd
 GOOS=android GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o proxyd-android-arm64 ./cmd/proxyd
 
 # 启动服务
-./proxyd --config proxy.conf
+./proxyd --config routing.yaml --http :80 --https :443 --tls-cert certs/server.crt --tls-key certs/server.key
 ```
 
 支持平台：android/arm64、ios/arm64、linux/arm64、windows/amd64。
@@ -95,36 +95,31 @@ certutil -user -addstore Root certs\ca.crt
 
 ## 配置示例
 
-```nginx
-listen 80;
-listen 443;
-tls_certificate certs/server.crt;
-tls_certificate_key certs/server.key;
+配置文件只承载路由规则，监听地址与证书路径通过命令行参数指定。
 
-server api.target-app.com {
-    location /v1/ {
-        proxy_pass https://our-server-a.com/v1/;
-    }
-    location / {
-        proxy_pass http://192.168.1.50:8080;
-        proxy_set_header Host our-server-b.com;
-    }
-}
-
-server cdn.target-app.com {
-    location / {
-        proxy_pass https://our-server-b.com;
-    }
-}
+```yaml
+servers:
+  - domain: api.target-app.com
+    routes:
+      - prefix: /v1/
+        upstream: https://our-server-a.com/v1/
+      - prefix: /
+        upstream: http://192.168.1.50:8080
+        host: our-server-b.com
+  - domain: cdn.target-app.com
+    routes:
+      - prefix: /
+        upstream: https://our-server-b.com
+        tls_verify: false
 ```
 
 规则说明：
 
-- `server`：按域名精确匹配，HTTPS 依据 SNI、HTTP 依据 Host 头识别域名
-- `location`：最长路径前缀匹配
-- `proxy_pass`：上游地址，路径前缀自动映射
-- `proxy_set_header Host`：可选，改写转发时的 Host 头
-- `proxy_tls_verify off`：可选，跳过 HTTPS 上游证书校验
+- `servers[].domain`：按域名精确匹配，HTTPS 依据 SNI、HTTP 依据 Host 头识别域名
+- `routes[].prefix`：最长路径前缀匹配
+- `routes[].upstream`：上游地址，路径前缀自动映射
+- `routes[].host`：可选，改写转发时的 Host 头
+- `routes[].tls_verify`：可选，默认 true，设为 false 跳过 HTTPS 上游证书校验
 - 未匹配的域名直接透传原始目标
 
 ## 流量引导

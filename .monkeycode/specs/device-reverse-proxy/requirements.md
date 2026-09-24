@@ -5,7 +5,7 @@ Updated: 2026-09-24
 
 ## Introduction
 
-基于 Go 实现的单二进制反向代理服务。直接运行后监听 HTTP/HTTPS 端口，依据类 nginx 语法的配置文件，按请求的域名（SNI / Host）与路径前缀匹配自定义规则，将请求转发到不同的服务器。TLS 证书由使用者预先创建并在配置中指定路径，程序仅加载使用，证书的创建与导入设备的步骤在 README.md 中以命令行方式给出。
+基于 Go 实现的单二进制反向代理服务。直接运行后监听 HTTP/HTTPS 端口，依据 YAML 路由配置文件，按请求的域名（SNI / Host）与路径前缀匹配自定义规则，将请求转发到不同的服务器。配置文件只承载路由规则，监听地址与 TLS 证书路径通过命令行参数指定。TLS 证书由使用者预先创建，程序仅加载使用，证书的创建与导入设备的步骤在 README.md 中以命令行方式给出。
 
 ## Glossary
 
@@ -23,8 +23,8 @@ Updated: 2026-09-24
 #### Acceptance Criteria
 
 1. THE 代理服务 SHALL 以纯 Go 静态链接单二进制发布，提供 android/arm64、ios/arm64、linux/arm64、windows/amd64 构建产物
-2. THE 代理服务 SHALL 从类 nginx 语法的配置文件加载监听端口、TLS 证书路径与路由规则，server 块按域名划分，location 按路径前缀匹配，proxy_pass 指定上游
-3. WHEN 收到 SIGHUP，THE 代理服务 SHALL 在已有连接不中断的情况下重新加载配置与证书
+2. THE 代理服务 SHALL 从 YAML 配置文件加载路由规则，按域名划分 server，路由按路径前缀匹配并指定上游；监听地址与 TLS 证书路径通过命令行参数指定
+3. WHEN 收到 SIGHUP，THE 代理服务 SHALL 在已有连接不中断的情况下重新加载路由配置
 4. IF 配置文件存在语法错误，THE 代理服务 SHALL 继续使用当前生效配置，并在日志输出错误行号与原因
 
 ### Requirement 2: 域名与路径路由
@@ -46,8 +46,8 @@ Updated: 2026-09-24
 
 #### Acceptance Criteria
 
-1. WHEN 启动或热加载，THE 代理服务 SHALL 从配置指定的路径加载 TLS 证书与私钥文件
-2. WHEN 配置的 HTTPS 端口开启而证书文件缺失或解析失败，THE 代理服务 SHALL 启动失败并输出明确的文件路径错误
+1. WHEN 启动，THE 代理服务 SHALL 从命令行参数指定的路径加载 TLS 证书与私钥文件
+2. WHEN 命令行启用 HTTPS 监听而证书文件缺失或解析失败，THE 代理服务 SHALL 启动失败并输出明确的文件路径错误
 3. WHEN 转发到 HTTPS 上游，THE 代理服务 SHALL 默认校验上游证书链，并支持按 location 配置跳过校验
 
 ### Requirement 4: 日志
