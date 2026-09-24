@@ -343,6 +343,65 @@ func TestResolveTLSConfig_Defaults(t *testing.T) {
 	}
 }
 
+func testAuthorityCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return caCert, key
+}
+
+func TestCertificateAuthority_SignsForSNI(t *testing.T) {
+	caCert, caKey := testAuthorityCA(t)
+	authority := newCertificateAuthority(caCert, caKey)
+
+	hello := &tls.ClientHelloInfo{ServerName: "api.example.com"}
+	cert, err := authority.getCertificate(hello)
+	if err != nil {
+		t.Fatalf("getCertificate: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != "api.example.com" {
+		t.Fatalf("SAN 应为 api.example.com，got %v", leaf.DNSNames)
+	}
+	if err := leaf.CheckSignatureFrom(caCert); err != nil {
+		t.Fatalf("证书应由 CA 签发：%v", err)
+	}
+
+	cached, err := authority.getCertificate(hello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached != cert {
+		t.Fatal("同一 SNI 应命中缓存返回同一证书")
+	}
+
+	if _, err := authority.getCertificate(&tls.ClientHelloInfo{ServerName: ""}); err == nil {
+		t.Fatal("缺少 SNI 应报错")
+	}
+}
+
 func TestWatch_HotReload(t *testing.T) {
 	upA := recordingServer(t, "A")
 	upB := recordingServer(t, "B")

@@ -3,13 +3,22 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"fmt"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type ctxKey int
@@ -139,6 +148,75 @@ func joinPath(base, rest string) string {
 		return rest
 	}
 	return strings.TrimSuffix(base, "/") + rest
+}
+
+const (
+	serverCertTTL  = 24 * time.Hour
+	maxCachedCerts = 512
+)
+
+type cacheEntry struct {
+	cert      *tls.Certificate
+	expiresAt time.Time
+}
+
+type certificateAuthority struct {
+	cert  *x509.Certificate
+	key   crypto.Signer
+	mu    sync.Mutex
+	cache map[string]cacheEntry
+}
+
+func newCertificateAuthority(cert *x509.Certificate, key crypto.Signer) *certificateAuthority {
+	return &certificateAuthority{cert: cert, key: key, cache: map[string]cacheEntry{}}
+}
+
+func (ca *certificateAuthority) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	if hello.ServerName == "" {
+		return nil, fmt.Errorf("缺少 SNI，无法按域名签发证书")
+	}
+	ca.mu.Lock()
+	defer ca.mu.Unlock()
+	if entry, ok := ca.cache[hello.ServerName]; ok && time.Now().Before(entry.expiresAt) {
+		return entry.cert, nil
+	}
+	cert, err := ca.sign(hello.ServerName)
+	if err != nil {
+		return nil, err
+	}
+	if len(ca.cache) >= maxCachedCerts {
+		ca.cache = map[string]cacheEntry{}
+	}
+	ca.cache[hello.ServerName] = cacheEntry{cert: cert, expiresAt: time.Now().Add(serverCertTTL)}
+	return cert, nil
+}
+
+func (ca *certificateAuthority) sign(serverName string) (*tls.Certificate, error) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, err
+	}
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: serverName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(serverCertTTL),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{serverName},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, ca.cert, &priv.PublicKey, ca.key)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Certificate{
+		Certificate: [][]byte{der, ca.cert.Raw},
+		PrivateKey:  priv,
+	}, nil
 }
 
 type logWriter struct {

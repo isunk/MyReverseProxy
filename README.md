@@ -4,9 +4,9 @@ Go 实现的本地反向代理。单一端口同时处理 HTTP / HTTPS（按连�
 
 ## 原理
 
-目标 App 通过 HTTPS 访问固定域名（如 `api.target-app.com`）。mrp 用自签 CA 签发一张服务端证书（SAN 覆盖所有要拦截的域名），把 CA 导入设备信任后，将设备流量引导到 mrp——hosts / DNS 重定向让 App 直连 mrp，或把设备代理指向 mrp 的 CONNECT。
+目标 App 通过 HTTPS 访问固定域名（如 `api.target-app.com`）。mrp 持有一张自签 CA，在 TLS 握手时按客户端 SNI 实时签发对应域名的服务端证书，把 CA 导入设备信任后，将设备流量引导到 mrp——hosts / DNS 重定向让 App 直连 mrp，或把设备代理指向 mrp 的 CONNECT。
 
-核心是 MITM：App 发来 TLS ClientHello，mrp 用服务端证书冒充目标域名完成握手，客户端因信任本地 CA 而验证通过，于是 mrp 拿到解密后的明文 HTTP：
+核心是 MITM：App 发来带 SNI 的 TLS ClientHello，mrp 用 CA 当场签发一张 SAN 为该 SNI 的服务端证书冒充目标域名完成握手，客户端因信任本地 CA 而验证通过，于是 mrp 拿到解密后的明文 HTTP：
 
 ```mermaid
 sequenceDiagram
@@ -29,16 +29,14 @@ sequenceDiagram
 
 ### 1. 准备 CA 证书和私钥
 
-生成一张自签证书，既作为设备信任的 CA，也直接作为 mrp 拦截 TLS 的服务端证书（SAN 覆盖所有要拦截的域名）：
+生成一张自签 CA，mrp 会用它按 SNI 动态签发各域名的服务端证书，因此 CA 本身无需预写拦截域名：
 
 ```bash
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
   -keyout ca.key -out ca.crt -nodes -days 3650 \
   -subj "/CN=DeviceProxy CA" \
   -addext "basicConstraints=critical,CA:TRUE" \
-  -addext "keyUsage=critical,keyCertSign,digitalSignature,keyEncipherment" \
-  -addext "extendedKeyUsage=serverAuth" \
-  -addext "subjectAltName=DNS:api.target-app.com,DNS:cdn.target-app.com"
+  -addext "keyUsage=critical,keyCertSign,digitalSignature"
 ```
 
 ### 2. 导入 CA 证书
@@ -125,7 +123,7 @@ go build -trimpath -ldflags "-s -w" -o mrp .
 |------|------|------|
 | `--config` | `routing.yaml` | 路由配置文件路径；未指定时缺失则自动创建 |
 | `--port` | `443` | 监听端口 |
-| `--tls-cert` / `--tls-key` | `ca.crt` / `ca.key` | TLS 证书/私钥，成对提供；当前目录下存在时自动加载，缺省时仅支持 HTTP 与 CONNECT 隧道 |
+| `--tls-cert` / `--tls-key` | `ca.crt` / `ca.key` | CA 证书/私钥，成对提供；mrp 按客户端 SNI 动态签发服务端证书；缺省时仅支持 HTTP 与 CONNECT 隧道 |
 | `--log-level` | `info` | debug / info / warn / error |
 
 ### 5. 测试验证

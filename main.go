@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto"
 	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -82,14 +84,26 @@ func resolveTLSConfig(tlsCert, tlsKey string, certSet, keySet bool) (*tls.Config
 }
 
 func loadTLSConfig(tlsCert, tlsKey string) (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+	pair, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
 	if err != nil {
 		return nil, err
 	}
+	if len(pair.Certificate) == 0 {
+		return nil, fmt.Errorf("证书文件为空")
+	}
+	caCert, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return nil, err
+	}
+	signer, ok := pair.PrivateKey.(crypto.Signer)
+	if !ok {
+		return nil, fmt.Errorf("私钥类型不支持")
+	}
+	authority := newCertificateAuthority(caCert, signer)
 	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"http/1.1"},
-		MinVersion:   tls.VersionTLS12,
+		GetCertificate: authority.getCertificate,
+		NextProtos:     []string{"http/1.1"},
+		MinVersion:     tls.VersionTLS12,
 	}, nil
 }
 
