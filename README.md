@@ -29,30 +29,21 @@ sequenceDiagram
 
 ### 1. 准备 CA 证书和私钥
 
+生成一张自签证书，既作为设备信任的 CA，也直接作为 mrp 拦截 TLS 的服务端证书（SAN 覆盖所有要拦截的域名）：
+
 ```bash
-mkdir -p certs
-
-# 生成自签 CA（设备需信任它）
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
-  -keyout certs/ca.key -out certs/ca.crt -nodes -days 3650 \
-  -subj "/CN=DeviceProxy CA"
-
-# 生成服务端私钥与证书请求
-openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
-  -keyout certs/server.key -out certs/server.csr -nodes \
-  -subj "/CN=api.target-app.com"
-
-# 写入 SAN（覆盖全部要拦截的域名）
-printf "subjectAltName=DNS:api.target-app.com,DNS:cdn.target-app.com\n" > certs/san.cnf
-
-# 用 CA 签发服务端证书（有效期 825 天）
-openssl x509 -req -in certs/server.csr -CA certs/ca.crt -CAkey certs/ca.key \
-  -CAcreateserial -out certs/server.crt -days 825 -extfile certs/san.cnf
+  -keyout ca.key -out ca.crt -nodes -days 3650 \
+  -subj "/CN=DeviceProxy CA" \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,digitalSignature,keyEncipherment" \
+  -addext "extendedKeyUsage=serverAuth" \
+  -addext "subjectAltName=DNS:api.target-app.com,DNS:cdn.target-app.com"
 ```
 
 ### 2. 导入 CA 证书
 
-把 `certs/ca.crt` 导入客户端设备，使其信任 mrp 签发的证书。
+把 `ca.crt` 导入客户端设备，使其信任 mrp 签发的证书。
 
 #### Android
 
@@ -60,8 +51,8 @@ openssl x509 -req -in certs/server.csr -CA certs/ca.crt -CAkey certs/ca.key \
 - **系统证书（需 Root）**：Android 7.0+ 第三方 App 默认不信任用户证书，需装入系统证书存储
 
   ```bash
-  HASH=$(openssl x509 -subject_hash_old -in certs/ca.crt | head -1)
-  adb push certs/ca.crt /data/local/tmp/${HASH}.0
+  HASH=$(openssl x509 -subject_hash_old -in ca.crt | head -1)
+  adb push ca.crt /data/local/tmp/${HASH}.0
   adb shell "su -c 'mount -o rw,remount /system && \
     cp /data/local/tmp/${HASH}.0 /system/etc/security/cacerts/ && \
     chmod 644 /system/etc/security/cacerts/${HASH}.0'"
@@ -71,25 +62,25 @@ openssl x509 -req -in certs/server.csr -CA certs/ca.crt -CAkey certs/ca.key \
 
 ```bash
 # 当前用户（免管理员）
-certutil -user -addstore Root certs\ca.crt
+certutil -user -addstore Root ca.crt
 
 # 或机器全局（需管理员）
-certutil -addstore Root certs\ca.crt
+certutil -addstore Root ca.crt
 ```
 
 #### Linux
 
 ```bash
 # Debian / Ubuntu：装入系统信任并刷新
-sudo cp certs/ca.crt /usr/local/share/ca-certificates/mrp-ca.crt
+sudo cp ca.crt /usr/local/share/ca-certificates/mrp-ca.crt
 sudo update-ca-certificates
 ```
 
-也可以用 `curl --cacert certs/ca.crt` 临时信任，无需系统导入。
+也可以用 `curl --cacert ca.crt` 临时信任，无需系统导入。
 
 ### 3. 初始化配置文件
 
-创建 `routing.yaml`：
+mrp 首次运行会自动在当前目录创建 `routing.yaml`（含注释模板），按需编辑：
 
 ```yaml
 servers:
@@ -124,24 +115,24 @@ servers:
 ```bash
 go build -trimpath -ldflags "-s -w" -o mrp .
 
-./mrp --config routing.yaml --listen :443 \
-  --tls-cert certs/server.crt --tls-key certs/server.key
+# 默认读取当前目录 routing.yaml（缺失自动创建）、监听 443、加载 ca.crt / ca.key
+./mrp
 ```
 
 命令行参数：
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--config` | `routing.yaml` | 路由配置文件路径 |
-| `--listen` | `:443` | 监听地址 |
-| `--tls-cert` / `--tls-key` | — | TLS 证书/私钥，成对提供；缺省时仅支持 HTTP 与 CONNECT 隧道 |
+| `--config` | `routing.yaml` | 路由配置文件路径；未指定时缺失则自动创建 |
+| `--port` | `443` | 监听端口 |
+| `--tls-cert` / `--tls-key` | `ca.crt` / `ca.key` | TLS 证书/私钥，成对提供；当前目录下存在时自动加载，缺省时仅支持 HTTP 与 CONNECT 隧道 |
 | `--log-level` | `info` | debug / info / warn / error |
 
 ### 5. 测试验证
 
 ```bash
 # 直连 HTTPS（域名解析到本机，mrp 终结 TLS 后转发）
-curl --cacert certs/ca.crt --resolve api.target-app.com:443:127.0.0.1 \
+curl --cacert ca.crt --resolve api.target-app.com:443:127.0.0.1 \
   https://api.target-app.com/v1/hello
 
 # 纯 HTTP（同一端口，自动识别）
@@ -149,7 +140,7 @@ curl --resolve api.target-app.com:443:127.0.0.1 \
   http://api.target-app.com:443/v1/hello
 
 # 显式代理（CONNECT）
-curl -x http://127.0.0.1:443 --cacert certs/ca.crt \
+curl -x http://127.0.0.1:443 --cacert ca.crt \
   https://api.target-app.com/v1/hello
 ```
 
@@ -157,7 +148,7 @@ curl -x http://127.0.0.1:443 --cacert certs/ca.crt \
 
 ### 6. 各平台设备对接代理
 
-代理地址填 mrp 所在机器能被设备访问到的 IP（不能用 `127.0.0.1`），端口即 `--listen`（默认 `443`）。
+代理地址填 mrp 所在机器能被设备访问到的 IP（不能用 `127.0.0.1`），端口即 `--port`（默认 `443`）。
 
 #### Android
 

@@ -303,6 +303,46 @@ func TestReload_SwitchesRoute(t *testing.T) {
 	}
 }
 
+func TestEnsureConfig_CreatesMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routing.yaml")
+	if err := ensureConfig(path); err != nil {
+		t.Fatalf("ensureConfig: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(data), "servers:") {
+		t.Fatalf("默认配置应包含 servers 字段，got %q", data)
+	}
+	if err := os.WriteFile(path, []byte("custom: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureConfig(path); err != nil {
+		t.Fatalf("ensureConfig existing: %v", err)
+	}
+	data, _ = os.ReadFile(path)
+	if string(data) != "custom: true\n" {
+		t.Fatalf("已存在的文件被覆盖：%q", data)
+	}
+}
+
+func TestResolveTLSConfig_Defaults(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "ca.crt")
+	keyPath := filepath.Join(dir, "ca.key")
+	cfg, err := resolveTLSConfig(certPath, keyPath, false, false)
+	if err != nil || cfg != nil {
+		t.Fatalf("want nil config without certs, got %v err=%v", cfg, err)
+	}
+	if err := os.WriteFile(certPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveTLSConfig(certPath, keyPath, false, false); err == nil {
+		t.Fatal("want error for missing key")
+	}
+}
+
 func TestWatch_HotReload(t *testing.T) {
 	upA := recordingServer(t, "A")
 	upB := recordingServer(t, "B")

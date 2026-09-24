@@ -49,9 +49,9 @@ jobs:
           name: mrp-${{ matrix.goos }}-${{ matrix.goarch }}
           path: mrp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
 
-  release:
+  publish:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -64,7 +64,24 @@ jobs:
         run: (cd dist && sha256sum * > checksums.txt)
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: false
-          files: dist/*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*)
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          else
+            if gh release view latest >/dev/null 2>&1; then
+              gh release upload latest "${files[@]}" --clobber
+            else
+              gh release create latest "${files[@]}" \
+                --title "latest" \
+                --prerelease \
+                --notes "每次构建自动发布的二进制包"
+            fi
+          fi

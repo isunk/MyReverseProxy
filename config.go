@@ -8,6 +8,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const defaultConfig = `# mrp 反向代理路由配置
+# 修改后自动热加载，无需重启。
+#
+# domain:     按域名精确匹配，HTTPS 用 SNI、HTTP 用 Host 头
+# prefix:     路径前缀，按最长前缀匹配转发到 upstream
+# upstream:   上游服务地址，路径前缀自动映射
+# host:       可选，改写转发时的 Host 头
+# tls_verify: 可选，默认 true，false 跳过 HTTPS 上游证书校验
+#
+# 示例：
+# servers:
+#   - domain: api.target-app.com
+#     routes:
+#       - prefix: /v1/
+#         upstream: https://our-server-a.com/v1/
+#       - prefix: /
+#         upstream: http://192.168.1.50:8080
+
+servers: []
+`
+
 type Config struct {
 	Servers []Server `yaml:"servers"`
 }
