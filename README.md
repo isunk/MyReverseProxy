@@ -4,16 +4,9 @@ Go 实现的本地反向代理。单一端口同时处理 HTTP / HTTPS（按连�
 
 ## 原理
 
-目标 App 通过 HTTPS 访问固定域名（如 `api.target-app.com`）。mrp 用一份自签 CA 签发一张服务端证书（SAN 覆盖所有要拦截的域名），把 CA 导入设备信任后，把设备流量引导到 mrp：
+目标 App 通过 HTTPS 访问固定域名（如 `api.target-app.com`）。mrp 用自签 CA 签发一张服务端证书（SAN 覆盖所有要拦截的域名），把 CA 导入设备信任后，将设备流量引导到 mrp——hosts / DNS 重定向让 App 直连 mrp，或把设备代理指向 mrp 的 CONNECT。
 
-- **hosts / DNS 重定向**：把目标域名解析到 mrp 所在 IP，App 直连 443，mrp 终结 TLS 做 MITM
-- **显式代理（CONNECT）**：设备代理指向 mrp 端口，命中域名走 MITM，未命中域名隧道透传
-
-TLS 握手时，mrp 用服务端证书冒充目标域名，客户端因信任了本地 CA 而验证通过，于是 mrp 拿到解密后的明文 HTTP。随后按 SNI / Host 与路径前缀匹配路由，转发到真实上游；上游为 HTTPS 时默认校验其证书，可在路由里关闭（`tls_verify: false`）。未匹配的域名透传原目标。
-
-## 时序图
-
-### HTTPS 直连（hosts / DNS 重定向）
+核心是 MITM：App 发来 TLS ClientHello，mrp 用服务端证书冒充目标域名完成握手，客户端因信任本地 CA 而验证通过，于是 mrp 拿到解密后的明文 HTTP：
 
 ```mermaid
 sequenceDiagram
@@ -30,39 +23,7 @@ sequenceDiagram
     mrp-->>App: 加密回传响应
 ```
 
-### 显式代理（CONNECT）
-
-```mermaid
-sequenceDiagram
-    participant App as App客户端
-    participant mrp as mrp代理
-    participant Up as 上游服务器
-
-    App->>mrp: "CONNECT api.target-app.com:443"
-    mrp-->>App: "200 Connection Established"
-    App->>mrp: TLS ClientHello
-    mrp->>App: 服务端证书握手完成
-    App->>mrp: GET /v1/hello
-    mrp->>mrp: 按 SNI 匹配路由
-    mrp->>Up: 转发请求
-    Up-->>mrp: 响应
-    mrp-->>App: 响应
-```
-
-### 纯 HTTP 转发
-
-```mermaid
-sequenceDiagram
-    participant App as App客户端
-    participant mrp as mrp代理
-    participant Up as 上游服务器
-
-    App->>mrp: "GET http://api.target-app.com/v1/hello"
-    mrp->>mrp: 按 Host 头与路径前缀匹配
-    mrp->>Up: 转发请求
-    Up-->>mrp: 响应
-    mrp-->>App: 响应
-```
+随后按 SNI / Host 与路径前缀匹配路由，转发到真实上游，未匹配的域名透传原目标；上游为 HTTPS 时默认校验其证书，可用 `tls_verify: false` 关闭。纯 HTTP 连接（同一端口按首字节识别）不经 TLS 握手，直接按 Host 头路由；显式代理的 CONNECT 则先返回「200 Connection Established」建立隧道，命中域名再走上述 MITM 流程。
 
 ## 使用流程
 
