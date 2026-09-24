@@ -5,7 +5,7 @@ Updated: 2026-09-24
 
 ## Description
 
-Go 实现的设备端本地反向代理服务。单二进制 + 类 nginx 配置文件，通过可插拔的接管模式（显式代理 / DNS 劫持 / TUN / iptables 透明代理）把目标 App 对固定域名的流量引入本地路由器，TLS 中间人终结后按 server/location 规则转发到自有服务器。运行形态为设备 shell 中的常驻进程。
+Go 实现的设备端本地反向代理服务。单二进制 + 类 nginx 配置文件，通过可插拔的接管模式（显式代理 / DNS 劫持 / TUN / iptables 透明代理 / hosts 劫持）把目标 App 对固定域名的流量引入本地路由器，TLS 中间人终结后按 server/location 规则转发到自有服务器。运行形态为设备 shell 中的常驻进程，覆盖 Android / iOS（越狱）/ HarmonyOS / Windows。
 
 ## Architecture
 
@@ -19,9 +19,11 @@ graph TD
     F --> G["TUN 模式 需root"]
     F --> H["iptables REDIRECT 需root"]
     F --> I["本机监听 80/443 需root路由"]
+    F --> W["hosts 模式 Windows 需管理员"]
     G --> J["gVisor netstack 用户态TCP/IP"]
     H --> K["SO_ORIGINAL_DST 还原原始目标"]
     I --> L["内核送达本机监听"]
+    W --> L
     A --> N["显式代理 127.0.0.1:8118"]
     N --> M["SNI/Host 域名路由器"]
     J --> M
@@ -54,8 +56,9 @@ device-proxy/
 ├── internal/router/            # 域名/路径路由器
 ├── internal/mitm/              # CA 管理与动态叶子证书签发
 ├── internal/proxyserver/       # 显式代理（HTTP 代理协议 + CONNECT）
-├── internal/transparent/       # iptables 透明代理（SO_ORIGINAL_DST）
-├── internal/tunmode/           # TUN 模式（water + gVisor netstack）
+├── internal/transparent/       # iptables 透明代理（SO_ORIGINAL_DST，仅 Android/Linux）
+├── internal/tunmode/           # TUN 模式（water + gVisor netstack，Windows 走 wintun）
+├── internal/hostsmode/         # hosts 劫持模式（仅 Windows）
 ├── internal/upstream/          # ReverseProxy 封装与改写规则
 ├── internal/admin/             # 本机管理接口
 └── configs/proxy.conf          # 示例配置
@@ -68,10 +71,11 @@ proxyd --config /data/local/tmp/proxy.conf --mode auto --log-level info
 proxyd ca --config /data/local/tmp/proxy.conf --out /data/local/tmp/ca.pem
 ```
 
-- `--mode` 取值：auto / proxy / dns / tun / iptables
+- `--mode` 取值：auto / proxy / dns / hosts / tun / iptables
   - auto：探测权限，优先 TUN，失败降级显式代理
   - dns：启动 DNS + 80/443 监听（假 IP 流量需 root 路由或 answer=self 局域网模式）
-  - iptables：iptables REDIRECT + UDP 53 重定向，需 root
+  - hosts：Windows 专用，管理员权限写 hosts 指向 127.0.0.1 + 监听 80/443，退出时还原 hosts
+  - iptables：iptables REDIRECT + UDP 53 重定向，需 root，仅 Android/Linux
 - SIGHUP 触发热加载
 
 ### internal/config
@@ -168,8 +172,14 @@ server cdn.target-app.com {
 
 ### internal/tunmode
 
-- github.com/songgao/water 创建 tun0，gVisor netstack（gvisor.dev/gvisor/pkg/tcpip）做用户态 TCP/IP 终结
+- Linux/Android：github.com/songgao/water 创建 tun0；Windows：water 走 wintun 驱动（需随二进制分发 wintun.dll，管理员权限）
+- gVisor netstack（gvisor.dev/gvisor/pkg/tcpip）做用户态 TCP/IP 终结
 - 路由与 DNS 重定向命令由启动脚本生成，进程仅负责 TUN 收发
+
+### internal/hostsmode
+
+- 仅 Windows：以管理员权限备份并改写 `C:\Windows\System32\drivers\etc\hosts`，目标域名指向 127.0.0.1
+- 进程监听 80/443 直接接收流量；退出与异常终止时尽力还原 hosts 备份
 
 ### internal/admin
 
@@ -195,7 +205,8 @@ server cdn.target-app.com {
 
 | 场景 | 处理 |
 |------|------|
-| TUN 创建权限不足 | 降级显式代理模式，日志输出明确提示 |
+| TUN 创建权限不足或 wintun 驱动缺失 | 降级显式代理模式，日志输出明确提示 |
+| hosts 写入失败（无管理员权限或文件被占用） | hosts 模式启动失败，降级提示并保留原 hosts |
 | 上游 DNS 不可达 | DNS 返回 SERVFAIL，计数上报 |
 | 上游连接失败/超时 | 客户端收到 502，日志记录上游地址与错误 |
 | CA 文件损坏 | 重新生成并输出警告，提示需重装证书 |
@@ -206,8 +217,8 @@ server cdn.target-app.com {
 
 1. 单元测试：config 解析（合法/非法/冲突前缀样例）、fakeip 分配与复用、最长前缀匹配、叶子证书 SAN 断言
 2. 集成测试：httptest 模拟上游 + 临时配置文件 + 随机端口，覆盖 HTTP / HTTPS / CONNECT / miss 直连 / 502 / SIGHUP 热加载
-3. 构建验证：Makefile 产出 android/arm64、ios/arm64、linux/arm64 三种纯静态二进制并在 CI 校验
-4. 设备验收：adb push 二进制与配置 → adb shell 启动 → 设备侧验证目标 App 请求命中路由、管理接口可查询
+3. 构建验证：Makefile 产出 android/arm64、ios/arm64、linux/arm64、windows/amd64 四种纯静态二进制并在 CI 校验（Windows 产物另附带 wintun.dll 分发说明）
+4. 设备验收：adb push 二进制与配置 → adb shell 启动 → 设备侧验证目标 App 请求命中路由、管理接口可查询；Windows 上验证 hosts 模式与显式代理模式端到端转发
 
 ## References
 

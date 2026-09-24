@@ -5,7 +5,7 @@ Updated: 2026-09-24
 
 ## Introduction
 
-基于 Go 实现的单二进制本地反向代理服务，可直接在移动设备（Android / iOS / HarmonyOS）的 shell 环境中运行。服务以代理服务器方式劫持目标 App 对固定域名（一个或多个）的请求，依据类 nginx 语法的配置文件将请求反向代理转发到自有服务器。内置 Fake IP DNS 劫持、本地 CA 动态签发证书的 TLS 中间人能力，并提供多种流量接管模式以适配不同权限环境（root / 无 root）。
+基于 Go 实现的单二进制本地反向代理服务，可直接在移动设备与桌面设备（Android / iOS / HarmonyOS / Windows）的 shell 环境中运行。服务以代理服务器方式劫持目标 App 对固定域名（一个或多个）的请求，依据类 nginx 语法的配置文件将请求反向代理转发到自有服务器。内置 Fake IP DNS 劫持、本地 CA 动态签发证书的 TLS 中间人能力，并提供多种流量接管模式以适配不同权限环境（root / 无 root）。
 
 ## Glossary
 
@@ -26,7 +26,7 @@ Updated: 2026-09-24
 
 #### Acceptance Criteria
 
-1. THE 代理服务 SHALL 以纯 Go 静态链接单二进制发布，提供 android/arm64、ios/arm64、linux/arm64 三种构建产物
+1. THE 代理服务 SHALL 以纯 Go 静态链接单二进制发布，提供 android/arm64、ios/arm64、linux/arm64、windows/amd64 四种构建产物
 2. THE 代理服务 SHALL 从类 nginx 语法的配置文件加载路由规则，server 块按域名划分，location 按路径前缀匹配，proxy_pass 指定上游
 3. WHEN 收到 SIGHUP 信号或调用 reload 管理接口，THE 代理服务 SHALL 在已有连接不中断的情况下重新加载配置
 4. IF 配置文件存在语法错误，THE 代理服务 SHALL 继续使用当前生效配置，并在日志中输出错误行号与原因
@@ -39,10 +39,11 @@ Updated: 2026-09-24
 
 1. THE 代理服务 SHALL 提供显式代理模式，监听指定端口并处理 HTTP 代理协议（含 HTTPS CONNECT）
 2. THE 代理服务 SHALL 提供 DNS 劫持模式，监听 UDP 53 端口，对目标域名返回假 IP，对其余域名向真实 DNS 转发
-3. WHEN 以 TUN 模式运行，THE 代理服务 SHALL 创建 TUN 网卡，通过用户态 TCP/IP 协议栈把目标流量送入本地路由处理
-4. WHEN 以 iptables 透明代理模式运行，THE 代理服务 SHALL 从内核连接信息中还原原始目标地址并送入本地路由处理
-5. IF 进程缺少创建 TUN 所需权限，THE 代理服务 SHALL 输出提示并以显式代理模式降级运行
-6. THE 代理服务 SHALL 监听 80 与 443 端口，用于接收假 IP 流量（配合 DNS 劫持或设备路由指向）
+3. WHEN 以 TUN 模式运行，THE 代理服务 SHALL 创建 TUN 网卡（Linux/Android 使用 /dev/net/tun，Windows 使用 wintun 驱动），通过用户态 TCP/IP 协议栈把目标流量送入本地路由处理
+4. WHEN 以 iptables 透明代理模式运行（仅 Android/Linux），THE 代理服务 SHALL 从内核连接信息中还原原始目标地址并送入本地路由处理
+5. WHEN 以 hosts 接管模式运行（仅 Windows），THE 代理服务 SHALL 以管理员权限将目标域名写入系统 hosts 文件指向 127.0.0.1，并监听 80 与 443 接收流量
+6. IF 进程缺少创建 TUN 所需权限，THE 代理服务 SHALL 输出提示并以显式代理模式降级运行
+7. THE 代理服务 SHALL 监听 80 与 443 端口，用于接收假 IP 流量（配合 DNS 劫持或设备路由指向）
 
 ### Requirement 3: 类 nginx 路由与转发
 
@@ -89,6 +90,7 @@ Updated: 2026-09-24
 ## Constraints & Assumptions
 
 - Android：二进制经 adb push 或 Termux 运行；TUN 模式与 iptables 模式需要 root；显式代理模式无需 root
+- Windows：显式代理与 hosts 接管模式可用；hosts 写入与 TUN（wintun 驱动）模式需管理员权限；DNS 劫持模式可通过网卡 DNS 设置配合 answer=self 使用
 - iOS：未越狱设备无法运行任意 shell 二进制，本方案仅适用于越狱设备；非越狱场景需另建 NetworkExtension App（超出本期范围）
 - HarmonyOS NEXT：计划以 GOOS=linux 纯静态二进制经 hdc shell 运行，可行性待设备实测验证，列入风险项
 - 目标 App 必须信任本地 CA 才能完成 TLS 中间人：自研 App 可配置信任用户证书；第三方 App 需设备已 Root 并将 CA 装入系统证书存储
