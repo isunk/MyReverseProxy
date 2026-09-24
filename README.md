@@ -154,3 +154,41 @@ curl -x http://127.0.0.1:443 --cacert certs/ca.crt \
 ```
 
 观察 mrp 日志（`domain` / `path` / `upstream` / `status` / `elapsed`）确认路由命中与转发结果；上游不可达时返回 502。
+
+### 6. 各平台设备对接代理
+
+代理地址填 mrp 所在机器能被设备访问到的 IP（不能用 `127.0.0.1`），端口即 `--listen`（默认 `443`）。
+
+#### Android
+
+```bash
+# 设置全局 HTTP 代理（IP 换成 mrp 所在机器的局域网地址）
+adb shell settings put global http_proxy 192.168.1.100:443
+
+# 取消代理
+adb shell settings put global http_proxy :0
+```
+
+部分 App 自实现网络栈、忽略系统代理，这类 App 需改用 hosts / DNS 重定向方式。
+
+#### Windows
+
+```bash
+# 设置 WinHTTP 系统代理（服务与部分命令行工具生效）
+netsh winhttp set proxy 192.168.1.100:443
+
+# 取消代理
+netsh winhttp reset proxy
+```
+
+浏览器与多数桌面应用走 WinINET（GUI）：设置 → 网络和 Internet → 代理 → 手动设置代理，填入 `192.168.1.100:443`，关闭时切回「自动检测」。
+
+#### Linux
+
+```bash
+# 设置会话级代理（curl 等命令行工具生效）
+export http_proxy=http://192.168.1.100:443 https_proxy=http://192.168.1.100:443
+
+# 取消代理
+unset http_proxy https_proxy
+```
