@@ -13,16 +13,14 @@ import (
 )
 
 var (
-	httpListen  string
-	httpsListen string
+	listenAddr string
 )
 
 func main() {
 	configPath := flag.String("config", "routing.yaml", "路由配置文件路径")
-	httpAddr := flag.String("http", ":80", "HTTP 监听地址，传空禁用")
-	httpsAddr := flag.String("https", ":443", "HTTPS 监听地址，传空禁用")
-	tlsCert := flag.String("tls-cert", "", "TLS 证书路径，启用 HTTPS 时必填")
-	tlsKey := flag.String("tls-key", "", "TLS 私钥路径，启用 HTTPS 时必填")
+	addr := flag.String("listen", ":443", "监听地址，按首个字节自动识别 HTTP 与 TLS")
+	tlsCert := flag.String("tls-cert", "", "TLS 证书路径，用于 HTTPS 直连的 MITM")
+	tlsKey := flag.String("tls-key", "", "TLS 私钥路径")
 	logLevel := flag.String("log-level", "info", "日志级别 debug/info/warn/error")
 	flag.Parse()
 
@@ -32,8 +30,7 @@ func main() {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
 
-	httpListen = *httpAddr
-	httpsListen = *httpsAddr
+	listenAddr = *addr
 
 	transportVerify := http.DefaultTransport.(*http.Transport).Clone()
 	transportVerify.Proxy = nil
@@ -43,9 +40,9 @@ func main() {
 	transportInsecure.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	var tlsConfig *tls.Config
-	if httpsListen != "" {
+	if *tlsCert != "" || *tlsKey != "" {
 		if *tlsCert == "" || *tlsKey == "" {
-			fatal("启用 HTTPS 监听时必须提供 --tls-cert 与 --tls-key", nil)
+			fatal("--tls-cert 与 --tls-key 必须成对提供", nil)
 		}
 		cert, err := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
 		if err != nil {
@@ -66,32 +63,16 @@ func main() {
 }
 
 func run(p *proxy) {
-	if httpListen != "" {
-		go func() {
-			slog.Info("HTTP 监听", "addr", httpListen)
-			if err := http.ListenAndServe(httpListen, p); err != nil {
-				fatal("HTTP 监听失败", err)
-			}
-		}()
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		fatal("监听失败", err)
 	}
-	if httpsListen != "" {
-		if p.tlsConfig == nil {
-			fatal("启用 HTTPS 监听时必须提供 --tls-cert 与 --tls-key", nil)
+	slog.Info("监听", "addr", listenAddr)
+	go func() {
+		if err := serve(listener, p.tlsConfig, p); err != nil {
+			fatal("服务退出", err)
 		}
-		listener, err := net.Listen("tcp", httpsListen)
-		if err != nil {
-			fatal("HTTPS 监听失败", err)
-		}
-		slog.Info("HTTPS 监听", "addr", httpsListen)
-		go func() {
-			if err := serveHTTPS(listener, p.tlsConfig, p); err != nil {
-				fatal("HTTPS 服务退出", err)
-			}
-		}()
-	}
-	if httpListen == "" && httpsListen == "" {
-		fatal("HTTP 与 HTTPS 监听均未启用", nil)
-	}
+	}()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)

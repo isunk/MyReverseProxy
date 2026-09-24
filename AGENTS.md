@@ -5,7 +5,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 ## 命名风格
 
 - 遵循 Go 惯例 camelCase：类型名大驼峰，变量、字段、函数、方法小驼峰。不用下划线分隔。
-  - 正例：`transportVerify`、`routeTable`、`httpListen`、`newProxy`、`handleConnect`、`byDomain`、`oneConnListener`、`logWriter`
+  - 正例：`transportVerify`、`routeTable`、`listenAddr`、`handleConn`、`handleConnect`、`byDomain`、`oneConnListener`、`logWriter`
   - 反例：`trVerify`（缩写）、`transport_verify`（下划线）、`route_table`（下划线）
 - 单词尽量完整，避免缩写：`transport` 不写 `tr`、`entry` 不写 `r`、`server` 不写 `s`。循环局部变量允许使用 `i`、`k`、`v` 等约定单字母，紧邻上下文允许 `r`（request）、`w`（writer）、`c`（conn）。
 - 类型名大驼峰导出或小驼峰非导出（如 `route`、`routeTable`、`routeEntry`、`logWriter`、`oneConnListener`、`ctxKey`）。
@@ -22,7 +22,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 | `config.go` | YAML 配置结构、`loadTable` | 任何运行期依赖 |
 | `route.go` | `route`、`routeTable`、`pick` | I/O、日志 |
 | `proxy.go` | `proxy` 结构、`ServeHTTP`、`handleConnect`、`tunnel`、`reload`、转发构建 | 连接级 TLS 服务细节 |
-| `server.go` | TLS 监听、SNI 注入、`oneConnListener`、纯工具函数、`logWriter` | 路由决策逻辑 |
+| `server.go` | 单端口监听、TLS/HTTP 协议识别、SNI 注入、`oneConnListener`、纯工具函数、`logWriter` | 路由决策逻辑 |
 | `main_test.go` | 单元与集成测试 | — |
 
 新增文件时保持单一职责，文件名单词式小写。

@@ -83,7 +83,7 @@ func startProxy(t *testing.T, configPath string, tlsConfig *tls.Config) (string,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { listener.Close() })
-	go func() { _ = http.Serve(listener, p) }()
+	go func() { _ = serve(listener, tlsConfig, p) }()
 	return "http://" + listener.Addr().String(), p
 }
 
@@ -230,6 +230,33 @@ func TestProxy_HTTPSViaConnect(t *testing.T) {
 	got := requestBody(t, client, "https://api.example.com/v1/data")
 	if got != "TLS:/v1/data" {
 		t.Fatalf("https via connect: got %q", got)
+	}
+}
+
+func TestServe_DirectTLS(t *testing.T) {
+	up := recordingServer(t, "DIRECT")
+	cert := selfSignedCert(t, []string{"api.example.com"})
+	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"http/1.1"}, MinVersion: tls.VersionTLS12}
+	content := "servers:\n" +
+		"  - domain: api.example.com\n" +
+		"    routes:\n" +
+		"      - prefix: /\n" +
+		"        upstream: " + up.URL + "\n"
+	cfg := writeConfigFile(t, "r.yaml", content)
+	proxyURL, _ := startProxy(t, cfg, tlsConfig)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, ServerName: "api.example.com"})
+	if err != nil {
+		t.Fatalf("tls dial: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("GET /v1/data HTTP/1.1\r\nHost: api.example.com\r\nConnection: close\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(conn)
+	if !strings.Contains(string(body), "DIRECT:/v1/data") {
+		t.Fatalf("direct tls: got %q", body)
 	}
 }
 

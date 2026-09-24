@@ -5,13 +5,13 @@ Updated: 2026-09-24
 
 ## Description
 
-我的反向代理（My Reverse Proxy，缩写 mrp）：Go 实现的反向代理服务，源码按职责拆分为多个文件，构建产物为单一静态二进制。YAML 路由配置（仅承载路由规则），监听 HTTP/HTTPS 端口，按域名（SNI / Host）与路径前缀路由转发到不同上游。TLS 证书由使用者预先创建并经命令行参数指定路径，程序启动时加载。同一监听端口兼容 HTTP 代理协议（CONNECT），可直接作为显式代理使用。证书创建与设备导入步骤见仓库根目录 README.md。
+我的反向代理（My Reverse Proxy，缩写 mrp）：Go 实现的反向代理服务，源码按职责拆分为多个文件，构建产物为单一静态二进制。YAML 路由配置（仅承载路由规则），监听单一端口，按连接首个字节自动识别 HTTP / TLS，再按域名（SNI / Host）与路径前缀路由转发到不同上游。TLS 证书由使用者预先创建并经命令行参数指定路径，程序启动时加载。未配置证书时仍可处理纯 HTTP 转发与 CONNECT 显式代理隧道。证书创建与设备导入步骤见仓库根目录 README.md。
 
 ## Architecture
 
 ```mermaid
 graph TD
-    A["客户端请求"] --> B["监听 80/443"]
+    A["客户端请求"] --> B["单一端口监听，按首个字节识别"]
     B --> C{"请求类型"}
     C --> D["HTTP 按 Host 头"]
     C --> E["TLS 按 SNI"]
@@ -45,7 +45,7 @@ mrp/
 ├── config.go         # YAML 配置结构与 loadTable 解析
 ├── route.go          # route / routeTable 与 pick
 ├── proxy.go          # proxy 结构：路由、转发、CONNECT、tunnel
-├── server.go         # TLS 监听、SNI 注入、oneConnListener、辅助函数、logWriter
+├── server.go         # 单端口监听、TLS/HTTP 识别、SNI 注入、oneConnListener、辅助函数、logWriter
 ├── main_test.go      # 单元与集成测试
 ├── routing.yaml      # 示例路由配置
 ├── README.md         # 证书创建与设备导入指引
@@ -57,19 +57,19 @@ mrp/
 - `config.go` 仅负责把 YAML 解析为 `routeTable`，不依赖 proxy / 传输
 - `route.go` 仅负责路由匹配数据结构，纯函数无副作用
 - `proxy.go` 持有运行期依赖（传输、TLS、路由表原子指针），编排请求处理
-- `server.go` 处理连接级服务（TLS 握手、SNI 注入、单连接 listener）与无状态工具函数
+- `server.go` 处理连接级服务（TLS/HTTP 协议识别、TLS 握手、SNI 注入、单连接 listener）与无状态工具函数
 
 ## CLI
 
 ```
 mrp --config routing.yaml \
-  --http :80 --https :443 \
+  --listen :443 \
   --tls-cert certs/server.crt --tls-key certs/server.key \
   --log-level info
 ```
 
-- `--http` / `--https`：监听地址，默认 `:80` / `:443`；传空禁用
-- `--tls-cert` / `--tls-key`：证书与私钥路径，启用 HTTPS 时必填
+- `--listen`：监听地址，默认 `:443`，同一端口按首个字节自动识别 HTTP 与 TLS
+- `--tls-cert` / `--tls-key`：证书与私钥路径，成对提供；缺省时仅支持 HTTP 转发与 CONNECT 隧道，TLS 直连会被断开
 - SIGHUP 仅热加载路由配置，证书在启动时加载
 
 ## Configuration

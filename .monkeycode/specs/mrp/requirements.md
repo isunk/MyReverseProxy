@@ -5,7 +5,7 @@ Updated: 2026-09-24
 
 ## Introduction
 
-我的反向代理（My Reverse Proxy，缩写 mrp）：基于 Go 实现的单文件反向代理服务。直接运行后监听 HTTP/HTTPS 端口，依据 YAML 路由配置文件，按请求的域名（SNI / Host）与路径前缀匹配自定义规则，将请求转发到不同的服务器。配置文件只承载路由规则，监听地址与 TLS 证书路径通过命令行参数指定。TLS 证书由使用者预先创建，程序仅加载使用，证书的创建与导入设备的步骤在 README.md 中以命令行方式给出。
+我的反向代理（My Reverse Proxy，缩写 mrp）：基于 Go 实现的单文件反向代理服务。直接运行后监听单一端口，按连接首字节自动识别 HTTP / TLS，依据 YAML 路由配置文件，按请求的域名（SNI / Host）与路径前缀匹配自定义规则，将请求转发到不同的服务器。配置文件只承载路由规则，监听地址与 TLS 证书路径通过命令行参数指定。TLS 证书由使用者预先创建，程序仅加载使用，证书的创建与导入设备的步骤在 README.md 中以命令行方式给出。
 
 ## Glossary
 
@@ -47,7 +47,7 @@ Updated: 2026-09-24
 #### Acceptance Criteria
 
 1. WHEN 启动，THE 代理服务 SHALL 从命令行参数指定的路径加载 TLS 证书与私钥文件
-2. WHEN 命令行启用 HTTPS 监听而证书文件缺失或解析失败，THE 代理服务 SHALL 启动失败并输出明确的文件路径错误
+2. WHEN 命令行通过 `--tls-cert` / `--tls-key` 指定证书而文件缺失或解析失败，THE 代理服务 SHALL 启动失败并输出明确的文件路径错误；未指定证书时仅支持 HTTP 转发与 CONNECT 隧道，TLS 直连连接被断开
 3. WHEN 转发到 HTTPS 上游，THE 代理服务 SHALL 默认校验上游证书链，并支持按 location 配置跳过校验
 
 ### Requirement 4: 日志
@@ -71,7 +71,7 @@ Updated: 2026-09-24
 
 ## Constraints & Assumptions
 
-- 监听 80/443：Linux/Android 需 root 或 CAP_NET_BIND_SERVICE，Windows 无需提权；端口可通过配置调整以规避
+- 单一端口监听：按连接首字节自动识别 HTTP / TLS，Linux/Android 占用 `:443` 需 root 或 CAP_NET_BIND_SERVICE，Windows 无需提权；端口可通过 `--listen` 调整以规避
 - 证书全部由使用者预先创建，程序仅加载；服务端证书 SAN 必须覆盖全部目标域名
 - 客户端必须信任导入的 CA 证书：自研 App 可配置信任用户证书；第三方 App 需设备 Root 后装入系统证书存储；目标 App 已确认无证书绑定
 - 流量如何到达代理服务（hosts、DNS 解析、显式代理设置）由使用者在设备侧自行配置，代理服务仅监听端口处理到达的请求

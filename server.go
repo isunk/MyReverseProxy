@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 type ctxKey int
@@ -13,31 +17,83 @@ type ctxKey int
 const sniKey ctxKey = 1
 
 type oneConnListener struct {
-	conn net.Conn
+	conn  net.Conn
+	taken atomic.Bool
+	done  chan struct{}
 }
 
 func newOneConnListener(conn net.Conn) *oneConnListener {
-	return &oneConnListener{conn: conn}
+	return &oneConnListener{conn: conn, done: make(chan struct{})}
 }
 
-func (l *oneConnListener) Accept() (net.Conn, error) { return l.conn, nil }
+func (l *oneConnListener) Accept() (net.Conn, error) {
+	if l.taken.CompareAndSwap(false, true) {
+		return l.conn, nil
+	}
+	<-l.done
+	return nil, net.ErrClosed
+}
 
-func (l *oneConnListener) Close() error { return l.conn.Close() }
+func (l *oneConnListener) finish() {
+	select {
+	case <-l.done:
+	default:
+		close(l.done)
+	}
+}
+
+func (l *oneConnListener) Close() error { return nil }
 
 func (l *oneConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
 
-func serveHTTPS(listener net.Listener, tlsConfig *tls.Config, handler http.Handler) error {
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+func serve(listener net.Listener, tlsConfig *tls.Config, handler http.Handler) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			return err
 		}
-		go serveTLSConn(conn, tlsConfig, handler)
+		go handleConn(conn, tlsConfig, handler)
 	}
 }
 
+func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	buffered := &bufferedConn{Conn: conn, reader: reader}
+	first, err := reader.Peek(1)
+	if err != nil {
+		return
+	}
+	if first[0] == 0x16 {
+		if tlsConfig == nil {
+			slog.Warn("收到 TLS 直连请求但未配置证书，已断开", "remote", conn.RemoteAddr())
+			return
+		}
+		serveTLSConn(buffered, tlsConfig, handler)
+		return
+	}
+	serveSingleConn(&http.Server{Handler: handler}, buffered)
+}
+
+func serveSingleConn(server *http.Server, conn net.Conn) {
+	listener := newOneConnListener(conn)
+	var once sync.Once
+	server.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			once.Do(listener.finish)
+		}
+	}
+	_ = server.Serve(listener)
+}
+
 func serveTLSConn(raw net.Conn, tlsConfig *tls.Config, handler http.Handler) {
-	defer raw.Close()
 	var sni string
 	cfg := tlsConfig.Clone()
 	cfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
@@ -51,7 +107,7 @@ func serveTLSConn(raw net.Conn, tlsConfig *tls.Config, handler http.Handler) {
 		}
 		handler.ServeHTTP(writer, request)
 	})}
-	_ = server.Serve(newOneConnListener(tlsConn))
+	serveSingleConn(server, tlsConn)
 }
 
 func withSNI(request *http.Request, sni string) context.Context {
