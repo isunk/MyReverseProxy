@@ -38,14 +38,14 @@ func main() {
 		}
 	}
 
-	transportVerify := http.DefaultTransport.(*http.Transport).Clone()
-	transportVerify.Proxy = nil
-	transportVerify.DialContext = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
-	transportVerify.ResponseHeaderTimeout = 30 * time.Second
-	transportInsecure := transportVerify.Clone()
-	transportInsecure.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	certSet, keySet := specified["tls-cert"], specified["tls-key"]
+	if certSet != keySet {
+		fatal("--tls-cert 与 --tls-key 必须成对提供", nil)
+	}
 
-	tlsConfig, err := resolveTLSConfig(*tlsCert, *tlsKey, specified["tls-cert"], specified["tls-key"])
+	transportVerify, transportInsecure := newTransports(5 * time.Second)
+
+	tlsConfig, err := resolveTLSConfig(*tlsCert, *tlsKey, certSet || keySet)
 	if err != nil {
 		fatal("TLS 证书配置错误", err)
 	}
@@ -57,24 +57,29 @@ func main() {
 	run(instance, fmt.Sprintf(":%d", *port))
 }
 
-func resolveTLSConfig(tlsCert, tlsKey string, certSet, keySet bool) (*tls.Config, error) {
-	if certSet || keySet {
-		if !certSet || !keySet {
-			return nil, fmt.Errorf("--tls-cert 与 --tls-key 必须成对提供")
+func newTransports(dialTimeout time.Duration) (verify, insecure *http.Transport) {
+	verify = http.DefaultTransport.(*http.Transport).Clone()
+	verify.Proxy = nil
+	verify.DialContext = (&net.Dialer{Timeout: dialTimeout}).DialContext
+	verify.ResponseHeaderTimeout = 30 * time.Second
+	insecure = verify.Clone()
+	insecure.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	return verify, insecure
+}
+
+func resolveTLSConfig(tlsCert, tlsKey string, explicit bool) (*tls.Config, error) {
+	if !explicit {
+		certExists := fileExists(tlsCert)
+		keyExists := fileExists(tlsKey)
+		if !certExists && !keyExists {
+			slog.Warn("未找到默认证书，仅支持 HTTP 与 CONNECT 隧道", "cert", tlsCert, "key", tlsKey)
+			return nil, nil
 		}
-		return loadTLSConfig(tlsCert, tlsKey)
+		if certExists != keyExists {
+			return nil, fmt.Errorf("证书与私钥必须成对存在：%s / %s", tlsCert, tlsKey)
+		}
 	}
-	certExists := fileExists(tlsCert)
-	keyExists := fileExists(tlsKey)
-	switch {
-	case certExists && keyExists:
-		return loadTLSConfig(tlsCert, tlsKey)
-	case certExists != keyExists:
-		return nil, fmt.Errorf("证书与私钥必须成对存在：%s / %s", tlsCert, tlsKey)
-	default:
-		slog.Warn("未找到默认证书，仅支持 HTTP 与 CONNECT 隧道", "cert", tlsCert, "key", tlsKey)
-		return nil, nil
-	}
+	return loadTLSConfig(tlsCert, tlsKey)
 }
 
 func loadTLSConfig(tlsCert, tlsKey string) (*tls.Config, error) {
@@ -107,9 +112,11 @@ func fileExists(path string) bool {
 }
 
 func ensureConfig(path string) error {
-	if _, err := os.Stat(path); err == nil {
+	_, err := os.Stat(path)
+	if err == nil {
 		return nil
-	} else if !os.IsNotExist(err) {
+	}
+	if !os.IsNotExist(err) {
 		return err
 	}
 	if err := os.WriteFile(path, []byte(defaultConfig), 0o644); err != nil {
@@ -125,25 +132,29 @@ func run(p *proxy, listenAddr string) {
 		fatal("监听失败", err)
 	}
 	slog.Info("监听", "addr", listenAddr)
-	go func() {
-		if err := serve(listener, p.tlsConfig, p); err != nil {
-			fatal("服务退出", err)
-		}
-	}()
+	go serveListener(listener, p)
 	go p.watchFile(time.Second, nil)
+	serveSignals(p)
+}
 
+func serveListener(listener net.Listener, p *proxy) {
+	if err := serve(listener, p.tlsConfig, p); err != nil {
+		fatal("服务退出", err)
+	}
+}
+
+func serveSignals(p *proxy) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	for sig := range sigCh {
-		if sig == syscall.SIGHUP {
-			if err := p.reload(); err != nil {
-				slog.Error("热加载失败，沿用当前配置", "error", err)
-			} else {
-				slog.Info("路由配置已热加载")
-			}
+		if sig != syscall.SIGHUP {
+			return
+		}
+		if err := p.reload(); err != nil {
+			slog.Error("热加载失败，沿用当前配置", "error", err)
 			continue
 		}
-		return
+		slog.Info("路由配置已热加载")
 	}
 }
 

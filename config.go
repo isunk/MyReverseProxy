@@ -50,12 +50,12 @@ func loadTable(path string) (*routeTable, error) {
 	if err != nil {
 		return nil, err
 	}
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
 	table := &routeTable{byDomain: map[string][]*route{}}
-	for _, server := range cfg.Servers {
+	for _, server := range config.Servers {
 		if server.Domain == "" {
 			return nil, fmt.Errorf("domain 不能为空")
 		}
@@ -64,23 +64,23 @@ func loadTable(path string) (*routeTable, error) {
 		}
 		seen := map[string]bool{}
 		var entries []*route
-		for _, routeCfg := range server.Routes {
-			if routeCfg.Prefix == "" || routeCfg.Upstream == "" {
+		for _, routeConfig := range server.Routes {
+			if routeConfig.Prefix == "" || routeConfig.Upstream == "" {
 				return nil, fmt.Errorf("domain %q: prefix 与 upstream 均为必填", server.Domain)
 			}
-			if seen[routeCfg.Prefix] {
-				return nil, fmt.Errorf("domain %q: prefix %q 重复定义", server.Domain, routeCfg.Prefix)
+			if seen[routeConfig.Prefix] {
+				return nil, fmt.Errorf("domain %q: prefix %q 重复定义", server.Domain, routeConfig.Prefix)
 			}
-			seen[routeCfg.Prefix] = true
-			target, err := url.Parse(routeCfg.Upstream)
+			seen[routeConfig.Prefix] = true
+			target, err := url.Parse(routeConfig.Upstream)
 			if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
-				return nil, fmt.Errorf("domain %q: 非法 upstream %q", server.Domain, routeCfg.Upstream)
+				return nil, fmt.Errorf("domain %q: 非法 upstream %q", server.Domain, routeConfig.Upstream)
 			}
 			entries = append(entries, &route{
-				prefix:   routeCfg.Prefix,
+				prefix:   routeConfig.Prefix,
 				target:   target,
-				host:     routeCfg.Host,
-				insecure: routeCfg.TLSVerify != nil && !*routeCfg.TLSVerify,
+				host:     routeConfig.Host,
+				insecure: routeConfig.TLSVerify != nil && !*routeConfig.TLSVerify,
 			})
 		}
 		table.byDomain[server.Domain] = entries

@@ -26,6 +26,9 @@ type oneConnListener struct {
 	done  chan struct{}
 }
 
+// TLS 记录层首字节 0x16 表示 handshake，即 ClientHello 报文
+const tlsRecordHandshake = 0x16
+
 func newOneConnListener(conn net.Conn) *oneConnListener {
 	return &oneConnListener{conn: conn, done: make(chan struct{})}
 }
@@ -71,7 +74,7 @@ func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler) {
 	if err != nil {
 		return
 	}
-	if first[0] == 0x16 {
+	if first[0] == tlsRecordHandshake {
 		if tlsConfig == nil {
 			slog.Warn("收到 TLS 直连请求但未配置证书，已断开", "remote", conn.RemoteAddr())
 			return
@@ -129,6 +132,8 @@ const (
 	maxCachedCerts = 512
 )
 
+var serialLimit = new(big.Int).Lsh(big.NewInt(1), 128)
+
 type cacheEntry struct {
 	cert      *tls.Certificate
 	expiresAt time.Time
@@ -170,7 +175,7 @@ func (ca *certificateAuthority) sign(serverName string) (*tls.Certificate, error
 	if err != nil {
 		return nil, err
 	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	serial, err := rand.Int(rand.Reader, serialLimit)
 	if err != nil {
 		return nil, err
 	}

@@ -68,12 +68,7 @@ func recordingServer(t *testing.T, tag string) *httptest.Server {
 
 func startProxy(t *testing.T, configPath string, tlsConfig *tls.Config) (string, *proxy) {
 	t.Helper()
-	transportVerify := http.DefaultTransport.(*http.Transport).Clone()
-	transportVerify.Proxy = nil
-	transportVerify.DialContext = (&net.Dialer{Timeout: 2 * time.Second}).DialContext
-	transportVerify.ResponseHeaderTimeout = 2 * time.Second
-	transportInsecure := transportVerify.Clone()
-	transportInsecure.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	transportVerify, transportInsecure := newTransports(2 * time.Second)
 	p, err := newProxy(configPath, transportVerify, transportInsecure, tlsConfig)
 	if err != nil {
 		t.Fatalf("newProxy: %v", err)
@@ -365,14 +360,14 @@ func TestResolveTLSConfig_Defaults(t *testing.T) {
 	dir := t.TempDir()
 	certPath := filepath.Join(dir, "ca.crt")
 	keyPath := filepath.Join(dir, "ca.key")
-	cfg, err := resolveTLSConfig(certPath, keyPath, false, false)
+	cfg, err := resolveTLSConfig(certPath, keyPath, false)
 	if err != nil || cfg != nil {
 		t.Fatalf("want nil config without certs, got %v err=%v", cfg, err)
 	}
 	if err := os.WriteFile(certPath, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveTLSConfig(certPath, keyPath, false, false); err == nil {
+	if _, err := resolveTLSConfig(certPath, keyPath, false); err == nil {
 		t.Fatal("want error for missing key")
 	}
 }

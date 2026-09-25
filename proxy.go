@@ -124,7 +124,7 @@ func (p *proxy) newRouteProxy(entry *route, transport http.RoundTripper) *httput
 func (p *proxy) errorHandler(writer http.ResponseWriter, request *http.Request, err error) {
 	slog.Error("上游请求失败", "host", request.Host, "path", request.URL.Path, "error", err)
 	writer.WriteHeader(http.StatusBadGateway)
-	io.WriteString(writer, "502 Bad Gateway")
+	_, _ = io.WriteString(writer, "502 Bad Gateway")
 }
 
 func (p *proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -170,7 +170,7 @@ func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	if p.tlsConfig == nil {
-		client.Write([]byte(connectBadGateway))
+		_, _ = client.Write([]byte(connectBadGateway))
 		return
 	}
 	slog.Info("connect", "domain", domain, "mode", "mitm")
@@ -184,7 +184,7 @@ func (p *proxy) tunnel(client net.Conn, target string) {
 	upstream, err := net.DialTimeout("tcp", target, 10*time.Second)
 	if err != nil {
 		slog.Error("隧道目标连接失败", "target", target, "error", err)
-		client.Write([]byte(connectBadGateway))
+		_, _ = client.Write([]byte(connectBadGateway))
 		return
 	}
 	defer upstream.Close()
