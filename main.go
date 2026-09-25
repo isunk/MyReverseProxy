@@ -46,7 +46,7 @@ func main() {
 
 	transportVerify, transportInsecure := newTransports(5 * time.Second)
 
-	tlsConfig, err := resolveTLSConfig(*tlsCert, *tlsKey, certSet || keySet)
+	tlsConfig, err := resolveTLSConfig(*tlsCert, *tlsKey, certSet && keySet)
 	if err != nil {
 		fatal("TLS 证书配置错误", err)
 	}
