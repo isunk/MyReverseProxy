@@ -164,9 +164,10 @@ func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 	domain := hostOnly(request.Host)
 	if !p.table.Load().has(domain) {
 		slog.Info("connect", "target", request.Host, "mode", "tunnel")
-		if _, err := client.Write([]byte(connectEstablished)); err == nil {
-			p.tunnel(client, request.Host)
+		if _, err := client.Write([]byte(connectEstablished)); err != nil {
+			return
 		}
+		p.tunnel(client, request.Host)
 		return
 	}
 	if p.tlsConfig == nil {

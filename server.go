@@ -9,7 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"fmt"
+	"errors"
 	"log/slog"
 	"math/big"
 	"net"
@@ -152,7 +152,7 @@ func newCertificateAuthority(cert *x509.Certificate, key crypto.Signer) *certifi
 
 func (ca *certificateAuthority) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	if hello.ServerName == "" {
-		return nil, fmt.Errorf("缺少 SNI，无法按域名签发证书")
+		return nil, errors.New("缺少 SNI，无法按域名签发证书")
 	}
 	ca.mu.Lock()
 	defer ca.mu.Unlock()

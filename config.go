@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -57,7 +58,7 @@ func loadTable(path string) (*routeTable, error) {
 	table := &routeTable{byDomain: map[string][]*route{}}
 	for _, server := range config.Servers {
 		if server.Domain == "" {
-			return nil, fmt.Errorf("domain 不能为空")
+			return nil, errors.New("domain 不能为空")
 		}
 		if _, exists := table.byDomain[server.Domain]; exists {
 			return nil, fmt.Errorf("domain %q 重复定义", server.Domain)

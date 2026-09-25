@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -59,7 +60,7 @@ func main() {
 
 func newTransports(dialTimeout time.Duration) (verify, insecure *http.Transport) {
 	verify = http.DefaultTransport.(*http.Transport).Clone()
-	verify.Proxy = nil
+	verify.Proxy = nil // 禁用环境代理，避免代理流量经上游代理回环到自身
 	verify.DialContext = (&net.Dialer{Timeout: dialTimeout}).DialContext
 	verify.ResponseHeaderTimeout = 30 * time.Second
 	insecure = verify.Clone()
@@ -87,16 +88,13 @@ func loadTLSConfig(tlsCert, tlsKey string) (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(pair.Certificate) == 0 {
-		return nil, fmt.Errorf("证书文件为空")
-	}
 	caCert, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
 		return nil, err
 	}
 	signer, ok := pair.PrivateKey.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("私钥类型不支持")
+		return nil, errors.New("私钥类型不支持")
 	}
 	authority := newCertificateAuthority(caCert, signer)
 	return &tls.Config{
