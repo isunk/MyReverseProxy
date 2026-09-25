@@ -282,6 +282,40 @@ func TestProxy_502OnUnreachable(t *testing.T) {
 	}
 }
 
+func TestServe_DirectTLS_RoutesBySNI(t *testing.T) {
+	up := recordingServer(t, "SNI")
+	caCert, caKey := testAuthorityCA(t)
+	authority := newCertificateAuthority(caCert, caKey)
+	tlsConfig := &tls.Config{
+		GetCertificate: authority.getCertificate,
+		NextProtos:     []string{"http/1.1"},
+		MinVersion:     tls.VersionTLS12,
+	}
+	content := "servers:\n" +
+		"  - domain: api.example.com\n" +
+		"    routes:\n" +
+		"      - prefix: /\n" +
+		"        upstream: " + up.URL + "\n"
+	cfg := writeConfigFile(t, "r.yaml", content)
+	proxyURL, _ := startProxy(t, cfg, tlsConfig)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	// SNI 指向 api.example.com，但 Host 头故意写成 other.com，
+	// 验证 TLS 路由用 SNI 而非 Host 头
+	conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, ServerName: "api.example.com"})
+	if err != nil {
+		t.Fatalf("tls dial: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("GET /v1/data HTTP/1.1\r\nHost: other.com\r\nConnection: close\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(conn)
+	if !strings.Contains(string(body), "SNI:/v1/data") {
+		t.Fatalf("应按 SNI 路由命中 api.example.com，got %q", body)
+	}
+}
+
 func TestReload_SwitchesRoute(t *testing.T) {
 	upA := recordingServer(t, "A")
 	upB := recordingServer(t, "B")

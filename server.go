@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -20,10 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 )
-
-type ctxKey int
-
-const sniKey ctxKey = 1
 
 type oneConnListener struct {
 	conn  net.Conn
@@ -44,11 +39,7 @@ func (l *oneConnListener) Accept() (net.Conn, error) {
 }
 
 func (l *oneConnListener) finish() {
-	select {
-	case <-l.done:
-	default:
-		close(l.done)
-	}
+	close(l.done)
 }
 
 func (l *oneConnListener) Close() error { return nil }
@@ -103,29 +94,12 @@ func serveSingleConn(server *http.Server, conn net.Conn) {
 }
 
 func serveTLSConn(raw net.Conn, tlsConfig *tls.Config, handler http.Handler) {
-	var sni string
-	cfg := tlsConfig.Clone()
-	cfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-		sni = hello.ServerName
-		return nil, nil
-	}
-	tlsConn := tls.Server(raw, cfg)
-	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if sni != "" {
-			request = request.WithContext(withSNI(request, sni))
-		}
-		handler.ServeHTTP(writer, request)
-	})}
-	serveSingleConn(server, tlsConn)
-}
-
-func withSNI(request *http.Request, sni string) context.Context {
-	return context.WithValue(request.Context(), sniKey, sni)
+	serveSingleConn(&http.Server{Handler: handler}, tls.Server(raw, tlsConfig))
 }
 
 func domainOf(request *http.Request) string {
-	if value, ok := request.Context().Value(sniKey).(string); ok && value != "" {
-		return value
+	if request.TLS != nil && request.TLS.ServerName != "" {
+		return request.TLS.ServerName
 	}
 	return hostOnly(request.Host)
 }

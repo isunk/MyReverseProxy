@@ -18,6 +18,11 @@ type routeTable struct {
 	byDomain map[string][]*route
 }
 
+func (t *routeTable) has(domain string) bool {
+	_, ok := t.byDomain[domain]
+	return ok
+}
+
 func (t *routeTable) pick(domain, path string) (*route, bool) {
 	var best *route
 	for _, entry := range t.byDomain[domain] {

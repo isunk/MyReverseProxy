@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+const (
+	connectEstablished = "HTTP/1.1 200 Connection Established\r\n\r\n"
+	connectBadGateway  = "HTTP/1.1 502 Bad Gateway\r\n\r\n"
+)
+
 type proxy struct {
 	configPath        string
 	table             atomic.Pointer[routeTable]
@@ -157,20 +162,19 @@ func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 	defer client.Close()
 
 	domain := hostOnly(request.Host)
-	_, matched := p.table.Load().pick(domain, "/")
-	if !matched {
+	if !p.table.Load().has(domain) {
 		slog.Info("connect", "target", request.Host, "mode", "tunnel")
-		if _, err := client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err == nil {
+		if _, err := client.Write([]byte(connectEstablished)); err == nil {
 			p.tunnel(client, request.Host)
 		}
 		return
 	}
 	if p.tlsConfig == nil {
-		client.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+		client.Write([]byte(connectBadGateway))
 		return
 	}
 	slog.Info("connect", "domain", domain, "mode", "mitm")
-	if _, err := client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return
 	}
 	serveTLSConn(client, p.tlsConfig, p)
@@ -180,7 +184,7 @@ func (p *proxy) tunnel(client net.Conn, target string) {
 	upstream, err := net.DialTimeout("tcp", target, 10*time.Second)
 	if err != nil {
 		slog.Error("隧道目标连接失败", "target", target, "error", err)
-		client.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+		client.Write([]byte(connectBadGateway))
 		return
 	}
 	defer upstream.Close()

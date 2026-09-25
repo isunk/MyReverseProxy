@@ -15,10 +15,6 @@ import (
 	"time"
 )
 
-var (
-	listenAddr string
-)
-
 func main() {
 	configPath := flag.String("config", "routing.yaml", "路由配置文件路径，未指定时默认当前目录 routing.yaml，缺失则自动创建")
 	port := flag.Int("port", 443, "监听端口，按首个字节自动识别 HTTP 与 TLS")
@@ -42,8 +38,6 @@ func main() {
 		}
 	}
 
-	listenAddr = fmt.Sprintf(":%d", *port)
-
 	transportVerify := http.DefaultTransport.(*http.Transport).Clone()
 	transportVerify.Proxy = nil
 	transportVerify.DialContext = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
@@ -60,7 +54,7 @@ func main() {
 	if err != nil {
 		fatal("加载路由配置失败", err)
 	}
-	run(instance)
+	run(instance, fmt.Sprintf(":%d", *port))
 }
 
 func resolveTLSConfig(tlsCert, tlsKey string, certSet, keySet bool) (*tls.Config, error) {
@@ -125,7 +119,7 @@ func ensureConfig(path string) error {
 	return nil
 }
 
-func run(p *proxy) {
+func run(p *proxy, listenAddr string) {
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		fatal("监听失败", err)
