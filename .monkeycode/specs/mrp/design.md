@@ -63,13 +63,13 @@ mrp/
 
 ```
 mrp --config routing.yaml \
-  --listen :443 \
-  --tls-cert certs/server.crt --tls-key certs/server.key \
-  --log-level info
+  --port 443 \
+  --cert ca.crt --key ca.key \
+  --log info
 ```
 
-- `--listen`：监听地址，默认 `:443`，同一端口按首个字节自动识别 HTTP 与 TLS
-- `--tls-cert` / `--tls-key`：证书与私钥路径，成对提供；缺省时仅支持 HTTP 转发与 CONNECT 隧道，TLS 直连会被断开
+- `--port`：监听端口，默认 `443`，同一端口按首个字节自动识别 HTTP 与 TLS
+- `--cert` / `--key`：证书与私钥路径，成对提供；缺省时仅支持 HTTP 转发与 CONNECT 隧道，TLS 直连会被断开
 - 路由配置文件修改后自动热加载（轮询变更），`SIGHUP` 手动触发仍可用；证书在启动时加载
 
 ## Configuration

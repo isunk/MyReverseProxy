@@ -47,7 +47,7 @@ Updated: 2026-09-24
 #### Acceptance Criteria
 
 1. WHEN 启动，THE 代理服务 SHALL 从命令行参数指定的路径加载 TLS 证书与私钥文件
-2. WHEN 命令行通过 `--tls-cert` / `--tls-key` 指定证书而文件缺失或解析失败，THE 代理服务 SHALL 启动失败并输出明确的文件路径错误；未指定证书时仅支持 HTTP 转发与 CONNECT 隧道，TLS 直连连接被断开
+2. WHEN 命令行通过 `--cert` / `--key` 指定证书而文件缺失或解析失败，THE 代理服务 SHALL 启动失败并输出明确的文件路径错误；未指定证书时仅支持 HTTP 转发与 CONNECT 隧道，TLS 直连连接被断开
 3. WHEN 转发到 HTTPS 上游，THE 代理服务 SHALL 默认校验上游证书链，并支持按 location 配置跳过校验
 
 ### Requirement 4: 日志

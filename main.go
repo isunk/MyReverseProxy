@@ -17,11 +17,11 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "routing.yaml", "路由配置文件路径，未指定时默认当前目录 routing.yaml，缺失则自动创建")
-	port := flag.Int("port", 443, "监听端口，按首个字节自动识别 HTTP 与 TLS")
-	tlsCert := flag.String("tls-cert", "ca.crt", "TLS 证书路径，用于 HTTPS 直连的 MITM")
-	tlsKey := flag.String("tls-key", "ca.key", "TLS 私钥路径")
-	logLevel := flag.String("log-level", "info", "日志级别 debug/info/warn/error")
+	configPath := flag.String("config", "routing.yaml", "routing config file, created automatically when missing")
+	port := flag.Int("port", 443, "listen port, HTTP and TLS detected per connection")
+	certPath := flag.String("cert", "ca.crt", "CA certificate file for MITM signing")
+	keyPath := flag.String("key", "ca.key", "CA private key file")
+	logLevel := flag.String("log", "info", "log level: debug, info, warn or error")
 	flag.Parse()
 
 	var level slog.Level
@@ -39,14 +39,14 @@ func main() {
 		}
 	}
 
-	certSet, keySet := specified["tls-cert"], specified["tls-key"]
+	certSet, keySet := specified["cert"], specified["key"]
 	if certSet != keySet {
-		fatal("--tls-cert 与 --tls-key 必须成对提供", nil)
+		fatal("--cert 与 --key 必须成对提供", nil)
 	}
 
 	transportVerify, transportInsecure := newTransports(5 * time.Second)
 
-	tlsConfig, err := resolveTLSConfig(*tlsCert, *tlsKey, certSet && keySet)
+	tlsConfig, err := resolveTLSConfig(*certPath, *keyPath, certSet && keySet)
 	if err != nil {
 		fatal("TLS 证书配置错误", err)
 	}
@@ -68,23 +68,23 @@ func newTransports(dialTimeout time.Duration) (verify, insecure *http.Transport)
 	return verify, insecure
 }
 
-func resolveTLSConfig(tlsCert, tlsKey string, explicit bool) (*tls.Config, error) {
+func resolveTLSConfig(certPath, keyPath string, explicit bool) (*tls.Config, error) {
 	if !explicit {
-		certExists := fileExists(tlsCert)
-		keyExists := fileExists(tlsKey)
+		certExists := fileExists(certPath)
+		keyExists := fileExists(keyPath)
 		if !certExists && !keyExists {
-			slog.Warn("未找到默认证书，仅支持 HTTP 与 CONNECT 隧道", "cert", tlsCert, "key", tlsKey)
+			slog.Warn("未找到默认证书，仅支持 HTTP 与 CONNECT 隧道", "cert", certPath, "key", keyPath)
 			return nil, nil
 		}
 		if certExists != keyExists {
-			return nil, fmt.Errorf("证书与私钥必须成对存在：%s / %s", tlsCert, tlsKey)
+			return nil, fmt.Errorf("证书与私钥必须成对存在：%s / %s", certPath, keyPath)
 		}
 	}
-	return loadTLSConfig(tlsCert, tlsKey)
+	return loadTLSConfig(certPath, keyPath)
 }
 
-func loadTLSConfig(tlsCert, tlsKey string) (*tls.Config, error) {
-	pair, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+func loadTLSConfig(certPath, keyPath string) (*tls.Config, error) {
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
 		return nil, err
 	}

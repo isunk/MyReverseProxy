@@ -123,8 +123,8 @@ go build -trimpath -ldflags "-s -w" -o mrp .
 |------|------|------|
 | `--config` | `routing.yaml` | 路由配置文件路径；未指定时缺失则自动创建 |
 | `--port` | `443` | 监听端口 |
-| `--tls-cert` / `--tls-key` | `ca.crt` / `ca.key` | CA 证书/私钥，成对提供；mrp 按客户端 SNI 动态签发服务端证书；缺省时仅支持 HTTP 与 CONNECT 隧道 |
-| `--log-level` | `info` | debug / info / warn / error |
+| `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书/私钥，成对提供；mrp 按客户端 SNI 动态签发服务端证书；缺省时仅支持 HTTP 与 CONNECT 隧道 |
+| `--log` | `info` | debug / info / warn / error |
 
 ### 5. 测试验证
 
