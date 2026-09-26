@@ -89,7 +89,6 @@ servers:
     routes:
       - prefix: /
         upstream: https://our-server-b.com
-        tls_verify: false
 ```
 
 ```go
@@ -101,10 +100,9 @@ type Server struct {
     Routes []Route `yaml:"routes"`
 }
 type Route struct {
-    Prefix    string `yaml:"prefix"`
-    Upstream  string `yaml:"upstream"`
-    Host      string `yaml:"host"`
-    TLSVerify *bool  `yaml:"tls_verify"`
+    Prefix   string `yaml:"prefix"`
+    Upstream string `yaml:"upstream"`
+    Host     string `yaml:"host"`
 }
 ```
 
@@ -125,13 +123,11 @@ classDiagram
         +Prefix string
         +Upstream string
         +Host string
-        +TLSVerify *bool
     }
     class route {
         -prefix string
         -target *url.URL
         -host string
-        -insecure bool
         -proxy *ReverseProxy
     }
     class routeTable {
@@ -141,13 +137,12 @@ classDiagram
     class proxy {
         -configPath string
         -table atomic.Pointer[routeTable]
-        -transportVerify *http.Transport
-        -transportInsecure *http.Transport
+        -transport *http.Transport
         -tlsConfig *tls.Config
         -passthrough *ReverseProxy
         +ServeHTTP(w, r)
         -reload() error
-        -newRouteProxy(entry, transport) *ReverseProxy
+        -newRouteProxy(entry) *ReverseProxy
         -errorHandler(w, r, err)
         -handleConnect(w, r)
         -tunnel(client, target)

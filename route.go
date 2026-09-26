@@ -7,11 +7,10 @@ import (
 )
 
 type route struct {
-	prefix   string
-	target   *url.URL
-	host     string
-	insecure bool
-	proxy    *httputil.ReverseProxy
+	prefix string
+	target *url.URL
+	host   string
+	proxy  *httputil.ReverseProxy
 }
 
 type routeTable struct {

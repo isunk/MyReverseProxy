@@ -5,11 +5,11 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 ## 命名风格
 
 - 遵循 Go 惯例 camelCase：类型名大驼峰，变量、字段、函数、方法小驼峰。不用下划线分隔。
-  - 正例：`transportVerify`、`routeTable`、`listenAddr`、`handleConn`、`handleConnect`、`byDomain`、`oneConnListener`、`logWriter`
+  - 正例：`transport`、`routeTable`、`listenAddr`、`handleConn`、`handleConnect`、`byDomain`、`oneConnListener`、`logWriter`
   - 反例：`trVerify`（缩写）、`transport_verify`（下划线）、`route_table`（下划线）
 - 单词尽量完整，避免缩写：`transport` 不写 `tr`、`entry` 不写 `r`、`server` 不写 `s`。循环局部变量允许使用 `i`、`k`、`v` 等约定单字母，紧邻上下文允许 `r`（request）、`w`（writer）、`c`（conn）。
 - 类型名大驼峰导出或小驼峰非导出（如 `route`、`routeTable`、`routeEntry`、`logWriter`、`oneConnListener`、`ctxKey`）。
-- **YAML 反射字段**：`gopkg.in/yaml.v3` 要求结构体字段导出，采用大驼峰，如 `Domain`、`Routes`、`Prefix`、`Upstream`、`Host`、`TLSVerify`。
+- **YAML 反射字段**：`gopkg.in/yaml.v3` 要求结构体字段导出，采用大驼峰，如 `Domain`、`Routes`、`Prefix`、`Upstream`、`Host`。
 - **标准库接口方法**保持其原始拼写，如 `ServeHTTP`、`Accept`、`Close`、`Addr`、`WriteHeader`、`Unwrap`，因为须满足 `http.Handler` / `net.Listener` / `http.ResponseWriter` 等接口。
 
 ## 文件组织

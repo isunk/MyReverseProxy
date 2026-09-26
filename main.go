@@ -44,28 +44,27 @@ func main() {
 		fatal("--cert 与 --key 必须成对提供", nil)
 	}
 
-	transportVerify, transportInsecure := newTransports(5 * time.Second)
+	transport := newTransport(5 * time.Second)
 
 	tlsConfig, err := resolveTLSConfig(*certPath, *keyPath, certSet && keySet)
 	if err != nil {
 		fatal("TLS 证书配置错误", err)
 	}
 
-	instance, err := newProxy(*configPath, transportVerify, transportInsecure, tlsConfig)
+	instance, err := newProxy(*configPath, transport, tlsConfig)
 	if err != nil {
 		fatal("加载路由配置失败", err)
 	}
 	run(instance, fmt.Sprintf(":%d", *port))
 }
 
-func newTransports(dialTimeout time.Duration) (verify, insecure *http.Transport) {
-	verify = http.DefaultTransport.(*http.Transport).Clone()
-	verify.Proxy = nil // 禁用环境代理，避免代理流量经上游代理回环到自身
-	verify.DialContext = (&net.Dialer{Timeout: dialTimeout}).DialContext
-	verify.ResponseHeaderTimeout = 30 * time.Second
-	insecure = verify.Clone()
-	insecure.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	return verify, insecure
+func newTransport(dialTimeout time.Duration) *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil // 禁用环境代理，避免代理流量经上游代理回环到自身
+	transport.DialContext = (&net.Dialer{Timeout: dialTimeout}).DialContext
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // mrp 位于设备与上游之间，上游证书校验交由设备端完成
+	return transport
 }
 
 func resolveTLSConfig(certPath, keyPath string, explicit bool) (*tls.Config, error) {

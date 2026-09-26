@@ -21,20 +21,18 @@ const (
 )
 
 type proxy struct {
-	configPath        string
-	table             atomic.Pointer[routeTable]
-	transportVerify   *http.Transport
-	transportInsecure *http.Transport
-	tlsConfig         *tls.Config
-	passthrough       *httputil.ReverseProxy
+	configPath  string
+	table       atomic.Pointer[routeTable]
+	transport   *http.Transport
+	tlsConfig   *tls.Config
+	passthrough *httputil.ReverseProxy
 }
 
-func newProxy(configPath string, transportVerify, transportInsecure *http.Transport, tlsConfig *tls.Config) (*proxy, error) {
+func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Config) (*proxy, error) {
 	p := &proxy{
-		configPath:        configPath,
-		transportVerify:   transportVerify,
-		transportInsecure: transportInsecure,
-		tlsConfig:         tlsConfig,
+		configPath: configPath,
+		transport:  transport,
+		tlsConfig:  tlsConfig,
 	}
 	p.passthrough = &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
@@ -45,7 +43,7 @@ func newProxy(configPath string, transportVerify, transportInsecure *http.Transp
 			request.SetURL(&url.URL{Scheme: scheme, Host: request.In.Host})
 			request.Out.Host = request.In.Host
 		},
-		Transport:    transportVerify,
+		Transport:    transport,
 		ErrorHandler: p.errorHandler,
 	}
 	if err := p.reload(); err != nil {
@@ -61,11 +59,7 @@ func (p *proxy) reload() error {
 	}
 	for _, entries := range table.byDomain {
 		for _, entry := range entries {
-			transport := p.transportVerify
-			if entry.insecure {
-				transport = p.transportInsecure
-			}
-			entry.proxy = p.newRouteProxy(entry, transport)
+			entry.proxy = p.newRouteProxy(entry)
 		}
 	}
 	p.table.Store(table)
@@ -106,7 +100,7 @@ func (p *proxy) syncConfig(previous []byte) []byte {
 	return data
 }
 
-func (p *proxy) newRouteProxy(entry *route, transport http.RoundTripper) *httputil.ReverseProxy {
+func (p *proxy) newRouteProxy(entry *route) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
 			request.SetURL(entry.target)
@@ -116,7 +110,7 @@ func (p *proxy) newRouteProxy(entry *route, transport http.RoundTripper) *httput
 				request.Out.Host = entry.host
 			}
 		},
-		Transport:    transport,
+		Transport:    p.transport,
 		ErrorHandler: p.errorHandler,
 	}
 }

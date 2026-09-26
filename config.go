@@ -16,7 +16,6 @@ const defaultConfig = `# mrp 反向代理路由配置
 # prefix:     路径前缀，按最长前缀匹配转发到 upstream
 # upstream:   上游服务地址，路径前缀自动映射
 # host:       可选，改写转发时的 Host 头
-# tls_verify: 可选，默认 true，false 跳过 HTTPS 上游证书校验
 #
 # 示例：
 # servers:
@@ -40,10 +39,9 @@ type Server struct {
 }
 
 type Route struct {
-	Prefix    string `yaml:"prefix"`
-	Upstream  string `yaml:"upstream"`
-	Host      string `yaml:"host"`
-	TLSVerify *bool  `yaml:"tls_verify"`
+	Prefix   string `yaml:"prefix"`
+	Upstream string `yaml:"upstream"`
+	Host     string `yaml:"host"`
 }
 
 func loadTable(path string) (*routeTable, error) {
@@ -78,10 +76,9 @@ func loadTable(path string) (*routeTable, error) {
 				return nil, fmt.Errorf("domain %q: 非法 upstream %q", server.Domain, routeConfig.Upstream)
 			}
 			entries = append(entries, &route{
-				prefix:   routeConfig.Prefix,
-				target:   target,
-				host:     routeConfig.Host,
-				insecure: routeConfig.TLSVerify != nil && !*routeConfig.TLSVerify,
+				prefix: routeConfig.Prefix,
+				target: target,
+				host:   routeConfig.Host,
 			})
 		}
 		table.byDomain[server.Domain] = entries

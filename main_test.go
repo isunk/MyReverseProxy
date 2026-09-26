@@ -69,8 +69,8 @@ func recordingServer(t *testing.T, tag string) *httptest.Server {
 
 func startProxy(t *testing.T, configPath string, tlsConfig *tls.Config) (string, *proxy) {
 	t.Helper()
-	transportVerify, transportInsecure := newTransports(2 * time.Second)
-	p, err := newProxy(configPath, transportVerify, transportInsecure, tlsConfig)
+	transport := newTransport(2 * time.Second)
+	p, err := newProxy(configPath, transport, tlsConfig)
 	if err != nil {
 		t.Fatalf("newProxy: %v", err)
 	}
@@ -118,7 +118,6 @@ servers:
     routes:
       - prefix: /
         upstream: https://up-b
-        tls_verify: false
 `)
 	table, err := loadTable(path)
 	if err != nil {
@@ -131,8 +130,8 @@ servers:
 	if !ok || entry.prefix != "/v1/" {
 		t.Fatalf("pick /v1/: got %+v ok=%v", entry, ok)
 	}
-	if entry, ok := table.pick("b.example.com", "/"); !ok || !entry.insecure {
-		t.Fatalf("insecure not applied: %+v ok=%v", entry, ok)
+	if _, ok := table.pick("b.example.com", "/"); !ok {
+		t.Fatalf("pick b.example.com: not found")
 	}
 }
 
@@ -217,8 +216,7 @@ func TestProxy_HTTPSViaConnect(t *testing.T) {
 		"  - domain: api.example.com\n" +
 		"    routes:\n" +
 		"      - prefix: /\n" +
-		"        upstream: " + up.URL + "\n" +
-		"        tls_verify: false\n"
+		"        upstream: " + up.URL + "\n"
 	cfg := writeConfigFile(t, "r.yaml", content)
 	proxyURL, _ := startProxy(t, cfg, tlsConfig)
 	client := proxyClient(proxyURL)

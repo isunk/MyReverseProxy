@@ -23,7 +23,7 @@ sequenceDiagram
     mrp-->>App: 加密回传响应
 ```
 
-随后按 SNI / Host 与路径前缀匹配路由，转发到真实上游，未匹配的域名透传原目标；上游为 HTTPS 时默认校验其证书，可用 `tls_verify: false` 关闭。纯 HTTP 连接（同一端口按首字节识别）不经 TLS 握手，直接按 Host 头路由；显式代理的 CONNECT 则先返回「200 Connection Established」建立隧道，命中域名再走上述 MITM 流程。
+随后按 SNI / Host 与路径前缀匹配路由，转发到真实上游，未匹配的域名透传原目标；上游为 HTTPS 时 mrp 跳过其证书校验，校验交由设备端信任的 CA 链路完成。纯 HTTP 连接（同一端口按首字节识别）不经 TLS 握手，直接按 Host 头路由；显式代理的 CONNECT 则先返回「200 Connection Established」建立隧道，命中域名再走上述 MITM 流程。
 
 ## 使用流程
 
@@ -93,7 +93,6 @@ servers:
     routes:
       - prefix: /
         upstream: https://our-server-b.com
-        tls_verify: false
 ```
 
 字段说明：
@@ -104,7 +103,6 @@ servers:
 | `routes[].prefix` | 最长路径前缀匹配 |
 | `routes[].upstream` | 上游地址，路径前缀自动映射 |
 | `routes[].host` | 可选，改写转发时的 Host 头 |
-| `routes[].tls_verify` | 可选，默认 true，false 跳过 HTTPS 上游证书校验 |
 
 未匹配的域名透传原目标。修改 `config.yaml` 后自动热加载，无需重启。
 
