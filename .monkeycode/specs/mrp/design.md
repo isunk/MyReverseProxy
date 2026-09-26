@@ -63,12 +63,12 @@ mrp/
 
 ```
 mrp --config config.yaml \
-  --port 443 \
+  --port 4000 \
   --cert ca.crt --key ca.key \
   --log info
 ```
 
-- `--port`：监听端口，默认 `443`，同一端口按首个字节自动识别 HTTP 与 TLS
+- `--port`：监听端口，默认 `4000`，同一端口按首个字节自动识别 HTTP 与 TLS
 - `--cert` / `--key`：证书与私钥路径，成对提供；缺省时仅支持 HTTP 转发与 CONNECT 隧道，TLS 直连会被断开
 - 路由配置文件修改后自动热加载（轮询变更），`SIGHUP` 手动触发仍可用；证书在启动时加载
 

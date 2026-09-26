@@ -71,7 +71,7 @@ Updated: 2026-09-24
 
 ## Constraints & Assumptions
 
-- 单一端口监听：按连接首字节自动识别 HTTP / TLS，Linux/Android 占用 `:443` 需 root 或 CAP_NET_BIND_SERVICE，Windows 无需提权；端口可通过 `--listen` 调整以规避
+- 单一端口监听：按连接首字节自动识别 HTTP / TLS，默认端口 `4000`；如需监听 `443` 等特权端口（Linux/Android）需 root 或 CAP_NET_BIND_SERVICE，Windows 无需提权；端口可通过 `--port` 调整
 - 证书全部由使用者预先创建，程序仅加载；服务端证书 SAN 必须覆盖全部目标域名
 - 客户端必须信任导入的 CA 证书：自研 App 可配置信任用户证书；第三方 App 需设备 Root 后装入系统证书存储；目标 App 已确认无证书绑定
 - 流量如何到达代理服务（hosts、DNS 解析、显式代理设置）由使用者在设备侧自行配置，代理服务仅监听端口处理到达的请求

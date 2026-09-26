@@ -111,7 +111,7 @@ servers:
 ```bash
 go build -trimpath -ldflags "-s -w" -o mrp .
 
-# 默认读取当前目录 config.yaml（缺失自动创建）、监听 443、加载 ca.crt / ca.key
+# 默认读取当前目录 config.yaml（缺失自动创建）、监听 4000、加载 ca.crt / ca.key
 ./mrp
 ```
 
@@ -120,7 +120,7 @@ go build -trimpath -ldflags "-s -w" -o mrp .
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `--config` | `config.yaml` | 路由配置文件路径；未指定时缺失则自动创建 |
-| `--port` | `443` | 监听端口 |
+| `--port` | `4000` | 监听端口 |
 | `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书/私钥，成对提供；mrp 按客户端 SNI 动态签发服务端证书；缺省时仅支持 HTTP 与 CONNECT 隧道 |
 | `--log` | `info` | debug / info / warn / error |
 
@@ -128,15 +128,15 @@ go build -trimpath -ldflags "-s -w" -o mrp .
 
 ```bash
 # 直连 HTTPS（域名解析到本机，mrp 终结 TLS 后转发）
-curl --cacert ca.crt --resolve api.target-app.com:443:127.0.0.1 \
-  https://api.target-app.com/v1/hello
+curl --cacert ca.crt --resolve api.target-app.com:4000:127.0.0.1 \
+  https://api.target-app.com:4000/v1/hello
 
 # 纯 HTTP（同一端口，自动识别）
-curl --resolve api.target-app.com:443:127.0.0.1 \
-  http://api.target-app.com:443/v1/hello
+curl --resolve api.target-app.com:4000:127.0.0.1 \
+  http://api.target-app.com:4000/v1/hello
 
 # 显式代理（CONNECT）
-curl -x http://127.0.0.1:443 --cacert ca.crt \
+curl -x http://127.0.0.1:4000 --cacert ca.crt \
   https://api.target-app.com/v1/hello
 ```
 
@@ -144,13 +144,13 @@ curl -x http://127.0.0.1:443 --cacert ca.crt \
 
 ### 6. 各平台设备对接代理
 
-代理地址填 mrp 所在机器能被设备访问到的 IP（不能用 `127.0.0.1`），端口即 `--port`（默认 `443`）。
+代理地址填 mrp 所在机器能被设备访问到的 IP（不能用 `127.0.0.1`），端口即 `--port`（默认 `4000`）。
 
 #### Android
 
 ```bash
 # 设置全局 HTTP 代理（IP 换成 mrp 所在机器的局域网地址）
-adb shell settings put global http_proxy 192.168.1.100:443
+adb shell settings put global http_proxy 192.168.1.100:4000
 
 # 取消代理
 adb shell settings put global http_proxy :0
@@ -162,19 +162,19 @@ adb shell settings put global http_proxy :0
 
 ```bash
 # 设置 WinHTTP 系统代理（服务与部分命令行工具生效）
-netsh winhttp set proxy 192.168.1.100:443
+netsh winhttp set proxy 192.168.1.100:4000
 
 # 取消代理
 netsh winhttp reset proxy
 ```
 
-浏览器与多数桌面应用走 WinINET（GUI）：设置 → 网络和 Internet → 代理 → 手动设置代理，填入 `192.168.1.100:443`，关闭时切回「自动检测」。
+浏览器与多数桌面应用走 WinINET（GUI）：设置 → 网络和 Internet → 代理 → 手动设置代理，填入 `192.168.1.100:4000`，关闭时切回「自动检测」。
 
 #### Linux
 
 ```bash
 # 设置会话级代理（curl 等命令行工具生效）
-export http_proxy=http://192.168.1.100:443 https_proxy=http://192.168.1.100:443
+export http_proxy=http://192.168.1.100:4000 https_proxy=http://192.168.1.100:4000
 
 # 取消代理
 unset http_proxy https_proxy

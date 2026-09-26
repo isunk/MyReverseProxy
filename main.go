@@ -18,7 +18,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "routing config file, created automatically when missing")
-	port := flag.Int("port", 443, "listen port, HTTP and TLS detected per connection")
+	port := flag.Int("port", 4000, "listen port, HTTP and TLS detected per connection")
 	certPath := flag.String("cert", "ca.crt", "CA certificate file for MITM signing")
 	keyPath := flag.String("key", "ca.key", "CA private key file")
 	logLevel := flag.String("log", "info", "log level: debug, info, warn or error")
