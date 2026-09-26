@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -255,6 +256,32 @@ func TestServe_DirectTLS(t *testing.T) {
 	}
 }
 
+func TestConnect_TunnelBadGateway(t *testing.T) {
+	closed := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {}))
+	closed.Close()
+	cfg := writeConfigFile(t, "r.yaml", "servers: []\n")
+	proxyURL, _ := startProxy(t, cfg, nil)
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(proxyURL, "http://"))
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	requestLine := "CONNECT " + strings.TrimPrefix(closed.URL, "http://") + " HTTP/1.1\r\nHost: " + strings.TrimPrefix(closed.URL, "http://") + "\r\n\r\n"
+	if _, err := conn.Write([]byte(requestLine)); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("want first response 502, got %d", resp.StatusCode)
+	}
+}
+
 func TestProxy_502OnUnreachable(t *testing.T) {
 	closed := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {}))
 	closed.Close()
@@ -276,7 +303,6 @@ func TestProxy_502OnUnreachable(t *testing.T) {
 		t.Fatalf("want 502, got %d", resp.StatusCode)
 	}
 }
-
 func TestServe_DirectTLS_RoutesBySNI(t *testing.T) {
 	up := recordingServer(t, "SNI")
 	caCert, caKey := testAuthorityCA(t)

@@ -164,9 +164,6 @@ func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 	domain := hostOnly(request.Host)
 	if !p.table.Load().has(domain) {
 		slog.Info("connect", "target", request.Host, "mode", "tunnel")
-		if _, err := client.Write([]byte(connectEstablished)); err != nil {
-			return
-		}
 		p.tunnel(client, request.Host)
 		return
 	}
@@ -189,6 +186,9 @@ func (p *proxy) tunnel(client net.Conn, target string) {
 		return
 	}
 	defer upstream.Close()
+	if _, err := client.Write([]byte(connectEstablished)); err != nil {
+		return
+	}
 	go func() {
 		io.Copy(upstream, client)
 		upstream.Close()
