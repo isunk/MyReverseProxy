@@ -76,7 +76,7 @@ func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler) {
 	}
 	if first[0] == tlsRecordHandshake {
 		if tlsConfig == nil {
-			slog.Warn("收到 TLS 直连请求但未配置证书，已断开", "remote", conn.RemoteAddr())
+			slog.Warn("received TLS connection but no certificate configured, closing", "remote", conn.RemoteAddr())
 			return
 		}
 		serveTLSConn(buffered, tlsConfig, handler)
@@ -152,7 +152,7 @@ func newCertificateAuthority(cert *x509.Certificate, key crypto.Signer) *certifi
 
 func (ca *certificateAuthority) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	if hello.ServerName == "" {
-		return nil, errors.New("缺少 SNI，无法按域名签发证书")
+		return nil, errors.New("missing SNI, cannot sign certificate for domain")
 	}
 	ca.mu.Lock()
 	defer ca.mu.Unlock()

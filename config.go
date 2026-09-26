@@ -56,24 +56,24 @@ func loadTable(path string) (*routeTable, error) {
 	table := &routeTable{byDomain: map[string][]*route{}}
 	for _, server := range config.Servers {
 		if server.Domain == "" {
-			return nil, errors.New("domain 不能为空")
+			return nil, errors.New("domain must not be empty")
 		}
 		if _, exists := table.byDomain[server.Domain]; exists {
-			return nil, fmt.Errorf("domain %q 重复定义", server.Domain)
+			return nil, fmt.Errorf("duplicate domain %q", server.Domain)
 		}
 		seen := map[string]bool{}
 		var entries []*route
 		for _, routeConfig := range server.Routes {
 			if routeConfig.Prefix == "" || routeConfig.Upstream == "" {
-				return nil, fmt.Errorf("domain %q: prefix 与 upstream 均为必填", server.Domain)
+				return nil, fmt.Errorf("domain %q: prefix and upstream are required", server.Domain)
 			}
 			if seen[routeConfig.Prefix] {
-				return nil, fmt.Errorf("domain %q: prefix %q 重复定义", server.Domain, routeConfig.Prefix)
+				return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, routeConfig.Prefix)
 			}
 			seen[routeConfig.Prefix] = true
 			target, err := url.Parse(routeConfig.Upstream)
 			if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
-				return nil, fmt.Errorf("domain %q: 非法 upstream %q", server.Domain, routeConfig.Upstream)
+				return nil, fmt.Errorf("domain %q: invalid upstream %q", server.Domain, routeConfig.Upstream)
 			}
 			entries = append(entries, &route{
 				prefix: routeConfig.Prefix,

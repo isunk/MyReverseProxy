@@ -86,16 +86,16 @@ func (p *proxy) watchFile(interval time.Duration, stop <-chan struct{}) {
 func (p *proxy) syncConfig(previous []byte) []byte {
 	data, err := os.ReadFile(p.configPath)
 	if err != nil {
-		slog.Warn("读取路由配置失败", "error", err)
+		slog.Warn("failed to read routing config", "error", err)
 		return previous
 	}
 	if previous != nil && bytes.Equal(data, previous) {
 		return previous
 	}
 	if err := p.reload(); err != nil {
-		slog.Error("配置变更热加载失败，沿用旧配置", "error", err)
+		slog.Error("config reload failed, keeping previous config", "error", err)
 	} else {
-		slog.Info("检测到配置变更，已热加载")
+		slog.Info("config changed, hot reloaded")
 	}
 	return data
 }
@@ -116,7 +116,7 @@ func (p *proxy) newRouteProxy(entry *route) *httputil.ReverseProxy {
 }
 
 func (p *proxy) errorHandler(writer http.ResponseWriter, request *http.Request, err error) {
-	slog.Error("上游请求失败", "host", request.Host, "path", request.URL.Path, "error", err)
+	slog.Error("upstream request failed", "host", request.Host, "path", request.URL.Path, "error", err)
 	writer.WriteHeader(http.StatusBadGateway)
 	_, _ = io.WriteString(writer, "502 Bad Gateway")
 }
@@ -134,11 +134,11 @@ func (p *proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		slog.Info("request", "domain", domain, "path", request.URL.Path, "status", recorder.status, "elapsed", time.Since(start))
 	}()
 	if matched {
-		slog.Debug("路由命中", "domain", domain, "prefix", entry.prefix, "upstream", entry.target.String())
+		slog.Debug("route matched", "domain", domain, "prefix", entry.prefix, "upstream", entry.target.String())
 		entry.proxy.ServeHTTP(recorder, request)
 		return
 	}
-	slog.Debug("路由未命中，透传原始目标", "domain", domain)
+	slog.Debug("no route matched, passing through to original target", "domain", domain)
 	p.passthrough.ServeHTTP(recorder, request)
 }
 
@@ -175,7 +175,7 @@ func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 func (p *proxy) tunnel(client net.Conn, target string) {
 	upstream, err := net.DialTimeout("tcp", target, 10*time.Second)
 	if err != nil {
-		slog.Error("隧道目标连接失败", "target", target, "error", err)
+		slog.Error("tunnel target connection failed", "target", target, "error", err)
 		_, _ = client.Write([]byte(connectBadGateway))
 		return
 	}

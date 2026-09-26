@@ -26,7 +26,7 @@ func main() {
 
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
-		fatal("非法日志级别 "+*logLevel, err)
+		fatal("invalid log level "+*logLevel, err)
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
 
@@ -35,25 +35,25 @@ func main() {
 
 	if !specified["config"] {
 		if err := ensureConfig(*configPath); err != nil {
-			fatal("初始化路由配置失败", err)
+			fatal("failed to initialize routing config", err)
 		}
 	}
 
 	certSet, keySet := specified["cert"], specified["key"]
 	if certSet != keySet {
-		fatal("--cert 与 --key 必须成对提供", nil)
+		fatal("--cert and --key must be set together", nil)
 	}
 
 	transport := newTransport(5 * time.Second)
 
 	tlsConfig, err := resolveTLSConfig(*certPath, *keyPath, certSet && keySet)
 	if err != nil {
-		fatal("TLS 证书配置错误", err)
+		fatal("TLS certificate configuration error", err)
 	}
 
 	instance, err := newProxy(*configPath, transport, tlsConfig)
 	if err != nil {
-		fatal("加载路由配置失败", err)
+		fatal("failed to load routing config", err)
 	}
 	run(instance, fmt.Sprintf(":%d", *port))
 }
@@ -72,11 +72,11 @@ func resolveTLSConfig(certPath, keyPath string, explicit bool) (*tls.Config, err
 		certExists := fileExists(certPath)
 		keyExists := fileExists(keyPath)
 		if !certExists && !keyExists {
-			slog.Warn("未找到默认证书，仅支持 HTTP 与 CONNECT 隧道", "cert", certPath, "key", keyPath)
+			slog.Warn("no default certificate found, serving HTTP and CONNECT tunnel only", "cert", certPath, "key", keyPath)
 			return nil, nil
 		}
 		if certExists != keyExists {
-			return nil, fmt.Errorf("证书与私钥必须成对存在：%s / %s", certPath, keyPath)
+			return nil, fmt.Errorf("certificate and key must exist as a pair: %s / %s", certPath, keyPath)
 		}
 	}
 	return loadTLSConfig(certPath, keyPath)
@@ -93,7 +93,7 @@ func loadTLSConfig(certPath, keyPath string) (*tls.Config, error) {
 	}
 	signer, ok := pair.PrivateKey.(crypto.Signer)
 	if !ok {
-		return nil, errors.New("私钥类型不支持")
+		return nil, errors.New("unsupported private key type")
 	}
 	authority := newCertificateAuthority(caCert, signer)
 	return &tls.Config{
@@ -119,16 +119,16 @@ func ensureConfig(path string) error {
 	if err := os.WriteFile(path, []byte(defaultConfig), 0o644); err != nil {
 		return err
 	}
-	slog.Info("已创建默认路由配置文件", "path", path)
+	slog.Info("created default config file", "path", path)
 	return nil
 }
 
 func run(p *proxy, listenAddr string) {
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		fatal("监听失败", err)
+		fatal("listen failed", err)
 	}
-	slog.Info("监听", "addr", listenAddr)
+	slog.Info("listening", "addr", listenAddr)
 	go serveListener(listener, p)
 	go p.watchFile(time.Second, nil)
 	serveSignals(p)
@@ -136,7 +136,7 @@ func run(p *proxy, listenAddr string) {
 
 func serveListener(listener net.Listener, p *proxy) {
 	if err := serve(listener, p.tlsConfig, p); err != nil {
-		fatal("服务退出", err)
+		fatal("server exited", err)
 	}
 }
 
@@ -148,10 +148,10 @@ func serveSignals(p *proxy) {
 			return
 		}
 		if err := p.reload(); err != nil {
-			slog.Error("热加载失败，沿用当前配置", "error", err)
+			slog.Error("hot reload failed, keeping current config", "error", err)
 			continue
 		}
-		slog.Info("路由配置已热加载")
+		slog.Info("routing config reloaded")
 	}
 }
 
