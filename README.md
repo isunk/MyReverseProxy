@@ -78,7 +78,7 @@ sudo update-ca-certificates
 
 ### 3. 初始化配置文件
 
-mrp 首次运行会自动在当前目录创建 `routing.yaml`（含注释模板），按需编辑：
+mrp 首次运行会自动在当前目录创建 `config.yaml`（含注释模板），按需编辑：
 
 ```yaml
 servers:
@@ -106,14 +106,14 @@ servers:
 | `routes[].host` | 可选，改写转发时的 Host 头 |
 | `routes[].tls_verify` | 可选，默认 true，false 跳过 HTTPS 上游证书校验 |
 
-未匹配的域名透传原目标。修改 `routing.yaml` 后自动热加载，无需重启。
+未匹配的域名透传原目标。修改 `config.yaml` 后自动热加载，无需重启。
 
 ### 4. 启动服务
 
 ```bash
 go build -trimpath -ldflags "-s -w" -o mrp .
 
-# 默认读取当前目录 routing.yaml（缺失自动创建）、监听 443、加载 ca.crt / ca.key
+# 默认读取当前目录 config.yaml（缺失自动创建）、监听 443、加载 ca.crt / ca.key
 ./mrp
 ```
 
@@ -121,7 +121,7 @@ go build -trimpath -ldflags "-s -w" -o mrp .
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--config` | `routing.yaml` | 路由配置文件路径；未指定时缺失则自动创建 |
+| `--config` | `config.yaml` | 路由配置文件路径；未指定时缺失则自动创建 |
 | `--port` | `443` | 监听端口 |
 | `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书/私钥，成对提供；mrp 按客户端 SNI 动态签发服务端证书；缺省时仅支持 HTTP 与 CONNECT 隧道 |
 | `--log` | `info` | debug / info / warn / error |
