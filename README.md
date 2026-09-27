@@ -99,8 +99,8 @@ servers:
 
 | 字段 | 说明 |
 |------|------|
-| `servers[].domain` | 按域名精确匹配，HTTPS 用 SNI、HTTP 用 Host 头 |
-| `routes[].prefix` | 最长路径前缀匹配 |
+| `servers[].domain` | 按域名匹配（大小写不敏感），HTTPS 用 SNI、HTTP 用 Host 头 |
+| `routes[].prefix` | 最长路径前缀匹配，必须以 `/` 开头 |
 | `routes[].upstream` | 上游地址，路径前缀自动映射 |
 | `routes[].host` | 可选，改写转发时的 Host 头 |
 

@@ -225,7 +225,7 @@ sequenceDiagram
 ## Correctness Properties
 
 1. 路由匹配遵循最长前缀；同域等长前缀冲突时加载期报错
-2. 加载的服务端证书 SAN 覆盖全部被服务域名（由使用者生成证书时保证，README 提供命令）
+2. 服务端证书按 SNI 动态签发：CA 启动时加载一次（须为 CA 证书），握手时为每个 SNI 现签 24h 证书并缓存
 3. 热加载失败时旧路由表继续生效；成功时 `atomic.Pointer` 原子替换，存量连接不受影响
 4. 无匹配域名透传语义与无代理直连等价
 
@@ -237,7 +237,10 @@ sequenceDiagram
 | 监听端口被占用 | fatal 退出并列出冲突端口 |
 | YAML 语法错误 | reload 返回错误，保留旧路由表，日志输出原因 |
 | 证书文件缺失或解析失败 | 启动失败，输出证书路径与原因 |
+| 加载的证书非 CA | 启动失败，提示无法按 SNI 签发 |
+| prefix 未以 / 开头 | 启动失败，输出 domain 与 prefix |
 | 客户端未信任导入的 CA | 客户端证书报错；按 README 步骤导入 CA |
+| CONNECT 被劫持后连接所有权 | handleConnect 负责关闭，serveSingleConn 跳过 Close，避免误关隧道 |
 
 ## Test Strategy
 
