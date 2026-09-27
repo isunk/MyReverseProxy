@@ -67,51 +67,71 @@ func serve(listener net.Listener, tlsConfig *tls.Config, handler http.Handler) e
 }
 
 func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler) {
-	defer conn.Close()
 	reader := bufio.NewReader(conn)
 	buffered := &bufferedConn{Conn: conn, reader: reader}
+	_ = conn.SetReadDeadline(time.Now().Add(protoDetectWait))
 	first, err := reader.Peek(1)
 	if err != nil {
+		conn.Close()
 		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 	if first[0] == tlsRecordHandshake {
 		if tlsConfig == nil {
 			slog.Warn("received TLS connection but no certificate configured, closing", "remote", conn.RemoteAddr())
+			conn.Close()
 			return
 		}
 		serveTLSConn(buffered, tlsConfig, handler)
+		conn.Close()
 		return
 	}
-	serveSingleConn(&http.Server{Handler: handler}, buffered)
+	if serveSingleConn(newHTTPServer(handler), buffered) {
+		return
+	}
+	conn.Close()
 }
 
-func serveSingleConn(server *http.Server, conn net.Conn) {
+func serveSingleConn(server *http.Server, conn net.Conn) bool {
 	listener := newOneConnListener(conn)
 	var once sync.Once
+	var hijacked atomic.Bool
 	server.ConnState = func(_ net.Conn, state http.ConnState) {
-		if state == http.StateClosed {
+		if state == http.StateHijacked {
+			hijacked.Store(true)
+		}
+		if state == http.StateClosed || state == http.StateHijacked {
 			once.Do(listener.finish)
 		}
 	}
 	_ = server.Serve(listener)
+	return hijacked.Load()
+}
+
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       idleTimeout,
+	}
 }
 
 func serveTLSConn(raw net.Conn, tlsConfig *tls.Config, handler http.Handler) {
-	serveSingleConn(&http.Server{Handler: handler}, tls.Server(raw, tlsConfig))
+	serveSingleConn(newHTTPServer(handler), tls.Server(raw, tlsConfig))
 }
 
 func domainOf(request *http.Request) string {
 	if request.TLS != nil && request.TLS.ServerName != "" {
-		return request.TLS.ServerName
+		return strings.ToLower(request.TLS.ServerName)
 	}
 	return hostOnly(request.Host)
 }
 
 func hostOnly(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
-		return h
+		return strings.ToLower(h)
 	}
-	return host
+	return strings.ToLower(host)
 }
 
 func joinPath(base, rest string) string {
@@ -128,8 +148,11 @@ func joinPath(base, rest string) string {
 }
 
 const (
-	serverCertTTL  = 24 * time.Hour
-	maxCachedCerts = 512
+	serverCertTTL     = 24 * time.Hour
+	maxCachedCerts    = 512
+	protoDetectWait   = 10 * time.Second
+	readHeaderTimeout = 10 * time.Second
+	idleTimeout       = 60 * time.Second
 )
 
 var serialLimit = new(big.Int).Lsh(big.NewInt(1), 128)

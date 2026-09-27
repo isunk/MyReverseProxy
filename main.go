@@ -91,6 +91,9 @@ func loadTLSConfig(certPath, keyPath string) (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !caCert.IsCA {
+		return nil, errors.New("certificate is not a CA, cannot sign certificates for SNI")
+	}
 	signer, ok := pair.PrivateKey.(crypto.Signer)
 	if !ok {
 		return nil, errors.New("unsupported private key type")

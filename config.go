@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -58,7 +59,8 @@ func loadTable(path string) (*routeTable, error) {
 		if server.Domain == "" {
 			return nil, errors.New("domain must not be empty")
 		}
-		if _, exists := table.byDomain[server.Domain]; exists {
+		domain := strings.ToLower(server.Domain)
+		if _, exists := table.byDomain[domain]; exists {
 			return nil, fmt.Errorf("duplicate domain %q", server.Domain)
 		}
 		seen := map[string]bool{}
@@ -66,6 +68,9 @@ func loadTable(path string) (*routeTable, error) {
 		for _, routeConfig := range server.Routes {
 			if routeConfig.Prefix == "" || routeConfig.Upstream == "" {
 				return nil, fmt.Errorf("domain %q: prefix and upstream are required", server.Domain)
+			}
+			if !strings.HasPrefix(routeConfig.Prefix, "/") {
+				return nil, fmt.Errorf("domain %q: prefix %q must start with /", server.Domain, routeConfig.Prefix)
 			}
 			if seen[routeConfig.Prefix] {
 				return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, routeConfig.Prefix)
@@ -81,7 +86,7 @@ func loadTable(path string) (*routeTable, error) {
 				host:   routeConfig.Host,
 			})
 		}
-		table.byDomain[server.Domain] = entries
+		table.byDomain[domain] = entries
 	}
 	return table, nil
 }

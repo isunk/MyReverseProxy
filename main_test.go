@@ -20,6 +20,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"encoding/pem"
 )
 
 func init() {
@@ -142,6 +144,7 @@ func TestLoadTable_Errors(t *testing.T) {
 		"empty_prefix": "servers:\n  - domain: a\n    routes:\n      - prefix: \"\"\n        upstream: http://x",
 		"dup_prefix":   "servers:\n  - domain: a\n    routes:\n      - prefix: /a\n        upstream: http://x\n      - prefix: /a\n        upstream: http://y",
 		"bad_upstream": "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        upstream: ftp://x",
+		"bad_prefix":   "servers:\n  - domain: a\n    routes:\n      - prefix: v1\n        upstream: http://x",
 		"bad_yaml":     "servers: [this is broken",
 	}
 	for name, content := range cases {
@@ -175,6 +178,47 @@ func TestPick_LongestPrefix(t *testing.T) {
 	}
 	if _, ok := table.pick("other", "/"); ok {
 		t.Fatal("unknown domain should not match")
+	}
+}
+
+func TestLoadTable_NormalizesDomainCase(t *testing.T) {
+	path := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: API.Example.COM\n    routes:\n      - prefix: /\n        upstream: http://up-a\n")
+	table, err := loadTable(path)
+	if err != nil {
+		t.Fatalf("loadTable: %v", err)
+	}
+	if !table.has("api.example.com") {
+		t.Fatal("domain should be normalized to lowercase")
+	}
+}
+
+func TestHostOnly_Lowercase(t *testing.T) {
+	if got := hostOnly("API.Example.COM:443"); got != "api.example.com" {
+		t.Fatalf("hostOnly: got %q", got)
+	}
+	if got := hostOnly("API.Example.COM"); got != "api.example.com" {
+		t.Fatalf("hostOnly bare: got %q", got)
+	}
+}
+
+func TestLoadTLSConfig_RejectsNonCA(t *testing.T) {
+	dir := t.TempDir()
+	cert := selfSignedCert(t, []string{"api.example.com"})
+	certPath := filepath.Join(dir, "ca.crt")
+	keyPath := filepath.Join(dir, "ca.key")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(cert.PrivateKey.(*ecdsa.PrivateKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadTLSConfig(certPath, keyPath); err == nil {
+		t.Fatal("want error for non-CA certificate")
 	}
 }
 
