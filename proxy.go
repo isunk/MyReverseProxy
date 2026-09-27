@@ -153,7 +153,12 @@ func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer client.Close()
+	closeConn := true
+	defer func() {
+		if closeConn {
+			client.Close()
+		}
+	}()
 
 	domain := hostOnly(request.Host)
 	if !p.table.Load().has(domain) {
@@ -169,7 +174,9 @@ func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return
 	}
-	serveTLSConn(client, p.tlsConfig, p)
+	if serveTLSConn(client, p.tlsConfig, p) {
+		closeConn = false
+	}
 }
 
 func (p *proxy) tunnel(client net.Conn, target string) {

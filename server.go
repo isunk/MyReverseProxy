@@ -82,7 +82,9 @@ func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler) {
 			conn.Close()
 			return
 		}
-		serveTLSConn(buffered, tlsConfig, handler)
+		if serveTLSConn(buffered, tlsConfig, handler) {
+			return
+		}
 		conn.Close()
 		return
 	}
@@ -116,8 +118,8 @@ func newHTTPServer(handler http.Handler) *http.Server {
 	}
 }
 
-func serveTLSConn(raw net.Conn, tlsConfig *tls.Config, handler http.Handler) {
-	serveSingleConn(newHTTPServer(handler), tls.Server(raw, tlsConfig))
+func serveTLSConn(raw net.Conn, tlsConfig *tls.Config, handler http.Handler) bool {
+	return serveSingleConn(newHTTPServer(handler), tls.Server(raw, tlsConfig))
 }
 
 func domainOf(request *http.Request) string {

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"encoding/pem"
+	"fmt"
 )
 
 func init() {
@@ -526,5 +527,121 @@ func TestWatch_HotReload(t *testing.T) {
 			t.Fatalf("配置变更未自动热加载")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func echoServer(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) { io.Copy(c, c); c.Close() }(conn)
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func readConnectResponse(t *testing.T, reader *bufio.Reader) int {
+	t.Helper()
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	var code int
+	if _, err := fmt.Sscanf(line, "HTTP/1.%d %d", new(int), &code); err != nil {
+		t.Fatalf("parse status %q: %v", line, err)
+	}
+	for {
+		line, err = reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read header: %v", err)
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+	return code
+}
+
+// 直连 TLS 后内部发 CONNECT：验证 hijack 后 handleConn 不误关连接
+func TestServe_DirectTLS_NestedConnectTunnel(t *testing.T) {
+	echo := echoServer(t)
+	caCert, caKey := testAuthorityCA(t)
+	tlsConfig := &tls.Config{
+		GetCertificate: newCertificateAuthority(caCert, caKey).getCertificate,
+		NextProtos:     []string{"http/1.1"},
+		MinVersion:     tls.VersionTLS12,
+	}
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: http://unused\n")
+	proxyURL, _ := startProxy(t, cfg, tlsConfig)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, ServerName: "api.example.com"})
+	if err != nil {
+		t.Fatalf("tls dial: %v", err)
+	}
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echo, echo)
+	if code := readConnectResponse(t, reader); code != 200 {
+		t.Fatalf("want 200, got %d", code)
+	}
+	if _, err := conn.Write([]byte("PING\n")); err != nil {
+		t.Fatal(err)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil || line != "PING\n" {
+		t.Fatalf("echo: got %q err=%v", line, err)
+	}
+}
+
+// CONNECT+MITM 后内部再发 CONNECT：验证嵌套 hijack 不被外层 defer 误关
+func TestConnect_NestedConnectViaMITM(t *testing.T) {
+	echo := echoServer(t)
+	caCert, caKey := testAuthorityCA(t)
+	tlsConfig := &tls.Config{
+		GetCertificate: newCertificateAuthority(caCert, caKey).getCertificate,
+		NextProtos:     []string{"http/1.1"},
+		MinVersion:     tls.VersionTLS12,
+	}
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: http://unused\n")
+	proxyURL, _ := startProxy(t, cfg, tlsConfig)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	proxyConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxyConn.Close()
+	fmt.Fprintf(proxyConn, "CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n")
+	outerReader := bufio.NewReader(proxyConn)
+	if code := readConnectResponse(t, outerReader); code != 200 {
+		t.Fatalf("outer CONNECT: want 200, got %d", code)
+	}
+	innerConn := tls.Client(proxyConn, &tls.Config{InsecureSkipVerify: true, ServerName: "api.example.com"})
+	if err := innerConn.HandshakeContext(t.Context()); err != nil {
+		t.Fatalf("inner handshake: %v", err)
+	}
+	reader := bufio.NewReader(innerConn)
+	fmt.Fprintf(innerConn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echo, echo)
+	if code := readConnectResponse(t, reader); code != 200 {
+		t.Fatalf("nested CONNECT: want 200, got %d", code)
+	}
+	if _, err := innerConn.Write([]byte("PING\n")); err != nil {
+		t.Fatal(err)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil || line != "PING\n" {
+		t.Fatalf("echo: got %q err=%v", line, err)
 	}
 }
