@@ -17,6 +17,9 @@ const defaultConfig = `# mrp 反向代理路由配置
 # prefix:     路径前缀，按最长前缀匹配转发到 upstream
 # upstream:   上游服务地址，路径前缀自动映射
 # host:       可选，改写转发时的 Host 头
+# headers:    可选，改写消息头（Set 语义，覆盖同名已有值）
+#   request:  发往上游的请求头
+#   response: 覆盖下游返回的响应头（如跨域校验 Access-Control-Allow-*）
 #
 # 示例：
 # servers:
@@ -24,6 +27,11 @@ const defaultConfig = `# mrp 反向代理路由配置
 #     routes:
 #       - prefix: /v1/
 #         upstream: https://our-server-a.com/v1/
+#         headers:
+#           request:
+#             Authorization: "Bearer token"
+#           response:
+#             Access-Control-Allow-Origin: "*"
 #       - prefix: /
 #         upstream: http://192.168.1.50:8080
 
@@ -40,9 +48,17 @@ type Server struct {
 }
 
 type Route struct {
-	Prefix   string `yaml:"prefix"`
-	Upstream string `yaml:"upstream"`
-	Host     string `yaml:"host"`
+	Prefix   string       `yaml:"prefix"`
+	Upstream string       `yaml:"upstream"`
+	Host     string       `yaml:"host"`
+	Headers  RouteHeaders `yaml:"headers"`
+}
+
+// RouteHeaders 在转发时改写消息头：request 写入发往上游的请求头，
+// response 覆盖下游返回的响应头（如跨域校验头）。Set 语义，覆盖同名已有值。
+type RouteHeaders struct {
+	Request  map[string]string `yaml:"request"`
+	Response map[string]string `yaml:"response"`
 }
 
 func loadTable(path string) (*routeTable, error) {
@@ -91,9 +107,11 @@ func buildRoutes(server Server) ([]*route, error) {
 			return nil, fmt.Errorf("domain %q: invalid upstream %q", server.Domain, routeConfig.Upstream)
 		}
 		entries = append(entries, &route{
-			prefix: routeConfig.Prefix,
-			target: target,
-			host:   routeConfig.Host,
+			prefix:          routeConfig.Prefix,
+			target:          target,
+			host:            routeConfig.Host,
+			requestHeaders:  routeConfig.Headers.Request,
+			responseHeaders: routeConfig.Headers.Response,
 		})
 	}
 	return entries, nil

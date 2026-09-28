@@ -86,6 +86,12 @@ servers:
     routes:
       - prefix: /v1/
         upstream: https://our-server-a.com/v1/
+        headers:
+          request:
+            Authorization: "Bearer token"
+          response:
+            Access-Control-Allow-Origin: "*"
+            Access-Control-Allow-Methods: "GET, POST, OPTIONS"
       - prefix: /
         upstream: http://192.168.1.50:8080
         host: our-server-b.com
@@ -103,6 +109,8 @@ servers:
 | `routes[].prefix` | 最长路径前缀匹配，必须以 `/` 开头 |
 | `routes[].upstream` | 上游地址，路径前缀自动映射 |
 | `routes[].host` | 可选，改写转发时的 Host 头 |
+| `routes[].headers.request` | 可选，改写发往上游的请求头（Set 语义，覆盖同名已有值） |
+| `routes[].headers.response` | 可选，覆盖下游返回的响应头（如跨域校验头 `Access-Control-Allow-*`） |
 
 未匹配的域名透传原目标。修改 `config.yaml` 后自动热加载，无需重启。
 

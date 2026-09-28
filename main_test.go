@@ -250,6 +250,56 @@ func TestProxy_HTTPRoutingAndPassthrough(t *testing.T) {
 	}
 }
 
+func TestProxy_ResponseHeadersOverride(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Access-Control-Allow-Origin", "https://restrictive.example.com")
+		writer.Header().Set("X-Upstream", "keep")
+		io.WriteString(writer, "ok")
+	}))
+	t.Cleanup(up.Close)
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+up.URL+"\n        headers:\n          response:\n            Access-Control-Allow-Origin: \"*\"\n            X-Injected: mrp\n")
+	proxyURL, _ := startProxy(t, cfg, nil)
+	resp, err := proxyClient(proxyURL).Get("http://api.example.com/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.ReadAll(resp.Body)
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("CORS override: got %q", got)
+	}
+	if got := resp.Header.Get("X-Upstream"); got != "keep" {
+		t.Fatalf("unrelated response header should pass: got %q", got)
+	}
+	if got := resp.Header.Get("X-Injected"); got != "mrp" {
+		t.Fatalf("injected header: got %q", got)
+	}
+}
+
+func TestProxy_RequestHeadersInjected(t *testing.T) {
+	var seen http.Header
+	up := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		seen = request.Header.Clone()
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(up.Close)
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+up.URL+"\n        headers:\n          request:\n            Authorization: \"Bearer secret\"\n            X-Trace: mrp\n")
+	proxyURL, _ := startProxy(t, cfg, nil)
+	resp, err := proxyClient(proxyURL).Get("http://api.example.com/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if seen.Get("Authorization") != "Bearer secret" {
+		t.Fatalf("request Authorization: got %q", seen.Get("Authorization"))
+	}
+	if seen.Get("X-Trace") != "mrp" {
+		t.Fatalf("request X-Trace: got %q", seen.Get("X-Trace"))
+	}
+}
+
 func TestProxy_HTTPSViaConnect(t *testing.T) {
 	up := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		io.WriteString(writer, "TLS:"+request.URL.Path)

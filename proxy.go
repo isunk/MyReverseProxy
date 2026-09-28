@@ -105,9 +105,26 @@ func (p *proxy) newRouteProxy(entry *route) *httputil.ReverseProxy {
 			if entry.host != "" {
 				request.Out.Host = entry.host
 			}
+			for name, value := range entry.requestHeaders {
+				request.Out.Header.Set(name, value)
+			}
 		},
-		Transport:    p.transport,
-		ErrorHandler: p.errorHandler,
+		Transport:      p.transport,
+		ErrorHandler:   p.errorHandler,
+		ModifyResponse: applyResponseHeaders(entry.responseHeaders),
+	}
+}
+
+// applyResponseHeaders 返回覆盖响应头的 ModifyResponse 钩子；无配置时返回 nil 以跳过
+func applyResponseHeaders(headers map[string]string) func(*http.Response) error {
+	if len(headers) == 0 {
+		return nil
+	}
+	return func(response *http.Response) error {
+		for name, value := range headers {
+			response.Header.Set(name, value)
+		}
+		return nil
 	}
 }
 
