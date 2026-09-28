@@ -142,6 +142,14 @@ curl -x http://127.0.0.1:4000 --cacert ca.crt \
 
 观察 mrp 日志（`domain` / `path` / `upstream` / `status` / `elapsed`）确认路由命中与转发结果；上游不可达时返回 502。
 
+日志格式为 `MM-dd HH:mm:ss.SSSZ\t级别\t消息+参数`，例如：
+
+```text
+09-28 09:21:36.865+08:00	INFO	created default config file path=config.yaml
+```
+
+级别按颜色区分（仅终端输出时着色，重定向到文件为纯文本）：DEBUG 灰、INFO 绿、WARN 黄、ERROR 红。
+
 ### 6. 各平台设备对接代理
 
 代理地址填 mrp 所在机器能被设备访问到的 IP（不能用 `127.0.0.1`），端口即 `--port`（默认 `4000`）。

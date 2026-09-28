@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -18,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -643,5 +646,77 @@ func TestConnect_NestedConnectViaMITM(t *testing.T) {
 	line, err := reader.ReadString('\n')
 	if err != nil || line != "PING\n" {
 		t.Fatalf("echo: got %q err=%v", line, err)
+	}
+}
+
+var testStamp = time.Date(2026, 9, 28, 9, 21, 36, 865_000_000, time.FixedZone("CST", 8*3600))
+
+func newTestRecord(level slog.Level, message string, attrs ...slog.Attr) slog.Record {
+	record := slog.NewRecord(testStamp, level, message, 0)
+	record.AddAttrs(attrs...)
+	return record
+}
+
+func TestConsoleHandler_Format(t *testing.T) {
+	var out bytes.Buffer
+	handler := newConsoleHandler(&out, slog.LevelDebug)
+	err := handler.Handle(context.Background(), newTestRecord(slog.LevelInfo, "created default config file", slog.String("path", "config.yaml")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "09-28 09:21:36.865+08:00\tINFO\tcreated default config file path=config.yaml\n"
+	if out.String() != want {
+		t.Fatalf("format mismatch:\n got %q\nwant %q", out.String(), want)
+	}
+}
+
+func TestConsoleHandler_LevelColor(t *testing.T) {
+	var out bytes.Buffer
+	handler := &consoleHandler{out: &out, level: slog.LevelDebug, color: true, mu: &sync.Mutex{}}
+	for _, tc := range []struct {
+		level slog.Level
+		code  string
+	}{
+		{slog.LevelDebug, "\x1b[90m"},
+		{slog.LevelInfo, "\x1b[32m"},
+		{slog.LevelWarn, "\x1b[33m"},
+		{slog.LevelError, "\x1b[31m"},
+	} {
+		out.Reset()
+		if err := handler.Handle(context.Background(), newTestRecord(tc.level, "event")); err != nil {
+			t.Fatal(err)
+		}
+		want := "09-28 09:21:36.865+08:00\t" + tc.code + tc.level.String() + "\x1b[0m\tevent\n"
+		if out.String() != want {
+			t.Fatalf("level %s color mismatch:\n got %q\nwant %q", tc.level, out.String(), want)
+		}
+	}
+}
+
+func TestConsoleHandler_LevelFilter(t *testing.T) {
+	handler := newConsoleHandler(&bytes.Buffer{}, slog.LevelWarn)
+	if handler.Enabled(context.Background(), slog.LevelInfo) {
+		t.Fatal("info should be filtered at warn level")
+	}
+	if !handler.Enabled(context.Background(), slog.LevelWarn) {
+		t.Fatal("warn should pass at warn level")
+	}
+	if !handler.Enabled(context.Background(), slog.LevelError) {
+		t.Fatal("error should pass at warn level")
+	}
+}
+
+func TestConsoleHandler_GroupAndAttrs(t *testing.T) {
+	var out bytes.Buffer
+	handler := newConsoleHandler(&out, slog.LevelDebug).
+		WithAttrs([]slog.Attr{slog.Int("id", 42)}).
+		WithGroup("conn")
+	err := handler.Handle(context.Background(), newTestRecord(slog.LevelInfo, "tunnel", slog.String("target", "host with space")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "09-28 09:21:36.865+08:00\tINFO\ttunnel id=42 conn.target=\"host with space\"\n"
+	if out.String() != want {
+		t.Fatalf("group format mismatch:\n got %q\nwant %q", out.String(), want)
 	}
 }

@@ -28,7 +28,7 @@ func main() {
 	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
 		fatal("invalid log level "+*logLevel, err)
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+	slog.SetDefault(slog.New(newConsoleHandler(os.Stdout, level)))
 
 	specified := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { specified[f.Name] = true })
