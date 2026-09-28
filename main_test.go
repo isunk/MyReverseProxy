@@ -375,6 +375,31 @@ func TestStaticHandler_ResponseHeaders(t *testing.T) {
 	}
 }
 
+func TestProxy_StaticAndRemoteCoexist(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("static-js"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	up := recordingServer(t, "remote")
+	content := "servers:\n" +
+		"  - domain: mixed.example.com\n" +
+		"    routes:\n" +
+		"      - prefix: /assets/\n" +
+		"        upstream: " + root + "\n" +
+		"      - prefix: /\n" +
+		"        upstream: " + up.URL + "\n"
+	cfg := writeConfigFile(t, "r.yaml", content)
+	proxyURL, _ := startProxy(t, cfg, nil)
+	client := proxyClient(proxyURL)
+
+	if got := requestBody(t, client, "http://mixed.example.com/assets/app.js"); got != "static-js" {
+		t.Fatalf("static asset: got %q", got)
+	}
+	if got := requestBody(t, client, "http://mixed.example.com/api/data"); !strings.HasPrefix(got, "remote:/api/data") {
+		t.Fatalf("remote route: got %q", got)
+	}
+}
+
 func TestProxy_ResponseHeadersOverride(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Access-Control-Allow-Origin", "https://restrictive.example.com")

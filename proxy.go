@@ -155,10 +155,8 @@ func (h *staticHandler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	for name, value := range h.responseHeaders {
 		writer.Header().Set(name, value)
 	}
-	name := request.URL.Path
-	name = strings.TrimPrefix(name, h.prefix)
-	name = strings.TrimPrefix(name, "/")
-	file, err := h.root.Open(name)
+	relPath := strings.TrimPrefix(strings.TrimPrefix(request.URL.Path, h.prefix), "/")
+	file, err := h.root.Open(relPath)
 	if err != nil {
 		http.NotFound(writer, request)
 		return
@@ -173,7 +171,7 @@ func (h *staticHandler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		http.ServeContent(writer, request, info.Name(), info.ModTime(), file)
 		return
 	}
-	index, err := h.root.Open(name + "/index.html")
+	index, err := h.root.Open(relPath + "/index.html")
 	if err != nil {
 		http.NotFound(writer, request)
 		return
