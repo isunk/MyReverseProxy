@@ -664,7 +664,7 @@ func TestConsoleHandler_Format(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "09-28 09:21:36.865+08:00\tINFO\tcreated default config file path=config.yaml\n"
+	want := "09-28 09:21:36.865\tINFO\tcreated default config file path=config.yaml\n"
 	if out.String() != want {
 		t.Fatalf("format mismatch:\n got %q\nwant %q", out.String(), want)
 	}
@@ -686,7 +686,7 @@ func TestConsoleHandler_LevelColor(t *testing.T) {
 		if err := handler.Handle(context.Background(), newTestRecord(tc.level, "event")); err != nil {
 			t.Fatal(err)
 		}
-		want := "09-28 09:21:36.865+08:00\t" + tc.code + tc.level.String() + "\x1b[0m\tevent\n"
+		want := "09-28 09:21:36.865\t" + tc.code + tc.level.String() + "\x1b[0m\tevent\n"
 		if out.String() != want {
 			t.Fatalf("level %s color mismatch:\n got %q\nwant %q", tc.level, out.String(), want)
 		}
@@ -715,7 +715,7 @@ func TestConsoleHandler_GroupAndAttrs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "09-28 09:21:36.865+08:00\tINFO\ttunnel id=42 conn.target=\"host with space\"\n"
+	want := "09-28 09:21:36.865\tINFO\ttunnel id=42 conn.target=\"host with space\"\n"
 	if out.String() != want {
 		t.Fatalf("group format mismatch:\n got %q\nwant %q", out.String(), want)
 	}

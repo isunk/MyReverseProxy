@@ -10,7 +10,7 @@ import (
 	"sync"
 )
 
-const consoleTimeLayout = "01-02 15:04:05.000Z07:00"
+const consoleTimeLayout = "01-02 15:04:05.000"
 
 // 级别着色按行业通用规则：DEBUG 灰、INFO 绿、WARN 黄、ERROR 红
 const (
