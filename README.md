@@ -98,20 +98,18 @@ servers:
   - domain: api.target-app.com
     routes:
       - prefix: /v1/
-        upstream: https://our-server-a.com/v1/
+        upstream: https://api.our-server.com/v1/
+        host: api.our-server.com
         headers:
           request:
             Authorization: "Bearer token"
           response:
             Access-Control-Allow-Origin: "*"
             Access-Control-Allow-Methods: "GET, POST, OPTIONS"
+      - prefix: /assets/
+        upstream: ./dist
       - prefix: /
         upstream: http://192.168.1.50:8080
-        host: our-server-b.com
-  - domain: cdn.target-app.com
-    routes:
-      - prefix: /
-        upstream: https://our-server-b.com
 ```
 
 字段说明：
@@ -120,7 +118,7 @@ servers:
 |------|------|
 | `servers[].domain` | 按域名匹配（大小写不敏感），HTTPS 用 SNI、HTTP 用 Host 头 |
 | `routes[].prefix` | 最长路径前缀匹配，必须以 `/` 开头 |
-| `routes[].upstream` | 上游地址，路径前缀自动映射 |
+| `routes[].upstream` | 上游地址，路径前缀自动映射；也支持本地目录路径（相对进程工作目录，托起静态文件，目录命中回退 `index.html`） |
 | `routes[].host` | 可选，改写转发时的 Host 头 |
 | `routes[].headers.request` | 可选，改写发往上游的请求头（Set 语义，覆盖同名已有值） |
 | `routes[].headers.response` | 可选，覆盖下游返回的响应头（如跨域校验头 `Access-Control-Allow-*`） |

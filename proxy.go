@@ -61,7 +61,11 @@ func (p *proxy) reload() error {
 	}
 	for _, entries := range table.byDomain {
 		for _, entry := range entries {
-			entry.proxy = p.newRouteProxy(entry)
+			if entry.fileRoot != "" {
+				entry.fileServer = newStaticHandler(entry.fileRoot, entry.prefix, entry.responseHeaders)
+			} else {
+				entry.proxy = p.newRouteProxy(entry)
+			}
 		}
 	}
 	p.table.Store(table)
@@ -135,6 +139,54 @@ func applyResponseHeaders(headers map[string]string) func(*http.Response) error 
 	}
 }
 
+type staticHandler struct {
+	root            http.Dir
+	prefix          string
+	responseHeaders map[string]string
+}
+
+func newStaticHandler(root, prefix string, responseHeaders map[string]string) *staticHandler {
+	return &staticHandler{root: http.Dir(root), prefix: prefix, responseHeaders: responseHeaders}
+}
+
+// ServeHTTP 以本地目录为根托起静态文件：目录命中时回退 index.html，
+// 不生成目录列表；路径解析交由 http.Dir 以阻断路径穿越。
+func (h *staticHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	for name, value := range h.responseHeaders {
+		writer.Header().Set(name, value)
+	}
+	name := request.URL.Path
+	name = strings.TrimPrefix(name, h.prefix)
+	name = strings.TrimPrefix(name, "/")
+	file, err := h.root.Open(name)
+	if err != nil {
+		http.NotFound(writer, request)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		http.NotFound(writer, request)
+		return
+	}
+	if !info.IsDir() {
+		http.ServeContent(writer, request, info.Name(), info.ModTime(), file)
+		return
+	}
+	index, err := h.root.Open(name + "/index.html")
+	if err != nil {
+		http.NotFound(writer, request)
+		return
+	}
+	defer index.Close()
+	indexInfo, err := index.Stat()
+	if err != nil || indexInfo.IsDir() {
+		http.NotFound(writer, request)
+		return
+	}
+	http.ServeContent(writer, request, indexInfo.Name(), indexInfo.ModTime(), index)
+}
+
 func (p *proxy) errorHandler(writer http.ResponseWriter, request *http.Request, err error) {
 	logErrorf("upstream request failed host=%s path=%s: %v", request.Host, request.URL.Path, err)
 	writer.WriteHeader(http.StatusBadGateway)
@@ -154,8 +206,12 @@ func (p *proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		logInfof("request domain=%s path=%s status=%d elapsed=%s", domain, request.URL.Path, recorder.status, time.Since(start))
 	}()
 	if matched {
-		logDebugf("route matched domain=%s prefix=%s upstream=%s", domain, entry.prefix, entry.target)
-		entry.proxy.ServeHTTP(recorder, request)
+		logDebugf("route matched domain=%s prefix=%s upstream=%s", domain, entry.prefix, entry.upstream())
+		if entry.fileServer != nil {
+			entry.fileServer.ServeHTTP(recorder, request)
+		} else {
+			entry.proxy.ServeHTTP(recorder, request)
+		}
 		return
 	}
 	logDebugf("no route matched, passing through to original target domain=%s", domain)

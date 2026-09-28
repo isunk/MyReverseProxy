@@ -15,7 +15,7 @@ const defaultConfig = `# mrp 反向代理路由配置
 #
 # domain:     按域名精确匹配，HTTPS 用 SNI、HTTP 用 Host 头
 # prefix:     路径前缀，按最长前缀匹配转发到 upstream
-# upstream:   上游服务地址，路径前缀自动映射
+# upstream:   上游服务地址，路径前缀自动映射；也支持本地目录路径（相对进程工作目录，目录命中回退 index.html）
 # host:       可选，改写转发时的 Host 头
 # headers:    可选，改写消息头（Set 语义，覆盖同名已有值）
 #   request:  发往上游的请求头
@@ -26,12 +26,16 @@ const defaultConfig = `# mrp 反向代理路由配置
 #   - domain: api.target-app.com
 #     routes:
 #       - prefix: /v1/
-#         upstream: https://our-server-a.com/v1/
+#         upstream: https://api.our-server.com/v1/
+#         host: api.our-server.com
 #         headers:
 #           request:
 #             Authorization: "Bearer token"
 #           response:
 #             Access-Control-Allow-Origin: "*"
+#             Access-Control-Allow-Methods: "GET, POST, OPTIONS"
+#       - prefix: /assets/
+#         upstream: ./dist
 #       - prefix: /
 #         upstream: http://192.168.1.50:8080
 
@@ -102,17 +106,28 @@ func buildRoutes(server Server) ([]*route, error) {
 			return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, routeConfig.Prefix)
 		}
 		seen[routeConfig.Prefix] = true
-		target, err := url.Parse(routeConfig.Upstream)
-		if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
-			return nil, fmt.Errorf("domain %q: invalid upstream %q", server.Domain, routeConfig.Upstream)
-		}
-		entries = append(entries, &route{
+		entry := &route{
 			prefix:          routeConfig.Prefix,
-			target:          target,
 			host:            routeConfig.Host,
 			requestHeaders:  routeConfig.Headers.Request,
 			responseHeaders: routeConfig.Headers.Response,
-		})
+		}
+		target, err := url.Parse(routeConfig.Upstream)
+		if err != nil {
+			return nil, fmt.Errorf("domain %q: invalid upstream %q", server.Domain, routeConfig.Upstream)
+		}
+		switch {
+		case target.Scheme == "http" || target.Scheme == "https":
+			if target.Host == "" {
+				return nil, fmt.Errorf("domain %q: invalid upstream %q", server.Domain, routeConfig.Upstream)
+			}
+			entry.target = target
+		case target.Scheme == "":
+			entry.fileRoot = routeConfig.Upstream
+		default:
+			return nil, fmt.Errorf("domain %q: unsupported upstream scheme %q", server.Domain, routeConfig.Upstream)
+		}
+		entries = append(entries, entry)
 	}
 	return entries, nil
 }

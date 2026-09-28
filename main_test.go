@@ -275,6 +275,106 @@ func TestProxy_HTTPRoutingAndPassthrough(t *testing.T) {
 	}
 }
 
+func TestProxy_StaticDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<h1>home</h1>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "assets", "app.js"), []byte("console.log(1)"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: static.example.com\n    routes:\n      - prefix: /\n        upstream: "+root+"\n")
+	proxyURL, _ := startProxy(t, cfg, nil)
+	client := proxyClient(proxyURL)
+
+	if got := requestBody(t, client, "http://static.example.com/"); got != "<h1>home</h1>" {
+		t.Fatalf("index: got %q", got)
+	}
+	if got := requestBody(t, client, "http://static.example.com/assets/app.js"); got != "console.log(1)" {
+		t.Fatalf("subfile: got %q", got)
+	}
+	resp, err := client.Get("http://static.example.com/empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("empty dir without index: want 404, got %d", resp.StatusCode)
+	}
+	resp, err = client.Get("http://static.example.com/missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing file: want 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestProxy_StaticPrefixMapping(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "data.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: assets.example.com\n    routes:\n      - prefix: /assets/\n        upstream: "+root+"\n")
+	proxyURL, _ := startProxy(t, cfg, nil)
+	client := proxyClient(proxyURL)
+
+	if got := requestBody(t, client, "http://assets.example.com/assets/data.txt"); got != "hello" {
+		t.Fatalf("prefix mapping: got %q", got)
+	}
+}
+
+func TestStaticHandler_PathTraversal(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "secret.txt"), []byte("outside-secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("home"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := newStaticHandler(root, "/", nil)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.URL.Path = "/../secret.txt"
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("path traversal: want 404, got %d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "outside-secret") {
+		t.Fatalf("path traversal: leaked outside file content: %q", recorder.Body.String())
+	}
+}
+
+func TestStaticHandler_ResponseHeaders(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("home"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := newStaticHandler(root, "/", map[string]string{"Access-Control-Allow-Origin": "*"})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", recorder.Code)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("response header not applied: got %q", got)
+	}
+}
+
 func TestProxy_ResponseHeadersOverride(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Access-Control-Allow-Origin", "https://restrictive.example.com")
