@@ -170,6 +170,12 @@ netsh winhttp reset proxy
 
 浏览器与多数桌面应用走 WinINET（GUI）：设置 → 网络和 Internet → 代理 → 手动设置代理，填入 `192.168.1.100:4000`，关闭时切回「自动检测」。
 
+也可以只让单个 Chrome 实例走代理（不影响系统设置，关闭窗口即结束）：
+
+```bash
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --proxy-server="http://127.0.0.1:4000" "https://api.target-app.com/v1/"
+```
+
 #### Linux
 
 ```bash
