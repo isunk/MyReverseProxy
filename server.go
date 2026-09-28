@@ -233,11 +233,11 @@ type logWriter struct {
 	status int
 }
 
-func (l *logWriter) WriteHeader(code int) {
-	l.status = code
-	l.ResponseWriter.WriteHeader(code)
+func (w *logWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
 }
 
-func (l *logWriter) Unwrap() http.ResponseWriter {
-	return l.ResponseWriter
+func (w *logWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }

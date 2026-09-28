@@ -667,7 +667,7 @@ func TestFormatLogLine_Color(t *testing.T) {
 		{logError, "\x1b[31m"},
 	} {
 		got := formatLogLine(testStamp, tc.level, "event", true)
-		want := "09-28 09:21:36.865\t" + tc.code + levelNames[tc.level] + "\x1b[0m\tevent\n"
+		want := "09-28 09:21:36.865\t" + tc.code + tc.level.String() + "\x1b[0m\tevent\n"
 		if got != want {
 			t.Fatalf("level %v color mismatch:\n got %q\nwant %q", tc.level, got, want)
 		}

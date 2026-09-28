@@ -25,7 +25,7 @@ func main() {
 
 	level, err := parseLogLevel(*logLevel)
 	if err != nil {
-		fatal("invalid log level "+*logLevel, err)
+		fatalf("invalid log level %q: %v", *logLevel, err)
 	}
 	initLogging(level)
 
@@ -34,25 +34,25 @@ func main() {
 
 	if !specified["config"] {
 		if err := ensureConfig(*configPath); err != nil {
-			fatal("failed to initialize routing config", err)
+			fatalf("failed to initialize routing config: %v", err)
 		}
 	}
 
 	certSet, keySet := specified["cert"], specified["key"]
 	if certSet != keySet {
-		fatal("--cert and --key must be set together", nil)
+		fatalf("--cert and --key must be set together")
 	}
 
 	transport := newTransport(5 * time.Second)
 
 	tlsConfig, err := resolveTLSConfig(*certPath, *keyPath, certSet && keySet)
 	if err != nil {
-		fatal("TLS certificate configuration error", err)
+		fatalf("TLS certificate configuration error: %v", err)
 	}
 
 	instance, err := newProxy(*configPath, transport, tlsConfig)
 	if err != nil {
-		fatal("failed to load routing config", err)
+		fatalf("failed to load routing config: %v", err)
 	}
 	run(instance, fmt.Sprintf(":%d", *port))
 }
@@ -84,11 +84,11 @@ func resolveTLSConfig(certPath, keyPath string, explicitPair bool) (*tls.Config,
 func loadTLSConfig(certPath, keyPath string) (*tls.Config, error) {
 	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load key pair: %w", err)
 	}
 	caCert, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse certificate: %w", err)
 	}
 	if !caCert.IsCA {
 		return nil, errors.New("certificate is not a CA, cannot sign certificates for SNI")
@@ -128,7 +128,7 @@ func ensureConfig(path string) error {
 func run(p *proxy, listenAddr string) {
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		fatal("listen failed", err)
+		fatalf("listen failed: %v", err)
 	}
 	logInfof("listening addr=%s", listenAddr)
 	go serveListener(listener, p)
@@ -138,7 +138,7 @@ func run(p *proxy, listenAddr string) {
 
 func serveListener(listener net.Listener, p *proxy) {
 	if err := serve(listener, p.tlsConfig, p); err != nil {
-		fatal("server exited", err)
+		fatalf("server exited: %v", err)
 	}
 }
 
@@ -157,11 +157,7 @@ func serveSignals(p *proxy) {
 	}
 }
 
-func fatal(message string, err error) {
-	if err != nil {
-		logErrorf("%s: %v", message, err)
-	} else {
-		logErrorf("%s", message)
-	}
+func fatalf(format string, args ...any) {
+	logErrorf(format, args...)
 	os.Exit(1)
 }

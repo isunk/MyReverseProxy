@@ -17,6 +17,7 @@ import (
 const (
 	connectEstablished = "HTTP/1.1 200 Connection Established\r\n\r\n"
 	connectBadGateway  = "HTTP/1.1 502 Bad Gateway\r\n\r\n"
+	tunnelDialTimeout  = 10 * time.Second
 )
 
 type proxy struct {
@@ -183,7 +184,7 @@ func (p *proxy) serveConnect(client net.Conn, request *http.Request) bool {
 }
 
 func (p *proxy) tunnel(client net.Conn, target string) {
-	upstream, err := net.DialTimeout("tcp", target, 10*time.Second)
+	upstream, err := net.DialTimeout("tcp", target, tunnelDialTimeout)
 	if err != nil {
 		logErrorf("tunnel target connection failed target=%s: %v", target, err)
 		_, _ = client.Write([]byte(connectBadGateway))

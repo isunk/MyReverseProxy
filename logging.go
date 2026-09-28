@@ -20,11 +20,13 @@ const (
 
 const logTimeLayout = "01-02 15:04:05.000"
 
-// 级别名与 ANSI 色按同一索引对应：DEBUG 灰、INFO 绿、WARN 黄、ERROR 红
-var (
-	levelNames  = [...]string{"DEBUG", "INFO", "WARN", "ERROR"}
-	levelColors = [...]string{"\x1b[90m", "\x1b[32m", "\x1b[33m", "\x1b[31m"}
-	colorReset  = "\x1b[0m"
+// 级别 ANSI 色按行业通用规则：DEBUG 灰、INFO 绿、WARN 黄、ERROR 红
+const (
+	colorDebug = "\x1b[90m"
+	colorInfo  = "\x1b[32m"
+	colorWarn  = "\x1b[33m"
+	colorError = "\x1b[31m"
+	colorReset = "\x1b[0m"
 )
 
 var (
@@ -55,11 +57,41 @@ func logf(level logLevel, format string, args ...any) {
 }
 
 func formatLogLine(now time.Time, level logLevel, message string, color bool) string {
-	levelText := levelNames[level]
+	levelText := level.String()
 	if color {
-		levelText = levelColors[level] + levelText + colorReset
+		levelText = levelColor(level) + levelText + colorReset
 	}
 	return now.Format(logTimeLayout) + "\t" + levelText + "\t" + message + "\n"
+}
+
+func (l logLevel) String() string {
+	switch l {
+	case logDebug:
+		return "DEBUG"
+	case logInfo:
+		return "INFO"
+	case logWarn:
+		return "WARN"
+	case logError:
+		return "ERROR"
+	default:
+		return "INFO"
+	}
+}
+
+func levelColor(level logLevel) string {
+	switch level {
+	case logDebug:
+		return colorDebug
+	case logInfo:
+		return colorInfo
+	case logWarn:
+		return colorWarn
+	case logError:
+		return colorError
+	default:
+		return colorInfo
+	}
 }
 
 func isTerminal(file *os.File) bool {
@@ -68,9 +100,9 @@ func isTerminal(file *os.File) bool {
 }
 
 func parseLogLevel(text string) (logLevel, error) {
-	for level, name := range levelNames {
-		if strings.EqualFold(text, name) {
-			return logLevel(level), nil
+	for level := logDebug; level <= logError; level++ {
+		if strings.EqualFold(text, level.String()) {
+			return level, nil
 		}
 	}
 	return logInfo, fmt.Errorf("unknown log level %q", text)

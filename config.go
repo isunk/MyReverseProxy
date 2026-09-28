@@ -48,11 +48,11 @@ type Route struct {
 func loadTable(path string) (*routeTable, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read config: %w", err)
 	}
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	table := &routeTable{byDomain: map[string][]*route{}}
 	for _, server := range config.Servers {
