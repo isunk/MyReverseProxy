@@ -188,19 +188,20 @@ func (ca *certificateAuthority) getCertificate(hello *tls.ClientHelloInfo) (*tls
 	if hello.ServerName == "" {
 		return nil, errors.New("missing SNI, cannot sign certificate for domain")
 	}
+	serverName := strings.ToLower(hello.ServerName)
 	ca.mu.Lock()
 	defer ca.mu.Unlock()
-	if entry, ok := ca.cache[hello.ServerName]; ok && time.Now().Before(entry.expiresAt) {
+	if entry, ok := ca.cache[serverName]; ok && time.Now().Before(entry.expiresAt) {
 		return entry.cert, nil
 	}
-	cert, err := ca.sign(hello.ServerName)
+	cert, err := ca.sign(serverName)
 	if err != nil {
 		return nil, err
 	}
 	if len(ca.cache) >= maxCachedCerts {
 		ca.cache = map[string]cacheEntry{}
 	}
-	ca.cache[hello.ServerName] = cacheEntry{cert: cert, expiresAt: time.Now().Add(serverCertTTL)}
+	ca.cache[serverName] = cacheEntry{cert: cert, expiresAt: time.Now().Add(serverCertTTL)}
 	return cert, nil
 }
 

@@ -164,12 +164,16 @@ func TestPick_LongestPrefix(t *testing.T) {
 			{prefix: "/"},
 			{prefix: "/v1/"},
 			{prefix: "/v1/users/"},
+			{prefix: "/api"},
 		},
 	}}
 	cases := map[string]string{
 		"/v1/users/1": "/v1/users/",
 		"/v1/other":   "/v1/",
 		"/other":      "/",
+		"/api":        "/api",
+		"/api/x":      "/api",
+		"/api-v2":     "/",
 	}
 	for path, want := range cases {
 		entry, ok := table.pick("a", path)
@@ -564,6 +568,15 @@ func TestCertificateAuthority_SignsForSNI(t *testing.T) {
 	}
 	if cached != cert {
 		t.Fatal("同一 SNI 应命中缓存返回同一证书")
+	}
+
+	// 混合大小写 SNI 应归一化为小写，复用缓存
+	mixed, err := authority.getCertificate(&tls.ClientHelloInfo{ServerName: "API.Example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mixed != cert {
+		t.Fatal("混合大小写 SNI 应复用同一缓存证书")
 	}
 
 	if _, err := authority.getCertificate(&tls.ClientHelloInfo{ServerName: ""}); err == nil {
