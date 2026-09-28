@@ -77,26 +77,22 @@ func (p *proxy) watchFile(interval time.Duration, stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-ticker.C:
-			previous = p.syncConfig(previous)
+			data, err := os.ReadFile(p.configPath)
+			if err != nil {
+				logWarnf("failed to read routing config: %v", err)
+				continue
+			}
+			if bytes.Equal(data, previous) {
+				continue
+			}
+			previous = data
+			if err := p.reload(); err != nil {
+				logErrorf("config reload failed, keeping previous config: %v", err)
+				continue
+			}
+			logInfof("config changed, hot reloaded")
 		}
 	}
-}
-
-func (p *proxy) syncConfig(previous []byte) []byte {
-	data, err := os.ReadFile(p.configPath)
-	if err != nil {
-		logWarnf("failed to read routing config: %v", err)
-		return previous
-	}
-	if previous != nil && bytes.Equal(data, previous) {
-		return previous
-	}
-	if err := p.reload(); err != nil {
-		logErrorf("config reload failed, keeping previous config: %v", err)
-	} else {
-		logInfof("config changed, hot reloaded")
-	}
-	return data
 }
 
 func (p *proxy) newRouteProxy(entry *route) *httputil.ReverseProxy {
@@ -142,40 +138,48 @@ func (p *proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request) {
+	client, ok := hijackConn(writer)
+	if !ok {
+		return
+	}
+	// serveConnect 返回 false 表示连接仍在手里（隧道结束、502 或握手失败），由这里收尾
+	if !p.serveConnect(client, request) {
+		client.Close()
+	}
+}
+
+func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
 	hijacker, ok := writer.(http.Hijacker)
 	if !ok {
 		http.Error(writer, "hijack unsupported", http.StatusInternalServerError)
-		return
+		return nil, false
 	}
 	client, _, err := hijacker.Hijack()
 	if err != nil {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, false
 	}
-	closeConn := true
-	defer func() {
-		if closeConn {
-			client.Close()
-		}
-	}()
+	return client, true
+}
 
+// serveConnect 按 CONNECT 目标域名分发：命中路由走 MITM，否则透传隧道；
+// 返回 true 表示连接已移交内层 HTTP 服务（hijack 链），调用方不得再关闭
+func (p *proxy) serveConnect(client net.Conn, request *http.Request) bool {
 	domain := hostOnly(request.Host)
 	if !p.table.Load().has(domain) {
 		logInfof("connect target=%s mode=tunnel", request.Host)
 		p.tunnel(client, request.Host)
-		return
+		return false
 	}
 	if p.tlsConfig == nil {
 		_, _ = client.Write([]byte(connectBadGateway))
-		return
+		return false
 	}
 	logInfof("connect domain=%s mode=mitm", domain)
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
-		return
+		return false
 	}
-	if serveTLSConn(client, p.tlsConfig, p) {
-		closeConn = false
-	}
+	return serveSingleConn(newHTTPServer(p), tls.Server(client, p.tlsConfig))
 }
 
 func (p *proxy) tunnel(client net.Conn, target string) {

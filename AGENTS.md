@@ -22,8 +22,8 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 | `config.go` | YAML 配置结构、`loadTable` | 任何运行期依赖 |
 | `logging.go` | console 日志（`logXxxf` 模板字符串、级别过滤、级别着色、TTY 检测） | 路由/转发逻辑 |
 | `route.go` | `route`、`routeTable`、`pick` | I/O、日志 |
-| `proxy.go` | `proxy` 结构、`ServeHTTP`、`handleConnect`、`tunnel`、`reload`、`watchFile` 热加载、转发构建 | 连接级 TLS 服务细节 |
-| `server.go` | 单端口监听、TLS/HTTP 协议识别、SNI 注入、`oneConnListener`、纯工具函数、`logWriter` | 路由决策逻辑 |
+| `proxy.go` | `proxy` 结构、`ServeHTTP`、`handleConnect`/`hijackConn`/`serveConnect`、`tunnel`、`reload`、`watchFile` 热加载、转发构建 | 连接级 TLS 服务细节 |
+| `server.go` | 单端口监听、TLS/HTTP 协议识别（`handleConn`/`sniffTLS`）、`oneConnListener`、纯工具函数、`logWriter` | 路由决策逻辑 |
 | `main_test.go` | 单元与集成测试 | — |
 
 新增文件时保持单一职责，文件名单词式小写。

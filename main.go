@@ -66,8 +66,8 @@ func newTransport(dialTimeout time.Duration) *http.Transport {
 	return transport
 }
 
-func resolveTLSConfig(certPath, keyPath string, explicit bool) (*tls.Config, error) {
-	if !explicit {
+func resolveTLSConfig(certPath, keyPath string, explicitPair bool) (*tls.Config, error) {
+	if !explicitPair {
 		certExists := fileExists(certPath)
 		keyExists := fileExists(keyPath)
 		if !certExists && !keyExists {

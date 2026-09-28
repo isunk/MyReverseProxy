@@ -19,14 +19,22 @@ import (
 	"time"
 )
 
+// TLS 记录层首字节 0x16 表示 handshake，即 ClientHello 报文
+const tlsRecordHandshake = 0x16
+
+const (
+	serverCertTTL     = 24 * time.Hour
+	maxCachedCerts    = 512
+	protoDetectWait   = 10 * time.Second
+	readHeaderTimeout = 10 * time.Second
+	idleTimeout       = 60 * time.Second
+)
+
 type oneConnListener struct {
 	conn  net.Conn
 	taken atomic.Bool
 	done  chan struct{}
 }
-
-// TLS 记录层首字节 0x16 表示 handshake，即 ClientHello 报文
-const tlsRecordHandshake = 0x16
 
 func newOneConnListener(conn net.Conn) *oneConnListener {
 	return &oneConnListener{conn: conn, done: make(chan struct{})}
@@ -53,6 +61,10 @@ type bufferedConn struct {
 	reader *bufio.Reader
 }
 
+func newBufferedConn(conn net.Conn) *bufferedConn {
+	return &bufferedConn{Conn: conn, reader: bufio.NewReader(conn)}
+}
+
 func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
 
 func serve(listener net.Listener, tlsConfig *tls.Config, handler http.Handler) error {
@@ -65,34 +77,40 @@ func serve(listener net.Listener, tlsConfig *tls.Config, handler http.Handler) e
 	}
 }
 
+// handleConn 按连接首字节识别协议：TLS 握手包包一层 tls.Server 后与纯 HTTP 走同一服务管道，
+// hijack 发生时连接所有权移交给内层 handler，返回 false 则由这里收尾关闭
 func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler) {
-	reader := bufio.NewReader(conn)
-	buffered := &bufferedConn{Conn: conn, reader: reader}
-	_ = conn.SetReadDeadline(time.Now().Add(protoDetectWait))
-	first, err := reader.Peek(1)
+	buffered := newBufferedConn(conn)
+	isTLS, err := sniffTLS(buffered)
 	if err != nil {
 		conn.Close()
 		return
 	}
-	_ = conn.SetReadDeadline(time.Time{})
-	if first[0] == tlsRecordHandshake {
-		if tlsConfig == nil {
-			logWarnf("received TLS connection but no certificate configured, closing remote=%s", conn.RemoteAddr())
-			conn.Close()
-			return
-		}
-		if serveTLSConn(buffered, tlsConfig, handler) {
-			return
-		}
+	if isTLS && tlsConfig == nil {
+		logWarnf("received TLS connection but no certificate configured, closing remote=%s", conn.RemoteAddr())
 		conn.Close()
 		return
 	}
-	if serveSingleConn(newHTTPServer(handler), buffered) {
-		return
+	stream := net.Conn(buffered)
+	if isTLS {
+		stream = tls.Server(buffered, tlsConfig)
 	}
-	conn.Close()
+	if !serveSingleConn(newHTTPServer(handler), stream) {
+		conn.Close()
+	}
 }
 
+func sniffTLS(conn *bufferedConn) (bool, error) {
+	conn.SetReadDeadline(time.Now().Add(protoDetectWait))
+	first, err := conn.reader.Peek(1)
+	conn.SetReadDeadline(time.Time{})
+	if err != nil {
+		return false, err
+	}
+	return first[0] == tlsRecordHandshake, nil
+}
+
+// serveSingleConn 在单条连接上跑一次 http.Server.Serve，返回是否发生过 hijack
 func serveSingleConn(server *http.Server, conn net.Conn) bool {
 	listener := newOneConnListener(conn)
 	var once sync.Once
@@ -115,10 +133,6 @@ func newHTTPServer(handler http.Handler) *http.Server {
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 	}
-}
-
-func serveTLSConn(raw net.Conn, tlsConfig *tls.Config, handler http.Handler) bool {
-	return serveSingleConn(newHTTPServer(handler), tls.Server(raw, tlsConfig))
 }
 
 func domainOf(request *http.Request) string {
@@ -147,14 +161,6 @@ func joinPath(base, rest string) string {
 	}
 	return strings.TrimSuffix(base, "/") + rest
 }
-
-const (
-	serverCertTTL     = 24 * time.Hour
-	maxCachedCerts    = 512
-	protoDetectWait   = 10 * time.Second
-	readHeaderTimeout = 10 * time.Second
-	idleTimeout       = 60 * time.Second
-)
 
 var serialLimit = new(big.Int).Lsh(big.NewInt(1), 128)
 

@@ -56,37 +56,45 @@ func loadTable(path string) (*routeTable, error) {
 	}
 	table := &routeTable{byDomain: map[string][]*route{}}
 	for _, server := range config.Servers {
-		if server.Domain == "" {
+		domain := strings.ToLower(server.Domain)
+		if domain == "" {
 			return nil, errors.New("domain must not be empty")
 		}
-		domain := strings.ToLower(server.Domain)
 		if _, exists := table.byDomain[domain]; exists {
 			return nil, fmt.Errorf("duplicate domain %q", server.Domain)
 		}
-		seen := map[string]bool{}
-		var entries []*route
-		for _, routeConfig := range server.Routes {
-			if routeConfig.Prefix == "" || routeConfig.Upstream == "" {
-				return nil, fmt.Errorf("domain %q: prefix and upstream are required", server.Domain)
-			}
-			if !strings.HasPrefix(routeConfig.Prefix, "/") {
-				return nil, fmt.Errorf("domain %q: prefix %q must start with /", server.Domain, routeConfig.Prefix)
-			}
-			if seen[routeConfig.Prefix] {
-				return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, routeConfig.Prefix)
-			}
-			seen[routeConfig.Prefix] = true
-			target, err := url.Parse(routeConfig.Upstream)
-			if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
-				return nil, fmt.Errorf("domain %q: invalid upstream %q", server.Domain, routeConfig.Upstream)
-			}
-			entries = append(entries, &route{
-				prefix: routeConfig.Prefix,
-				target: target,
-				host:   routeConfig.Host,
-			})
+		entries, err := buildRoutes(server)
+		if err != nil {
+			return nil, err
 		}
 		table.byDomain[domain] = entries
 	}
 	return table, nil
+}
+
+func buildRoutes(server Server) ([]*route, error) {
+	seen := map[string]bool{}
+	entries := make([]*route, 0, len(server.Routes))
+	for _, routeConfig := range server.Routes {
+		if routeConfig.Prefix == "" || routeConfig.Upstream == "" {
+			return nil, fmt.Errorf("domain %q: prefix and upstream are required", server.Domain)
+		}
+		if !strings.HasPrefix(routeConfig.Prefix, "/") {
+			return nil, fmt.Errorf("domain %q: prefix %q must start with /", server.Domain, routeConfig.Prefix)
+		}
+		if seen[routeConfig.Prefix] {
+			return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, routeConfig.Prefix)
+		}
+		seen[routeConfig.Prefix] = true
+		target, err := url.Parse(routeConfig.Upstream)
+		if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
+			return nil, fmt.Errorf("domain %q: invalid upstream %q", server.Domain, routeConfig.Upstream)
+		}
+		entries = append(entries, &route{
+			prefix: routeConfig.Prefix,
+			target: target,
+			host:   routeConfig.Host,
+		})
+	}
+	return entries, nil
 }

@@ -26,7 +26,7 @@ import (
 )
 
 func init() {
-	logState.out = io.Discard
+	logOut = io.Discard
 }
 
 func writeConfigFile(t *testing.T, name, content string) string {
@@ -667,9 +667,9 @@ func TestFormatLogLine_Color(t *testing.T) {
 		{logError, "\x1b[31m"},
 	} {
 		got := formatLogLine(testStamp, tc.level, "event", true)
-		want := "09-28 09:21:36.865\t" + tc.code + tc.level.String() + "\x1b[0m\tevent\n"
+		want := "09-28 09:21:36.865\t" + tc.code + levelNames[tc.level] + "\x1b[0m\tevent\n"
 		if got != want {
-			t.Fatalf("level %s color mismatch:\n got %q\nwant %q", tc.level, got, want)
+			t.Fatalf("level %v color mismatch:\n got %q\nwant %q", tc.level, got, want)
 		}
 	}
 }
@@ -693,9 +693,9 @@ func TestParseLogLevel(t *testing.T) {
 
 func TestLogf_LevelFilter(t *testing.T) {
 	var out bytes.Buffer
-	logState.out = &out
-	logState.min = logWarn
-	t.Cleanup(func() { logState.out = io.Discard; logState.min = logInfo })
+	logOut = &out
+	logFloor = logWarn
+	t.Cleanup(func() { logOut = io.Discard; logFloor = logInfo })
 
 	logInfof("hidden")
 	logWarnf("shown")
