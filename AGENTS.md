@@ -20,7 +20,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 |------|------|----------|
 | `main.go` | flags 解析、信号循环、`run`、`fatal` | 路由/转发逻辑 |
 | `config.go` | YAML 配置结构、`loadTable` | 任何运行期依赖 |
-| `logging.go` | console 日志 Handler（`MM-dd HH:mm:ss.SSS\t级别\t消息+参数`、级别着色、TTY 检测） | 路由/转发逻辑 |
+| `logging.go` | console 日志（`logXxxf` 模板字符串、级别过滤、级别着色、TTY 检测） | 路由/转发逻辑 |
 | `route.go` | `route`、`routeTable`、`pick` | I/O、日志 |
 | `proxy.go` | `proxy` 结构、`ServeHTTP`、`handleConnect`、`tunnel`、`reload`、`watchFile` 热加载、转发构建 | 连接级 TLS 服务细节 |
 | `server.go` | 单端口监听、TLS/HTTP 协议识别、SNI 注入、`oneConnListener`、纯工具函数、`logWriter` | 路由决策逻辑 |
@@ -34,7 +34,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 - `go vet ./...` 必须无告警。
 - import 分组：标准库在前，第三方（`gopkg.in/yaml.v3`）在后，组间空行。
 - 错误处理：可恢复错误 `return err` 并由调用方决策；不可恢复（启动失败、监听失败）走 `fatal`，禁止在请求热路径内 `os.Exit`。
-- 日志统一用 `log/slog` 结构化输出，键值用单词式（`domain`、`path`、`upstream`、`status`、`elapsed`），禁止 `fmt.Println` 调试残留。
+- 日志统一用 `logging.go` 的 `logXxxf` 模板字符串输出（`时间\t级别\t消息`），键值内嵌格式 `key=value`（`domain=%s`、`status=%d`），禁止 `fmt.Println` 调试残留。
 - 热路径禁止注释，仅在解释"为什么"时保留简短中文注释；禁止冗余注释。
 - 不引入额外依赖除非必要；当前仅依赖 `gopkg.in/yaml.v3` 与标准库。
 

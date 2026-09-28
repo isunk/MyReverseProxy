@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -11,7 +10,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"io"
-	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -20,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -29,7 +26,7 @@ import (
 )
 
 func init() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	logState.out = io.Discard
 }
 
 func writeConfigFile(t *testing.T, name, content string) string {
@@ -651,72 +648,58 @@ func TestConnect_NestedConnectViaMITM(t *testing.T) {
 
 var testStamp = time.Date(2026, 9, 28, 9, 21, 36, 865_000_000, time.FixedZone("CST", 8*3600))
 
-func newTestRecord(level slog.Level, message string, attrs ...slog.Attr) slog.Record {
-	record := slog.NewRecord(testStamp, level, message, 0)
-	record.AddAttrs(attrs...)
-	return record
-}
-
-func TestConsoleHandler_Format(t *testing.T) {
-	var out bytes.Buffer
-	handler := newConsoleHandler(&out, slog.LevelDebug)
-	err := handler.Handle(context.Background(), newTestRecord(slog.LevelInfo, "created default config file", slog.String("path", "config.yaml")))
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestFormatLogLine(t *testing.T) {
+	got := formatLogLine(testStamp, logInfo, "created default config file path=config.yaml", false)
 	want := "09-28 09:21:36.865\tINFO\tcreated default config file path=config.yaml\n"
-	if out.String() != want {
-		t.Fatalf("format mismatch:\n got %q\nwant %q", out.String(), want)
+	if got != want {
+		t.Fatalf("format mismatch:\n got %q\nwant %q", got, want)
 	}
 }
 
-func TestConsoleHandler_LevelColor(t *testing.T) {
-	var out bytes.Buffer
-	handler := &consoleHandler{out: &out, level: slog.LevelDebug, color: true, mu: &sync.Mutex{}}
+func TestFormatLogLine_Color(t *testing.T) {
 	for _, tc := range []struct {
-		level slog.Level
+		level logLevel
 		code  string
 	}{
-		{slog.LevelDebug, "\x1b[90m"},
-		{slog.LevelInfo, "\x1b[32m"},
-		{slog.LevelWarn, "\x1b[33m"},
-		{slog.LevelError, "\x1b[31m"},
+		{logDebug, "\x1b[90m"},
+		{logInfo, "\x1b[32m"},
+		{logWarn, "\x1b[33m"},
+		{logError, "\x1b[31m"},
 	} {
-		out.Reset()
-		if err := handler.Handle(context.Background(), newTestRecord(tc.level, "event")); err != nil {
-			t.Fatal(err)
-		}
+		got := formatLogLine(testStamp, tc.level, "event", true)
 		want := "09-28 09:21:36.865\t" + tc.code + tc.level.String() + "\x1b[0m\tevent\n"
-		if out.String() != want {
-			t.Fatalf("level %s color mismatch:\n got %q\nwant %q", tc.level, out.String(), want)
+		if got != want {
+			t.Fatalf("level %s color mismatch:\n got %q\nwant %q", tc.level, got, want)
 		}
 	}
 }
 
-func TestConsoleHandler_LevelFilter(t *testing.T) {
-	handler := newConsoleHandler(&bytes.Buffer{}, slog.LevelWarn)
-	if handler.Enabled(context.Background(), slog.LevelInfo) {
-		t.Fatal("info should be filtered at warn level")
+func TestParseLogLevel(t *testing.T) {
+	for text, want := range map[string]logLevel{
+		"debug": logDebug,
+		"info":  logInfo,
+		"warn":  logWarn,
+		"error": logError,
+	} {
+		got, err := parseLogLevel(text)
+		if err != nil || got != want {
+			t.Fatalf("parseLogLevel(%q) = %v, %v", text, got, err)
+		}
 	}
-	if !handler.Enabled(context.Background(), slog.LevelWarn) {
-		t.Fatal("warn should pass at warn level")
-	}
-	if !handler.Enabled(context.Background(), slog.LevelError) {
-		t.Fatal("error should pass at warn level")
+	if _, err := parseLogLevel("verbose"); err == nil {
+		t.Fatal("unknown level should fail")
 	}
 }
 
-func TestConsoleHandler_GroupAndAttrs(t *testing.T) {
+func TestLogf_LevelFilter(t *testing.T) {
 	var out bytes.Buffer
-	handler := newConsoleHandler(&out, slog.LevelDebug).
-		WithAttrs([]slog.Attr{slog.Int("id", 42)}).
-		WithGroup("conn")
-	err := handler.Handle(context.Background(), newTestRecord(slog.LevelInfo, "tunnel", slog.String("target", "host with space")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "09-28 09:21:36.865\tINFO\ttunnel id=42 conn.target=\"host with space\"\n"
-	if out.String() != want {
-		t.Fatalf("group format mismatch:\n got %q\nwant %q", out.String(), want)
+	logState.out = &out
+	logState.min = logWarn
+	t.Cleanup(func() { logState.out = io.Discard; logState.min = logInfo })
+
+	logInfof("hidden")
+	logWarnf("shown")
+	if out.String() != formatLogLine(time.Now(), logWarn, "shown", false) {
+		t.Fatalf("filter mismatch: %q", out.String())
 	}
 }

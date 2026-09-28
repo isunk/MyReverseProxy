@@ -1,16 +1,34 @@
 package main
 
 import (
-	"context"
+	"fmt"
 	"io"
-	"log/slog"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
+	"time"
 )
 
-const consoleTimeLayout = "01-02 15:04:05.000"
+type logLevel int
+
+const (
+	logDebug logLevel = iota
+	logInfo
+	logWarn
+	logError
+)
+
+func (l logLevel) String() string {
+	switch l {
+	case logDebug:
+		return "DEBUG"
+	case logWarn:
+		return "WARN"
+	case logError:
+		return "ERROR"
+	default:
+		return "INFO"
+	}
+}
 
 // 级别着色按行业通用规则：DEBUG 灰、INFO 绿、WARN 黄、ERROR 红
 const (
@@ -21,134 +39,69 @@ const (
 	colorReset = "\x1b[0m"
 )
 
-type consoleHandler struct {
-	out    io.Writer
-	level  slog.Leveler
-	color  bool
-	mu     *sync.Mutex
-	attrs  []string
-	prefix string
+var logState = struct {
+	sync.Mutex
+	out   io.Writer
+	min   logLevel
+	color bool
+}{out: os.Stdout, min: logInfo}
+
+func initLogging(level logLevel) {
+	logState.min = level
+	logState.color = isTerminal(os.Stdout)
 }
 
-func newConsoleHandler(out io.Writer, level slog.Leveler) *consoleHandler {
-	return &consoleHandler{
-		out:   out,
-		level: level,
-		color: isTerminal(out),
-		mu:    &sync.Mutex{},
-	}
-}
-
-func isTerminal(out io.Writer) bool {
-	file, ok := out.(*os.File)
-	if !ok {
-		return false
-	}
+func isTerminal(file *os.File) bool {
 	info, err := file.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-func (h *consoleHandler) Enabled(_ context.Context, level slog.Level) bool {
-	return level >= h.level.Level()
+func parseLogLevel(text string) (logLevel, error) {
+	switch text {
+	case "debug":
+		return logDebug, nil
+	case "info":
+		return logInfo, nil
+	case "warn":
+		return logWarn, nil
+	case "error":
+		return logError, nil
+	}
+	return logInfo, fmt.Errorf("unknown log level %q", text)
 }
 
-func (h *consoleHandler) Handle(_ context.Context, record slog.Record) error {
-	parts := make([]string, 0, len(h.attrs)+record.NumAttrs())
-	parts = append(parts, h.attrs...)
-	record.Attrs(func(attr slog.Attr) bool {
-		if s := renderAttr(h.prefix, attr); s != "" {
-			parts = append(parts, s)
-		}
-		return true
-	})
+func logDebugf(format string, args ...any) { logf(logDebug, format, args...) }
+func logInfof(format string, args ...any)  { logf(logInfo, format, args...) }
+func logWarnf(format string, args ...any)  { logf(logWarn, format, args...) }
+func logErrorf(format string, args ...any) { logf(logError, format, args...) }
 
-	levelText := record.Level.String()
-	if h.color {
-		levelText = levelColor(record.Level) + levelText + colorReset
+func logf(level logLevel, format string, args ...any) {
+	if level < logState.min {
+		return
 	}
-
-	var line strings.Builder
-	line.WriteString(record.Time.Format(consoleTimeLayout))
-	line.WriteByte('\t')
-	line.WriteString(levelText)
-	line.WriteByte('\t')
-	line.WriteString(record.Message)
-	if len(parts) > 0 {
-		line.WriteByte(' ')
-		line.WriteString(strings.Join(parts, " "))
-	}
-	line.WriteByte('\n')
-
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	_, err := io.WriteString(h.out, line.String())
-	return err
+	line := formatLogLine(time.Now(), level, fmt.Sprintf(format, args...), logState.color)
+	logState.Lock()
+	defer logState.Unlock()
+	_, _ = io.WriteString(logState.out, line)
 }
 
-func (h *consoleHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	next := &consoleHandler{out: h.out, level: h.level, color: h.color, mu: h.mu, prefix: h.prefix}
-	next.attrs = make([]string, 0, len(h.attrs)+len(attrs))
-	next.attrs = append(next.attrs, h.attrs...)
-	for _, attr := range attrs {
-		if s := renderAttr(h.prefix, attr); s != "" {
-			next.attrs = append(next.attrs, s)
-		}
+func formatLogLine(now time.Time, level logLevel, message string, color bool) string {
+	levelText := level.String()
+	if color {
+		levelText = levelColor(level) + levelText + colorReset
 	}
-	return next
+	return now.Format("01-02 15:04:05.000") + "\t" + levelText + "\t" + message + "\n"
 }
 
-func (h *consoleHandler) WithGroup(name string) slog.Handler {
-	if name == "" {
-		return h
-	}
-	return &consoleHandler{out: h.out, level: h.level, color: h.color, mu: h.mu, attrs: h.attrs, prefix: h.prefix + name + "."}
-}
-
-func levelColor(level slog.Level) string {
-	switch {
-	case level < slog.LevelInfo:
+func levelColor(level logLevel) string {
+	switch level {
+	case logDebug:
 		return colorDebug
-	case level < slog.LevelWarn:
-		return colorInfo
-	case level < slog.LevelError:
+	case logWarn:
 		return colorWarn
-	default:
+	case logError:
 		return colorError
+	default:
+		return colorInfo
 	}
-}
-
-func renderAttr(prefix string, attr slog.Attr) string {
-	key := prefix + attr.Key
-	if attr.Value.Kind() == slog.KindGroup {
-		group := attr.Value.Group()
-		if len(group) == 0 {
-			return ""
-		}
-		parts := make([]string, 0, len(group))
-		for _, sub := range group {
-			parts = append(parts, renderAttr(key+".", sub))
-		}
-		return strings.Join(parts, " ")
-	}
-	return key + "=" + renderValue(attr.Value)
-}
-
-func renderValue(value slog.Value) string {
-	text := value.String()
-	if needsQuote(text) {
-		return strconv.Quote(text)
-	}
-	return text
-}
-
-func needsQuote(text string) bool {
-	if text == "" {
-		return true
-	}
-	for _, r := range text {
-		if r <= ' ' || r == '"' || r == '=' || r == 0x7f {
-			return true
-		}
-	}
-	return false
 }

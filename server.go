@@ -10,7 +10,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
-	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -78,7 +77,7 @@ func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler) {
 	_ = conn.SetReadDeadline(time.Time{})
 	if first[0] == tlsRecordHandshake {
 		if tlsConfig == nil {
-			slog.Warn("received TLS connection but no certificate configured, closing", "remote", conn.RemoteAddr())
+			logWarnf("received TLS connection but no certificate configured, closing remote=%s", conn.RemoteAddr())
 			conn.Close()
 			return
 		}

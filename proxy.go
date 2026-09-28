@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -86,16 +85,16 @@ func (p *proxy) watchFile(interval time.Duration, stop <-chan struct{}) {
 func (p *proxy) syncConfig(previous []byte) []byte {
 	data, err := os.ReadFile(p.configPath)
 	if err != nil {
-		slog.Warn("failed to read routing config", "error", err)
+		logWarnf("failed to read routing config: %v", err)
 		return previous
 	}
 	if previous != nil && bytes.Equal(data, previous) {
 		return previous
 	}
 	if err := p.reload(); err != nil {
-		slog.Error("config reload failed, keeping previous config", "error", err)
+		logErrorf("config reload failed, keeping previous config: %v", err)
 	} else {
-		slog.Info("config changed, hot reloaded")
+		logInfof("config changed, hot reloaded")
 	}
 	return data
 }
@@ -116,7 +115,7 @@ func (p *proxy) newRouteProxy(entry *route) *httputil.ReverseProxy {
 }
 
 func (p *proxy) errorHandler(writer http.ResponseWriter, request *http.Request, err error) {
-	slog.Error("upstream request failed", "host", request.Host, "path", request.URL.Path, "error", err)
+	logErrorf("upstream request failed host=%s path=%s: %v", request.Host, request.URL.Path, err)
 	writer.WriteHeader(http.StatusBadGateway)
 	_, _ = io.WriteString(writer, "502 Bad Gateway")
 }
@@ -131,14 +130,14 @@ func (p *proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	start := time.Now()
 	recorder := &logWriter{ResponseWriter: writer, status: http.StatusOK}
 	defer func() {
-		slog.Info("request", "domain", domain, "path", request.URL.Path, "status", recorder.status, "elapsed", time.Since(start))
+		logInfof("request domain=%s path=%s status=%d elapsed=%s", domain, request.URL.Path, recorder.status, time.Since(start))
 	}()
 	if matched {
-		slog.Debug("route matched", "domain", domain, "prefix", entry.prefix, "upstream", entry.target.String())
+		logDebugf("route matched domain=%s prefix=%s upstream=%s", domain, entry.prefix, entry.target)
 		entry.proxy.ServeHTTP(recorder, request)
 		return
 	}
-	slog.Debug("no route matched, passing through to original target", "domain", domain)
+	logDebugf("no route matched, passing through to original target domain=%s", domain)
 	p.passthrough.ServeHTTP(recorder, request)
 }
 
@@ -162,7 +161,7 @@ func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 
 	domain := hostOnly(request.Host)
 	if !p.table.Load().has(domain) {
-		slog.Info("connect", "target", request.Host, "mode", "tunnel")
+		logInfof("connect target=%s mode=tunnel", request.Host)
 		p.tunnel(client, request.Host)
 		return
 	}
@@ -170,7 +169,7 @@ func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 		_, _ = client.Write([]byte(connectBadGateway))
 		return
 	}
-	slog.Info("connect", "domain", domain, "mode", "mitm")
+	logInfof("connect domain=%s mode=mitm", domain)
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return
 	}
@@ -182,7 +181,7 @@ func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 func (p *proxy) tunnel(client net.Conn, target string) {
 	upstream, err := net.DialTimeout("tcp", target, 10*time.Second)
 	if err != nil {
-		slog.Error("tunnel target connection failed", "target", target, "error", err)
+		logErrorf("tunnel target connection failed target=%s: %v", target, err)
 		_, _ = client.Write([]byte(connectBadGateway))
 		return
 	}

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -24,11 +23,11 @@ func main() {
 	logLevel := flag.String("log", "info", "log level: debug, info, warn or error")
 	flag.Parse()
 
-	var level slog.Level
-	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
+	level, err := parseLogLevel(*logLevel)
+	if err != nil {
 		fatal("invalid log level "+*logLevel, err)
 	}
-	slog.SetDefault(slog.New(newConsoleHandler(os.Stdout, level)))
+	initLogging(level)
 
 	specified := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { specified[f.Name] = true })
@@ -72,7 +71,7 @@ func resolveTLSConfig(certPath, keyPath string, explicit bool) (*tls.Config, err
 		certExists := fileExists(certPath)
 		keyExists := fileExists(keyPath)
 		if !certExists && !keyExists {
-			slog.Warn("no default certificate found, serving HTTP and CONNECT tunnel only", "cert", certPath, "key", keyPath)
+			logWarnf("no default certificate found, serving HTTP and CONNECT tunnel only cert=%s key=%s", certPath, keyPath)
 			return nil, nil
 		}
 		if certExists != keyExists {
@@ -122,7 +121,7 @@ func ensureConfig(path string) error {
 	if err := os.WriteFile(path, []byte(defaultConfig), 0o644); err != nil {
 		return err
 	}
-	slog.Info("created default config file", "path", path)
+	logInfof("created default config file path=%s", path)
 	return nil
 }
 
@@ -131,7 +130,7 @@ func run(p *proxy, listenAddr string) {
 	if err != nil {
 		fatal("listen failed", err)
 	}
-	slog.Info("listening", "addr", listenAddr)
+	logInfof("listening addr=%s", listenAddr)
 	go serveListener(listener, p)
 	go p.watchFile(time.Second, nil)
 	serveSignals(p)
@@ -151,18 +150,18 @@ func serveSignals(p *proxy) {
 			return
 		}
 		if err := p.reload(); err != nil {
-			slog.Error("hot reload failed, keeping current config", "error", err)
+			logErrorf("hot reload failed, keeping current config: %v", err)
 			continue
 		}
-		slog.Info("routing config reloaded")
+		logInfof("routing config reloaded")
 	}
 }
 
 func fatal(message string, err error) {
 	if err != nil {
-		slog.Error(message, "error", err)
+		logErrorf("%s: %v", message, err)
 	} else {
-		slog.Error(message)
+		logErrorf("%s", message)
 	}
 	os.Exit(1)
 }
