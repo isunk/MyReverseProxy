@@ -140,7 +140,7 @@ if "!C_STATE!"=="RUN" (echo mrp 已在运行，跳过。) else (start "mrp" /D "
 
 echo [4/4] 设置系统代理
 call :probeProxy
-if "!D_STATE!"=="ON" (echo 系统代理已设置，跳过。) else (call :runProxy doProxySet)
+if "!D_STATE!"=="ON" (echo 系统代理已设置，跳过。) else (call :runElevated doProxySet)
 echo Windows 部署完成。
 exit /b
 
@@ -151,7 +151,7 @@ echo 停止 mrp 进程...
 call :probeRun
 if "!C_STATE!"=="RUN" (taskkill /im "%EXE%" /f) else (echo mrp 未运行，跳过。)
 echo 清空系统代理...
-call :runProxy doProxyReset
+call :runElevated doProxyReset
 echo 已停止。
 exit /b
 
@@ -394,7 +394,7 @@ exit /b
 :: ============================================================
 
 :: 需管理员的操作：当前已是管理员则直接执行，否则提权执行（%1 = 子程序名）
-:runProxy
+:runElevated
 call :isAdmin
 if "!ADMIN!"=="1" (call :%~1) else (call :elevate %~1)
 exit /b
