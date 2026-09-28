@@ -133,10 +133,10 @@ servers:
 
 ```bash
 # Linux / HarmonyOS / Android 设备本机（linux/arm64 静态产物）
-wget https://github.com/isunk/MyReverseProxy/releases/latest/download/mrp-linux-arm64
+wget https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp-linux-arm64
 
 # Windows（amd64）
-curl -LO https://github.com/isunk/MyReverseProxy/releases/latest/download/mrp-windows-amd64.exe
+curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp-windows-amd64.exe
 ```
 
 首次运行自动创建 `config.yaml`、监听 `4000`、加载 `ca.crt` / `ca.key`：
