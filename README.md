@@ -6,7 +6,7 @@ Go 实现的本地反向代理。单一端口同时处理 HTTP / HTTPS（按连�
 
 目标 App 通过 HTTPS 访问固定域名（如 `api.target-app.com`）。mrp 持有一张自签 CA，在 TLS 握手时按客户端 SNI 实时签发对应域名的服务端证书，把 CA 导入设备信任后，将设备流量引导到 mrp——hosts / DNS 重定向让 App 直连 mrp，或把设备代理指向 mrp 的 CONNECT。
 
-核心是 MITM：App 发来带 SNI 的 TLS ClientHello，mrp 用 CA 当场签发一张 SAN 为该 SNI 的服务端证书冒充目标域名完成握手，客户端因信任本地 CA 而验证通过，于是 mrp 拿到解密后的明文 HTTP：
+核心是 MITM：App 发来带 SNI 的 TLS ClientHello，mrp 用 CA 即时签发一张 SAN 为该 SNI 的服务端证书，代替目标域名完成握手；客户端因信任本地 CA 而验证通过，mrp 由此获得解密后的明文 HTTP：
 
 ```mermaid
 sequenceDiagram
@@ -45,13 +45,19 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
 
 #### Android
 
-- **用户证书**：设置 → 安全 → 更多安全设置 → 加密与凭据 → 安装证书 → CA 证书。用户证书仅对信任用户 CA 的应用生效；Android 7.0+ 应用默认只信任系统证书，还需在应用侧放行用户证书（`network_security_config` 的 `trust-anchors` 加入 `user`），否则无效
-- **系统证书（需 Root）**：Android 7.0+ 第三方 App 默认不信任用户证书，可装入系统证书存储规避应用侧改造，命名沿用 `<subject_hash>.0`，与 HarmonyOS 一致：
+- **用户证书**：设置 → 安全 → 更多安全设置 → 加密与凭据 → 安装证书 → CA 证书。用户证书仅对信任用户 CA 的应用生效；Android 7.0+ 应用默认只信任系统证书，需在应用侧放行用户证书（`network_security_config` 的 `trust-anchors` 加入 `user`）
+- **系统证书（需 Root）**：将证书命名为 `<subject_hash>.0`，推送到 `/system/etc/security/cacerts/`：
 
   ```bash
   HASH=$(openssl x509 -subject_hash_old -in ca.crt | head -1)
-  adb push ca.crt /data/local/tmp/${HASH}.0
-  adb shell "su -c 'mount -o rw,remount /system && cp /data/local/tmp/${HASH}.0 /system/etc/security/cacerts/ && chmod 644 /system/etc/security/cacerts/${HASH}.0'"
+
+  # adbd 以 root 运行并重新挂载 /system 为可写
+  adb root
+  adb remount
+
+  # 直接推送到系统证书目录
+  adb push ca.crt /system/etc/security/cacerts/${HASH}.0
+  adb shell chmod 644 /system/etc/security/cacerts/${HASH}.0
   ```
 
 #### HarmonyOS
