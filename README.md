@@ -45,15 +45,13 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
 
 #### Android
 
-- **用户证书**：设置 → 安全 → 更多安全设置 → 加密与凭据 → 安装证书 → CA 证书
-- **系统证书（需 Root）**：Android 7.0+ 第三方 App 默认不信任用户证书，需装入系统证书存储
+- **用户证书**：设置 → 安全 → 更多安全设置 → 加密与凭据 → 安装证书 → CA 证书。用户证书仅对信任用户 CA 的应用生效；Android 7.0+ 应用默认只信任系统证书，还需在应用侧放行用户证书（`network_security_config` 的 `trust-anchors` 加入 `user`），否则无效
+- **系统证书（需 Root）**：Android 7.0+ 第三方 App 默认不信任用户证书，可装入系统证书存储规避应用侧改造，命名沿用 `<subject_hash>.0`，与 HarmonyOS 一致：
 
   ```bash
   HASH=$(openssl x509 -subject_hash_old -in ca.crt | head -1)
   adb push ca.crt /data/local/tmp/${HASH}.0
-  adb shell "su -c 'mount -o rw,remount /system && \
-    cp /data/local/tmp/${HASH}.0 /system/etc/security/cacerts/ && \
-    chmod 644 /system/etc/security/cacerts/${HASH}.0'"
+  adb shell "su -c 'mount -o rw,remount /system && cp /data/local/tmp/${HASH}.0 /system/etc/security/cacerts/ && chmod 644 /system/etc/security/cacerts/${HASH}.0'"
   ```
 
 #### HarmonyOS
@@ -125,22 +123,31 @@ servers:
 
 ### 4. 启动服务
 
-```bash
-go build -trimpath -ldflags "-s -w" -o mrp .
-
-# 默认读取当前目录 config.yaml（缺失自动创建）、监听 4000、加载 ca.crt / ca.key
-./mrp
-```
-
-设备本机部署需交叉编译纯静态产物（见「各平台设备对接代理」）：
+从 GitHub Releases 下载对应平台的静态二进制，免本地编译（`latest` 为每次构建自动发布的预发布包，`v*` 为正式版）：
 
 ```bash
-# HarmonyOS / Android 设备本机运行用 linux/arm64 静态产物
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-  go build -trimpath -ldflags "-s -w" -o mrp-linux-arm64 .
+# Linux / HarmonyOS / Android 设备本机（linux/arm64 静态产物）
+wget https://github.com/isunk/MyReverseProxy/releases/latest/download/mrp-linux-arm64
+
+# Windows（amd64）
+curl -LO https://github.com/isunk/MyReverseProxy/releases/latest/download/mrp-windows-amd64.exe
 ```
 
-其余目标 `android/arm64`、`windows/amd64` 同理调整 `GOOS` / `GOARCH`，CI 产物见 GitHub Releases。
+需要校验完整性的可一并下载 `checksums.txt`：
+
+```bash
+wget https://github.com/isunk/MyReverseProxy/releases/latest/download/checksums.txt
+```
+
+首次运行自动创建 `config.yaml`、监听 `4000`、加载 `ca.crt` / `ca.key`：
+
+```bash
+# Linux / HarmonyOS / Android 设备本机
+chmod +x mrp-linux-arm64
+./mrp-linux-arm64
+```
+
+Windows 下命令行运行 `mrp-windows-amd64.exe` 即可。
 
 命令行参数：
 
