@@ -182,7 +182,7 @@ curl -x http://127.0.0.1:4000 --cacert ca.crt \
 09-28 09:21:36.865	INFO	created default config file path=config.yaml
 ```
 
-整行按级别着色（仅终端输出时着色，重定向到文件为纯文本）：DEBUG 灰、INFO 绿、WARN 黄、ERROR 红。
+整行按级别着色（仅终端输出时着色，重定向到文件为纯文本）：DEBUG 灰、INFO 普通色、WARN 黄、ERROR 红。
 
 ### 6. 各平台设备对接代理
 

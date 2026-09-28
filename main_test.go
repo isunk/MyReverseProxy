@@ -789,14 +789,19 @@ func TestFormatLogLine_Color(t *testing.T) {
 	for _, tc := range []struct {
 		level logLevel
 		code  string
+		reset bool
 	}{
-		{logDebug, "\x1b[90m"},
-		{logInfo, "\x1b[32m"},
-		{logWarn, "\x1b[33m"},
-		{logError, "\x1b[31m"},
+		{logDebug, "\x1b[90m", true},
+		{logInfo, "", false},
+		{logWarn, "\x1b[33m", true},
+		{logError, "\x1b[31m", true},
 	} {
 		got := formatLogLine(testStamp, tc.level, "event", true)
-		want := tc.code + "09-28 09:21:36.865\t" + tc.level.String() + "\tevent" + "\x1b[0m\n"
+		want := tc.code + "09-28 09:21:36.865\t" + tc.level.String() + "\tevent"
+		if tc.reset {
+			want += "\x1b[0m"
+		}
+		want += "\n"
 		if got != want {
 			t.Fatalf("level %v color mismatch:\n got %q\nwant %q", tc.level, got, want)
 		}
