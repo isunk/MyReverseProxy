@@ -10,9 +10,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -132,6 +134,8 @@ func newHTTPServer(handler http.Handler) *http.Server {
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
+		// 去掉标准 log 的日期前缀，底层错误按各自级别落到 stderr，不与控制台日志格式混用
+		ErrorLog: log.New(os.Stderr, "", 0),
 	}
 }
 

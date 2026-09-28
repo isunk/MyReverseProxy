@@ -193,6 +193,8 @@ func TestJoinPath(t *testing.T) {
 		{"/v1", "/users", "/v1/users"},
 		{"/v1/", "/users", "/v1/users"},
 		{"/v1", "", "/v1/"},
+		{"/", "", "/"},
+		{"/", "foo", "/foo"},
 	}
 	for _, tc := range cases {
 		if got := joinPath(tc.base, tc.rest); got != tc.want {
