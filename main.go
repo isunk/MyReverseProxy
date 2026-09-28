@@ -133,20 +133,21 @@ func run(p *proxy, listenAddr string) {
 	logInfof("listening addr=%s", listenAddr)
 	go serveListener(listener, p)
 	go p.watchFile(time.Second, nil)
-	serveSignals(p)
+	serveSignals(p, listener)
 }
 
 func serveListener(listener net.Listener, p *proxy) {
-	if err := serve(listener, p.tlsConfig, p); err != nil {
+	if err := serve(listener, p.tlsConfig, p); err != nil && !errors.Is(err, net.ErrClosed) {
 		fatalf("server exited: %v", err)
 	}
 }
 
-func serveSignals(p *proxy) {
+func serveSignals(p *proxy, listener net.Listener) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	for sig := range sigCh {
 		if sig != syscall.SIGHUP {
+			listener.Close()
 			return
 		}
 		if err := p.reload(); err != nil {
