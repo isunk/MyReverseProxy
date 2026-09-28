@@ -45,12 +45,12 @@ func main() {
 
 	transport := newTransport(5 * time.Second)
 
-	tlsConfig, err := resolveTLSConfig(*certPath, *keyPath, certSet && keySet)
+	tlsConfig, authority, err := resolveTLSConfig(*certPath, *keyPath, certSet && keySet)
 	if err != nil {
 		fatalf("TLS certificate configuration error: %v", err)
 	}
 
-	instance, err := newProxy(*configPath, transport, tlsConfig)
+	instance, err := newProxy(*configPath, transport, tlsConfig, authority)
 	if err != nil {
 		fatalf("failed to load routing config: %v", err)
 	}
@@ -66,43 +66,43 @@ func newTransport(dialTimeout time.Duration) *http.Transport {
 	return transport
 }
 
-func resolveTLSConfig(certPath, keyPath string, explicitPair bool) (*tls.Config, error) {
+func resolveTLSConfig(certPath, keyPath string, explicitPair bool) (*tls.Config, *certificateAuthority, error) {
 	if !explicitPair {
 		certExists := fileExists(certPath)
 		keyExists := fileExists(keyPath)
 		if !certExists && !keyExists {
 			logWarnf("no default certificate found, serving HTTP and CONNECT tunnel only cert=%s key=%s", certPath, keyPath)
-			return nil, nil
+			return nil, nil, nil
 		}
 		if certExists != keyExists {
-			return nil, fmt.Errorf("certificate and key must exist as a pair: %s / %s", certPath, keyPath)
+			return nil, nil, fmt.Errorf("certificate and key must exist as a pair: %s / %s", certPath, keyPath)
 		}
 	}
 	return loadTLSConfig(certPath, keyPath)
 }
 
-func loadTLSConfig(certPath, keyPath string) (*tls.Config, error) {
+func loadTLSConfig(certPath, keyPath string) (*tls.Config, *certificateAuthority, error) {
 	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
-		return nil, fmt.Errorf("load key pair: %w", err)
+		return nil, nil, fmt.Errorf("load key pair: %w", err)
 	}
 	caCert, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		return nil, fmt.Errorf("parse certificate: %w", err)
+		return nil, nil, fmt.Errorf("parse certificate: %w", err)
 	}
 	if !caCert.IsCA {
-		return nil, errors.New("certificate is not a CA, cannot sign certificates for SNI")
+		return nil, nil, errors.New("certificate is not a CA, cannot sign certificates for SNI")
 	}
 	signer, ok := pair.PrivateKey.(crypto.Signer)
 	if !ok {
-		return nil, errors.New("unsupported private key type")
+		return nil, nil, errors.New("unsupported private key type")
 	}
 	authority := newCertificateAuthority(caCert, signer)
 	return &tls.Config{
 		GetCertificate: authority.getCertificate,
 		NextProtos:     []string{"http/1.1"},
 		MinVersion:     tls.VersionTLS12,
-	}, nil
+	}, authority, nil
 }
 
 func fileExists(path string) bool {

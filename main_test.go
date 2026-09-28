@@ -73,7 +73,7 @@ func recordingServer(t *testing.T, tag string) *httptest.Server {
 func startProxy(t *testing.T, configPath string, tlsConfig *tls.Config) (string, *proxy) {
 	t.Helper()
 	transport := newTransport(2 * time.Second)
-	p, err := newProxy(configPath, transport, tlsConfig)
+	p, err := newProxy(configPath, transport, tlsConfig, nil)
 	if err != nil {
 		t.Fatalf("newProxy: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestLoadTLSConfig_RejectsNonCA(t *testing.T) {
 	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadTLSConfig(certPath, keyPath); err == nil {
+	if _, _, err := loadTLSConfig(certPath, keyPath); err == nil {
 		t.Fatal("want error for non-CA certificate")
 	}
 }
@@ -500,14 +500,14 @@ func TestResolveTLSConfig_Defaults(t *testing.T) {
 	dir := t.TempDir()
 	certPath := filepath.Join(dir, "ca.crt")
 	keyPath := filepath.Join(dir, "ca.key")
-	cfg, err := resolveTLSConfig(certPath, keyPath, false)
+	cfg, _, err := resolveTLSConfig(certPath, keyPath, false)
 	if err != nil || cfg != nil {
 		t.Fatalf("want nil config without certs, got %v err=%v", cfg, err)
 	}
 	if err := os.WriteFile(certPath, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveTLSConfig(certPath, keyPath, false); err == nil {
+	if _, _, err := resolveTLSConfig(certPath, keyPath, false); err == nil {
 		t.Fatal("want error for missing key")
 	}
 }
@@ -568,6 +568,28 @@ func TestCertificateAuthority_SignsForSNI(t *testing.T) {
 
 	if _, err := authority.getCertificate(&tls.ClientHelloInfo{ServerName: ""}); err == nil {
 		t.Fatal("缺少 SNI 应报错")
+	}
+}
+
+func TestCertificateAuthority_ClearCache(t *testing.T) {
+	caCert, caKey := testAuthorityCA(t)
+	authority := newCertificateAuthority(caCert, caKey)
+	hello := &tls.ClientHelloInfo{ServerName: "api.example.com"}
+
+	cert, err := authority.getCertificate(hello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached, _ := authority.getCertificate(hello); cached != cert {
+		t.Fatal("同一 SNI 应命中缓存返回同一证书")
+	}
+	authority.clearCache()
+	renewed, err := authority.getCertificate(hello)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed == cert {
+		t.Fatal("clearCache 后应重新签发证书，而非复用旧缓存")
 	}
 }
 

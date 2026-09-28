@@ -204,6 +204,13 @@ func (ca *certificateAuthority) getCertificate(hello *tls.ClientHelloInfo) (*tls
 	return cert, nil
 }
 
+// clearCache 清空已签发证书缓存，热加载后调用以丢弃旧状态
+func (ca *certificateAuthority) clearCache() {
+	ca.mu.Lock()
+	ca.cache = map[string]cacheEntry{}
+	ca.mu.Unlock()
+}
+
 func (ca *certificateAuthority) sign(serverName string) (*tls.Certificate, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

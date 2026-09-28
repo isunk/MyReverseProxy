@@ -25,14 +25,16 @@ type proxy struct {
 	table       atomic.Pointer[routeTable]
 	transport   *http.Transport
 	tlsConfig   *tls.Config
+	authority   *certificateAuthority
 	passthrough *httputil.ReverseProxy
 }
 
-func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Config) (*proxy, error) {
+func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *certificateAuthority) (*proxy, error) {
 	p := &proxy{
 		configPath: configPath,
 		transport:  transport,
 		tlsConfig:  tlsConfig,
+		authority:  authority,
 	}
 	p.passthrough = &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
@@ -63,6 +65,11 @@ func (p *proxy) reload() error {
 		}
 	}
 	p.table.Store(table)
+	// 丢弃旧路由的存量派生缓存：空闲上游连接与已签发证书，避免残留旧目标
+	p.transport.CloseIdleConnections()
+	if p.authority != nil {
+		p.authority.clearCache()
+	}
 	return nil
 }
 
