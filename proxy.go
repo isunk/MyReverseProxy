@@ -179,12 +179,13 @@ func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
 		http.Error(writer, "hijack unsupported", http.StatusInternalServerError)
 		return nil, false
 	}
-	client, _, err := hijacker.Hijack()
+	client, bufioRW, err := hijacker.Hijack()
 	if err != nil {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 		return nil, false
 	}
-	return client, true
+	// 保留 http.Server 内部 bufio.Reader 预读的数据（客户端紧跟 CONNECT 发送的字节）
+	return &bufferedConn{Conn: client, reader: bufioRW.Reader}, true
 }
 
 // serveConnect 按 CONNECT 目标域名分发：命中路由走 MITM，否则透传隧道；

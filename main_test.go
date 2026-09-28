@@ -710,6 +710,29 @@ func TestServe_DirectTLS_NestedConnectTunnel(t *testing.T) {
 	}
 }
 
+func TestConnect_PipelinedDataPreserved(t *testing.T) {
+	echo := echoServer(t)
+	cfg := writeConfigFile(t, "r.yaml", "servers: []\n")
+	proxyURL, _ := startProxy(t, cfg, nil)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// CONNECT 和数据写在同一次 Write 中，模拟客户端紧跟 CONNECT 发送数据
+	fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\nPING\n", echo, echo)
+	reader := bufio.NewReader(conn)
+	if code := readConnectResponse(t, reader); code != 200 {
+		t.Fatalf("want 200, got %d", code)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil || line != "PING\n" {
+		t.Fatalf("pipelined data should be forwarded: got %q err=%v", line, err)
+	}
+}
+
 // CONNECT+MITM 后内部再发 CONNECT：验证嵌套 hijack 不被外层 defer 误关
 func TestConnect_NestedConnectViaMITM(t *testing.T) {
 	echo := echoServer(t)
