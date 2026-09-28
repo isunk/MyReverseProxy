@@ -139,12 +139,6 @@ wget https://github.com/isunk/MyReverseProxy/releases/latest/download/mrp-linux-
 curl -LO https://github.com/isunk/MyReverseProxy/releases/latest/download/mrp-windows-amd64.exe
 ```
 
-需要校验完整性的可一并下载 `checksums.txt`：
-
-```bash
-wget https://github.com/isunk/MyReverseProxy/releases/latest/download/checksums.txt
-```
-
 首次运行自动创建 `config.yaml`、监听 `4000`、加载 `ca.crt` / `ca.key`：
 
 ```bash
