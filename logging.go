@@ -57,11 +57,11 @@ func logf(level logLevel, format string, args ...any) {
 }
 
 func formatLogLine(now time.Time, level logLevel, message string, color bool) string {
-	levelText := level.String()
+	line := now.Format(logTimeLayout) + "\t" + level.String() + "\t" + message
 	if color {
-		levelText = levelColor(level) + levelText + colorReset
+		line = levelColor(level) + line + colorReset
 	}
-	return now.Format(logTimeLayout) + "\t" + levelText + "\t" + message + "\n"
+	return line + "\n"
 }
 
 func (l logLevel) String() string {
