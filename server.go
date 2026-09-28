@@ -77,8 +77,8 @@ func serve(listener net.Listener, tlsConfig *tls.Config, handler http.Handler) e
 	}
 }
 
-// handleConn 按连接首字节识别协议：TLS 握手包包一层 tls.Server 后与纯 HTTP 走同一服务管道，
-// hijack 发生时连接所有权移交给内层 handler，返回 false 则由这里收尾关闭
+// handleConn 按连接首字节识别协议：TLS 握手包包一层 tls.Server 后与纯 HTTP 走同一服务管道。
+// serveSingleConn 返回 false（未发生 hijack）时由本函数收尾关闭连接。
 func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler) {
 	buffered := newBufferedConn(conn)
 	isTLS, err := sniffTLS(buffered)
@@ -91,7 +91,7 @@ func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler) {
 		conn.Close()
 		return
 	}
-	stream := net.Conn(buffered)
+	var stream net.Conn = buffered
 	if isTLS {
 		stream = tls.Server(buffered, tlsConfig)
 	}

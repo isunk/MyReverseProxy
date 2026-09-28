@@ -182,6 +182,25 @@ func TestPick_LongestPrefix(t *testing.T) {
 	}
 }
 
+func TestJoinPath(t *testing.T) {
+	cases := []struct {
+		base, rest, want string
+	}{
+		{"", "", "/"},
+		{"", "foo", "/foo"},
+		{"", "/foo", "/foo"},
+		{"/v1/", "users", "/v1/users"},
+		{"/v1", "/users", "/v1/users"},
+		{"/v1/", "/users", "/v1/users"},
+		{"/v1", "", "/v1/"},
+	}
+	for _, tc := range cases {
+		if got := joinPath(tc.base, tc.rest); got != tc.want {
+			t.Fatalf("joinPath(%q, %q) = %q, want %q", tc.base, tc.rest, got, tc.want)
+		}
+	}
+}
+
 func TestLoadTable_NormalizesDomainCase(t *testing.T) {
 	path := writeConfigFile(t, "r.yaml",
 		"servers:\n  - domain: API.Example.COM\n    routes:\n      - prefix: /\n        upstream: http://up-a\n")

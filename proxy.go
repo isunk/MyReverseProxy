@@ -211,6 +211,8 @@ func (p *proxy) tunnel(client net.Conn, target string) {
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return
 	}
+	// 双向拷贝：client→upstream 起协程，主协程跑 upstream→client。任一方向结束后
+	// tunnel 返回，由调用方关闭 client，进而打断对端读取使协程退出。
 	go func() {
 		io.Copy(upstream, client)
 		upstream.Close()

@@ -60,7 +60,7 @@ func main() {
 func newTransport(dialTimeout time.Duration) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil // 禁用环境代理，避免代理流量经上游代理回环到自身
-	transport.DialContext = (&net.Dialer{Timeout: dialTimeout}).DialContext
+	transport.DialContext = (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).DialContext
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // mrp 位于设备与上游之间，上游证书校验交由设备端完成
 	return transport
