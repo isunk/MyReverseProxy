@@ -29,16 +29,16 @@ type proxy struct {
 	tlsConfig   *tls.Config
 	authority   *certificateAuthority
 	passthrough *httputil.ReverseProxy
-	resolver    *dnsResolver
+	nameservers *nameserverSet
 }
 
-func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *certificateAuthority, resolver *dnsResolver) (*proxy, error) {
+func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *certificateAuthority, nameservers *nameserverSet) (*proxy, error) {
 	p := &proxy{
-		configPath: configPath,
-		transport:  transport,
-		tlsConfig:  tlsConfig,
-		authority:  authority,
-		resolver:   resolver,
+		configPath:  configPath,
+		transport:   transport,
+		tlsConfig:   tlsConfig,
+		authority:   authority,
+		nameservers: nameservers,
 	}
 	p.passthrough = &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
@@ -63,7 +63,7 @@ func (p *proxy) reload() error {
 	if err != nil {
 		return err
 	}
-	if err := p.resolver.update(nameservers); err != nil {
+	if err := p.nameservers.update(nameservers); err != nil {
 		return err
 	}
 	for _, entries := range table.byDomain {
@@ -272,7 +272,7 @@ func (p *proxy) serveConnect(client net.Conn, request *http.Request) bool {
 func (p *proxy) tunnel(client net.Conn, target string) {
 	ctx, cancel := context.WithTimeout(context.Background(), tunnelDialTimeout)
 	defer cancel()
-	upstream, err := p.resolver.DialContext(ctx, "tcp", target)
+	upstream, err := p.nameservers.DialContext(ctx, "tcp", target)
 	if err != nil {
 		logErrorf("tunnel target connection failed target=%s: %v", target, err)
 		_, _ = client.Write([]byte(connectBadGateway))

@@ -75,13 +75,13 @@ func recordingServer(t *testing.T, tag string) *httptest.Server {
 }
 
 func startProxy(t *testing.T, configPath string, tlsConfig *tls.Config) (string, *proxy) {
-	return startProxyWithResolver(t, configPath, tlsConfig, testResolver(t))
+	return startProxyWithNameservers(t, configPath, tlsConfig, testNameservers(t))
 }
 
-func startProxyWithResolver(t *testing.T, configPath string, tlsConfig *tls.Config, resolver *dnsResolver) (string, *proxy) {
+func startProxyWithNameservers(t *testing.T, configPath string, tlsConfig *tls.Config, servers *nameserverSet) (string, *proxy) {
 	t.Helper()
-	transport := newTransport(resolver)
-	p, err := newProxy(configPath, transport, tlsConfig, nil, resolver)
+	transport := newTransport(servers.DialContext)
+	p, err := newProxy(configPath, transport, tlsConfig, nil, servers)
 	if err != nil {
 		t.Fatalf("newProxy: %v", err)
 	}
@@ -94,13 +94,13 @@ func startProxyWithResolver(t *testing.T, configPath string, tlsConfig *tls.Conf
 	return "http://" + listener.Addr().String(), p
 }
 
-func testResolver(t *testing.T) *dnsResolver {
+func testNameservers(t *testing.T, entries ...string) *nameserverSet {
 	t.Helper()
-	resolver, err := newDNSResolver(2 * time.Second)
+	servers, err := newNameserverSet(2*time.Second, entries)
 	if err != nil {
-		t.Fatalf("newDNSResolver: %v", err)
+		t.Fatalf("newNameserverSet: %v", err)
 	}
-	return resolver
+	return servers
 }
 
 func proxyClient(proxyURL string) *http.Client {
@@ -1137,49 +1137,15 @@ func TestDefaultConfig_Parses(t *testing.T) {
 	}
 }
 
-func TestDNSResolver_Failover(t *testing.T) {
-	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
-	refused := "127.0.0.1:" + closedUDPPort(t)
-	resolver := testResolver(t)
-	if err := resolver.update([]string{refused, stub.address()}); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	addresses, err := resolver.LookupIPAddr(context.Background(), "target.mrp.local")
-	if err != nil {
-		t.Fatalf("lookup: %v", err)
-	}
-	if addresses[0].IP.String() != "127.0.0.1" {
-		t.Fatalf("lookup = %v, want 127.0.0.1", addresses)
-	}
-}
-
-func TestDNSResolver_UpdateFailureKeepsServers(t *testing.T) {
-	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
-	resolver := testResolver(t)
-	if err := resolver.update([]string{stub.address()}); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	if err := resolver.update([]string{"dns.example.com"}); err == nil {
-		t.Fatal("hostname nameserver should be rejected")
-	}
-	addresses, err := resolver.LookupIPAddr(context.Background(), "target.mrp.local")
-	if err != nil {
-		t.Fatalf("lookup after failed update: %v", err)
-	}
-	if addresses[0].IP.String() != "127.0.0.1" {
-		t.Fatalf("lookup = %v, want 127.0.0.1", addresses)
-	}
-}
-
-func TestDNSResolver_DialContext(t *testing.T) {
+func TestNameserverSet_Failover(t *testing.T) {
 	echo := echoServer(t)
 	_, port, _ := net.SplitHostPort(echo)
 	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
-	resolver := testResolver(t)
-	if err := resolver.update([]string{stub.address()}); err != nil {
+	servers := testNameservers(t)
+	if err := servers.update([]string{"127.0.0.1:" + closedUDPPort(t), stub.address()}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	conn, err := resolver.DialContext(context.Background(), "tcp", "echo.mrp.local:"+port)
+	conn, err := servers.DialContext(context.Background(), "tcp", "echo.mrp.local:"+port)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -1197,6 +1163,17 @@ func TestDNSResolver_DialContext(t *testing.T) {
 	}
 }
 
+func TestNameserverSet_UpdateFailureKeepsServers(t *testing.T) {
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	servers := testNameservers(t, stub.address())
+	if err := servers.update([]string{"dns.example.com"}); err == nil {
+		t.Fatal("hostname nameserver should be rejected")
+	}
+	if got := servers.serverAddresses(); !slices.Equal(got, []string{stub.address()}) {
+		t.Fatalf("nameservers after failed update = %v, want %v", got, []string{stub.address()})
+	}
+}
+
 func TestProxy_UpstreamResolvedByNameserver(t *testing.T) {
 	up := recordingServer(t, "upstream")
 	_, port, _ := net.SplitHostPort(up.Listener.Addr().String())
@@ -1209,7 +1186,7 @@ func TestProxy_UpstreamResolvedByNameserver(t *testing.T) {
 		"nameservers:\n" +
 		"  - \"127.0.0.1:" + closedUDPPort(t) + "\"\n" +
 		"  - \"" + stub.address() + "\"\n"
-	proxyURL, _ := startProxyWithResolver(t, writeConfigFile(t, "r.yaml", config), nil, testResolver(t))
+	proxyURL, _ := startProxy(t, writeConfigFile(t, "r.yaml", config), nil)
 	if got := requestBody(t, proxyClient(proxyURL), "http://api.example.com/hello"); !strings.HasPrefix(got, "upstream:/hello") {
 		t.Fatalf("nameserver routing: got %q", got)
 	}
@@ -1221,13 +1198,13 @@ func TestProxy_ReloadNameservers(t *testing.T) {
 	config := "servers:\n" +
 		"  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: http://unused\n" +
 		"nameservers:\n  - \"" + refused + "\"\n"
+	servers := testNameservers(t)
 	path := writeConfigFile(t, "r.yaml", config)
-	resolver := testResolver(t)
-	p, err := newProxy(path, newTransport(resolver), nil, nil, resolver)
+	p, err := newProxy(path, newTransport(servers.DialContext), nil, nil, servers)
 	if err != nil {
 		t.Fatalf("newProxy: %v", err)
 	}
-	if got := resolverAddresses(t, resolver); !slices.Equal(got, []string{refused}) {
+	if got := servers.serverAddresses(); !slices.Equal(got, []string{refused}) {
 		t.Fatalf("initial nameservers = %v, want %v", got, []string{refused})
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(config, refused, stub.address(), 1)), 0o644); err != nil {
@@ -1236,18 +1213,9 @@ func TestProxy_ReloadNameservers(t *testing.T) {
 	if err := p.reload(); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got := resolverAddresses(t, resolver); !slices.Equal(got, []string{stub.address()}) {
+	if got := servers.serverAddresses(); !slices.Equal(got, []string{stub.address()}) {
 		t.Fatalf("reloaded nameservers = %v, want %v", got, []string{stub.address()})
 	}
-}
-
-func resolverAddresses(t *testing.T, resolver *dnsResolver) []string {
-	t.Helper()
-	servers, err := resolver.snapshot()
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	return nameserverAddresses(servers)
 }
 
 func closedUDPPort(t *testing.T) string {

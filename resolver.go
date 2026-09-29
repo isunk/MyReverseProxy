@@ -2,121 +2,96 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	nameserverDefaultPort    = "53"
 	nameserverAttemptTimeout = 2 * time.Second
+	dialKeepAlive            = 30 * time.Second
 )
 
 var defaultNameservers = []string{"114.114.114.114", "8.8.8.8"}
 
-// nameserver 绑定固定出口地址的解析器，出口地址由 Dial 决定，忽略系统 resolv.conf 中的服务器列表。
-type nameserver struct {
-	address  string
-	resolver *net.Resolver
+// nameserverSet 持有可热更新的 DNS 服务器列表，经 net.Dialer.Resolver 注入拨号链路，
+// 忽略设备 /etc/resolv.conf 里的服务器地址。
+type nameserverSet struct {
+	current   atomic.Pointer[nameserverState]
+	udpDialer *net.Dialer
 }
 
-// dnsResolver 串行遍历多个 nameserver 做故障切换，供 HTTP 上游与 CONNECT 隧道共用。
-type dnsResolver struct {
-	mu      sync.RWMutex
-	servers []nameserver
-	dialer  *net.Dialer
+type nameserverState struct {
+	addresses []string
+	dialers   []*net.Dialer
 }
 
-func newDNSResolver(dialTimeout time.Duration) (*dnsResolver, error) {
-	resolver := &dnsResolver{dialer: &net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}}
-	if err := resolver.update(defaultNameservers); err != nil {
+func newNameserverSet(dialTimeout time.Duration, entries []string) (*nameserverSet, error) {
+	addresses, err := normalizeNameservers(entries)
+	if err != nil {
 		return nil, err
 	}
-	return resolver, nil
+	set := &nameserverSet{udpDialer: &net.Dialer{Timeout: dialTimeout}}
+	set.current.Store(&nameserverState{addresses: addresses, dialers: buildDialers(set, addresses, dialTimeout)})
+	return set, nil
 }
 
-func (r *dnsResolver) update(entries []string) error {
-	next, err := buildNameservers(entries, r.dialer)
+func (s *nameserverSet) update(entries []string) error {
+	addresses, err := normalizeNameservers(entries)
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if nameserversEqual(r.servers, next) {
+	current := s.current.Load()
+	if slices.Equal(current.addresses, addresses) {
 		return nil
 	}
-	r.servers = next
-	logInfof("dns nameservers=%s", strings.Join(nameserverAddresses(next), ","))
+	dialTimeout := s.udpDialer.Timeout
+	next := &nameserverState{addresses: addresses, dialers: buildDialers(s, addresses, dialTimeout)}
+	s.current.Store(next)
+	logInfof("dns nameservers=%s", strings.Join(addresses, ","))
 	return nil
 }
 
-func (r *dnsResolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
-	servers, err := r.snapshot()
-	if err != nil {
-		return nil, err
-	}
-	var failures []error
-	for _, server := range servers {
-		attemptCtx, cancel := attemptContext(ctx)
-		addresses, err := server.resolver.LookupIPAddr(attemptCtx, host)
-		cancel()
-		if err == nil {
-			return addresses, nil
-		}
-		failures = append(failures, err)
-	}
-	return nil, fmt.Errorf("dns lookup %s: %w", host, errors.Join(failures...))
-}
-
-func (r *dnsResolver) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, fmt.Errorf("dial tcp %s: %v", address, err)
-	}
-	resolved, err := r.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, fmt.Errorf("dial tcp %s: %v", address, err)
-	}
+func (s *nameserverSet) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	var lastError error
-	for _, entry := range resolved {
-		conn, err := r.dialer.DialContext(ctx, network, net.JoinHostPort(entry.IP.String(), port))
+	for _, dialer := range s.current.Load().dialers {
+		attempt, cancel := context.WithTimeout(ctx, nameserverAttemptTimeout)
+		conn, err := dialer.DialContext(attempt, network, address)
+		cancel()
 		if err == nil {
 			return conn, nil
 		}
 		lastError = err
 	}
-	return nil, fmt.Errorf("dial tcp %s: %v", address, lastError)
+	return nil, lastError
 }
 
-func (r *dnsResolver) snapshot() ([]nameserver, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if len(r.servers) == 0 {
-		return nil, errors.New("dns has no nameserver")
-	}
-	snapshot := make([]nameserver, len(r.servers))
-	copy(snapshot, r.servers)
-	return snapshot, nil
+func (s *nameserverSet) serverAddresses() []string {
+	return s.current.Load().addresses
 }
 
-func attemptContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, nameserverAttemptTimeout)
+func buildDialers(set *nameserverSet, addresses []string, dialTimeout time.Duration) []*net.Dialer {
+	dialers := make([]*net.Dialer, len(addresses))
+	for i, address := range addresses {
+		dialers[i] = &net.Dialer{
+			Timeout:   dialTimeout,
+			KeepAlive: dialKeepAlive,
+			Resolver:  &net.Resolver{PreferGo: true, Dial: set.dialServer(address)},
+		}
+	}
+	return dialers
 }
 
-func buildNameservers(entries []string, dialer *net.Dialer) ([]nameserver, error) {
-	addresses, err := normalizeNameservers(entries)
-	if err != nil {
-		return nil, err
+func (s *nameserverSet) dialServer(address string) func(context.Context, string, string) (net.Conn, error) {
+	// 忽略系统 resolv.conf 给出的服务器地址，固定拨向本 DNS 服务器。
+	return func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return s.udpDialer.DialContext(ctx, network, address)
 	}
-	servers := make([]nameserver, 0, len(addresses))
-	for _, address := range addresses {
-		servers = append(servers, newNameserver(address, dialer))
-	}
-	return servers, nil
 }
 
 func normalizeNameservers(entries []string) ([]string, error) {
@@ -149,36 +124,4 @@ func normalizeNameserver(entry string) (string, error) {
 		return "", fmt.Errorf("dns nameserver %q has an invalid port", entry)
 	}
 	return net.JoinHostPort(host, port), nil
-}
-
-func newNameserver(address string, dialer *net.Dialer) nameserver {
-	return nameserver{
-		address: address,
-		resolver: &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return dialer.DialContext(ctx, network, address)
-			},
-		},
-	}
-}
-
-func nameserversEqual(first, second []nameserver) bool {
-	if len(first) != len(second) {
-		return false
-	}
-	for i, server := range first {
-		if server.address != second[i].address {
-			return false
-		}
-	}
-	return true
-}
-
-func nameserverAddresses(servers []nameserver) []string {
-	addresses := make([]string, len(servers))
-	for i, server := range servers {
-		addresses[i] = server.address
-	}
-	return addresses
 }

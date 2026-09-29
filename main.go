@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
@@ -43,29 +44,29 @@ func main() {
 		fatalf("--cert and --key must be set together")
 	}
 
-	resolver, err := newDNSResolver(5 * time.Second)
+	nameservers, err := newNameserverSet(5*time.Second, defaultNameservers)
 	if err != nil {
-		fatalf("failed to initialize dns resolver: %v", err)
+		fatalf("failed to initialize dns nameservers: %v", err)
 	}
 
-	transport := newTransport(resolver)
+	transport := newTransport(nameservers.DialContext)
 
 	tlsConfig, authority, err := resolveTLSConfig(*certPath, *keyPath, certSet && keySet)
 	if err != nil {
 		fatalf("TLS certificate configuration error: %v", err)
 	}
 
-	instance, err := newProxy(*configPath, transport, tlsConfig, authority, resolver)
+	instance, err := newProxy(*configPath, transport, tlsConfig, authority, nameservers)
 	if err != nil {
 		fatalf("failed to load routing config: %v", err)
 	}
 	run(instance, fmt.Sprintf(":%d", *port))
 }
 
-func newTransport(resolver *dnsResolver) *http.Transport {
+func newTransport(dialContext func(context.Context, string, string) (net.Conn, error)) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil // 禁用环境代理，避免代理流量经上游代理回环到自身
-	transport.DialContext = resolver.DialContext
+	transport.DialContext = dialContext
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	// 默认 MaxIdleConnsPerHost=2，代理到同一上游的并发请求会频繁重建连接（TCP+TLS 握手）
 	transport.MaxIdleConns = 256
