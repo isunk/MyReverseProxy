@@ -869,6 +869,44 @@ func TestResolveTLSConfig_Defaults(t *testing.T) {
 	}
 }
 
+func TestTransport_CachesTLSSessions(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		io.WriteString(writer, "ok")
+	}))
+	defer upstream.Close()
+	transport := newTransport(func(ctx context.Context, network, address string) (net.Conn, error) {
+		return net.Dial(network, address)
+	})
+	transport.MaxIdleConns = 0
+	transport.MaxIdleConnsPerHost = 0
+	transport.DisableKeepAlives = true
+	requested := upstream.URL + "/"
+	// NewSessionTicket 是 TLS 1.3 握手后消息，连接立即关闭时可能来不及送达，故多次尝试
+	var resumed bool
+	for i := 0; i < 3; i++ {
+		httpReq, err := http.NewRequest(http.MethodGet, requested, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := transport.RoundTrip(httpReq)
+		if err != nil {
+			t.Fatalf("roundtrip %d: %v", i+1, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.TLS == nil {
+			t.Fatalf("roundtrip %d: missing tls state", i+1)
+		}
+		if i == 0 && resp.TLS.DidResume {
+			t.Fatal("first upstream connection resumed unexpectedly")
+		}
+		resumed = resumed || resp.TLS.DidResume
+	}
+	if !resumed {
+		t.Fatal("no upstream connection resumed the tls session")
+	}
+}
+
 func testAuthorityCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

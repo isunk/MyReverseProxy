@@ -73,6 +73,8 @@ func main() {
 	run(instance, fmt.Sprintf(":%d", *port))
 }
 
+const maxCachedTLSSessions = 64
+
 func newTransport(dialContext func(context.Context, string, string) (net.Conn, error)) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil // 禁用环境代理，避免代理流量经上游代理回环到自身
@@ -83,7 +85,11 @@ func newTransport(dialContext func(context.Context, string, string) (net.Conn, e
 	transport.MaxIdleConnsPerHost = 64
 	transport.ReadBufferSize = 32 << 10
 	transport.WriteBufferSize = 32 << 10
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // mrp 位于设备与上游之间，上游证书校验交由设备端完成
+	// ClientSessionCache 为 nil 时 Go 禁用会话复用，每次新上游连接都要走完整 TLS 握手
+	transport.TLSClientConfig = &tls.Config{
+		InsecureSkipVerify: true, // mrp 位于设备与上游之间，上游证书校验交由设备端完成
+		ClientSessionCache: tls.NewLRUClientSessionCache(maxCachedTLSSessions),
+	}
 	return transport
 }
 
