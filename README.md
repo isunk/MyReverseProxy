@@ -148,7 +148,7 @@ chmod +x mrp-linux-arm64
 ./mrp-linux-arm64
 ```
 
-Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.bat` 双击运行：脚本内置一份固定 CA（`ca.crt` 哈希 `d6cd00d8`，无需 openssl），两级菜单引导完成 Windows 的 CA 导入、进程运行与系统代理设置；Android(adb)/HarmonyOS(hdc) 设备侧提供 install（推文件+装 CA）、start（运行+设代理）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删文件）四项命令。
+Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.bat` 双击运行：脚本内置一份固定 CA（`ca.crt` 哈希 `d6cd00d8`，无需 openssl），两级菜单引导完成 Windows 的 CA 导入、进程运行与系统代理设置；Android(adb)/HarmonyOS(hdc) 设备侧提供 install（推文件+装 CA）、start（运行+设代理）、sync config（把本地 config.yaml 同步到设备）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删文件）五项命令。
 
 命令行参数：
 

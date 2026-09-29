@@ -6,7 +6,7 @@ REM ============================================================
 REM  mrp one-click deployment script
 REM  Two-level menu: first choose a deploy target (Windows / Android / HarmonyOS),
 REM  then choose the operation: Windows = deploy / stop, device = install / start /
-REM  stop / uninstall.
+REM  sync config / stop / uninstall.
 REM  The CA pair is fixed and embedded in this script so openssl is never required;
 REM  the private key is shared by design and deployment works out of the box.
 REM ============================================================
@@ -206,8 +206,9 @@ if "!TOOL_READY!"=="1" (
 echo ------------------------------
 echo [1] Install   push files + install CA
 echo [2] Start     run mrp + set proxy
-echo [3] Stop      kill mrp + clear proxy
-echo [4] Uninstall stop + remove CA + files
+echo [3] Sync config push config.yaml to device
+echo [4] Stop      kill mrp + clear proxy
+echo [5] Uninstall stop + remove CA + files
 echo [0] Back
 set "CHOICE="
 set /p "CHOICE=Select: "
@@ -215,8 +216,9 @@ if "!CHOICE!"=="0" exit /b
 if "!TOOL_READY!"=="0" (echo Device not connected, cannot proceed. & timeout /t 2 >nul & goto :devLoop)
 if "!CHOICE!"=="1" (call :devInstall & echo. & pause & goto :devLoop)
 if "!CHOICE!"=="2" (call :devStart & echo. & pause & goto :devLoop)
-if "!CHOICE!"=="3" (call :devStop & echo. & pause & goto :devLoop)
-if "!CHOICE!"=="4" (call :devUninstall & echo. & pause & goto :devLoop)
+if "!CHOICE!"=="3" (call :devSyncConfig & echo. & pause & goto :devLoop)
+if "!CHOICE!"=="4" (call :devStop & echo. & pause & goto :devLoop)
+if "!CHOICE!"=="5" (call :devUninstall & echo. & pause & goto :devLoop)
 goto :devLoop
 
 REM Device paths and push command: adb vs hdc tmp dir, system cert dir, push verb
@@ -282,6 +284,16 @@ echo.
 call :devRun
 call :devProxyCfg on
 echo Device start finished.
+exit /b
+
+REM Device sync config: push local config.yaml to device so mrp hot reloads it
+:devSyncConfig
+echo.
+if not exist "%WORKDIR%\%DEV_CFG%" (echo %DEV_CFG% not found next to this script. & exit /b 1)
+if /i not "!DEV_TOOL!"=="adb" !DEV_TOOL! shell mkdir -p !DEV_REMOTE!
+!DEV_TOOL! !PUSHCMD! "%WORKDIR%\%DEV_CFG%" !DEV_REMOTE!
+if not "!errorlevel!"=="0" (echo Sync failed; check device connection. & exit /b 1)
+echo %DEV_CFG% synced to device - mrp hot reloads it automatically.
 exit /b
 
 REM Device uninstall: stop, clear proxy, then remove CA and device files
