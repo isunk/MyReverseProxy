@@ -39,8 +39,8 @@ func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Confi
 		tlsConfig:   tlsConfig,
 		authority:   authority,
 		nameservers: nameservers,
+		passthrough: newPassthroughProxy(transport),
 	}
-	p.passthrough = newPassthroughProxy(transport)
 	if err := p.reload(); err != nil {
 		return nil, err
 	}

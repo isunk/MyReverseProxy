@@ -83,7 +83,7 @@ func buildProxy(opts startupOptions) (*proxy, error) {
 	}
 	logInfof("dns nameservers=%s dns-ttl=%s", strings.Join(nameservers.serverAddresses(), ","), opts.dnsTTL)
 	transport := newTransport(nameservers.DialContext)
-	tlsConfig, authority, err := resolveTLSConfig(opts.certPath, opts.keyPath, opts.certSpecified)
+	tlsConfig, authority, err := loadTLSConfig(opts.certPath, opts.keyPath, opts.certSpecified)
 	if err != nil {
 		return nil, fmt.Errorf("tls certificate configuration: %w", err)
 	}
@@ -131,7 +131,10 @@ func newTransport(dialContext func(context.Context, string, string) (net.Conn, e
 	return transport
 }
 
-func resolveTLSConfig(certPath, keyPath string, explicitPair bool) (*tls.Config, *certificateAuthority, error) {
+// loadTLSConfig 加载 CA 证书与私钥并构建现场签发能力。explicitPair 为 true 时
+// 跳过文件存在性检查（调用方已确认 --cert/--key 同时指定）；为 false 时，
+// 两个文件都不存在则返回 nil 配置进入纯 HTTP/隧道模式，只存在一个则报错。
+func loadTLSConfig(certPath, keyPath string, explicitPair bool) (*tls.Config, *certificateAuthority, error) {
 	if !explicitPair {
 		certExists := fileExists(certPath)
 		keyExists := fileExists(keyPath)
@@ -143,10 +146,6 @@ func resolveTLSConfig(certPath, keyPath string, explicitPair bool) (*tls.Config,
 			return nil, nil, fmt.Errorf("certificate and key must exist as a pair: %s / %s", certPath, keyPath)
 		}
 	}
-	return loadTLSConfig(certPath, keyPath)
-}
-
-func loadTLSConfig(certPath, keyPath string) (*tls.Config, *certificateAuthority, error) {
 	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load key pair: %w", err)
@@ -196,15 +195,13 @@ func run(p *proxy, listenAddr string) {
 		fatalf("listen failed: %v", err)
 	}
 	logInfof("listening addr=%s", listenAddr)
-	go serveListener(listener, p)
+	go func() {
+		if err := serve(listener, p.tlsConfig, p); err != nil && !errors.Is(err, net.ErrClosed) {
+			fatalf("server exited: %v", err)
+		}
+	}()
 	go p.watchFile(time.Second, nil)
 	serveSignals(p, listener)
-}
-
-func serveListener(listener net.Listener, p *proxy) {
-	if err := serve(listener, p.tlsConfig, p); err != nil && !errors.Is(err, net.ErrClosed) {
-		fatalf("server exited: %v", err)
-	}
 }
 
 func serveSignals(p *proxy, listener net.Listener) {

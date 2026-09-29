@@ -63,10 +63,6 @@ type bufferedConn struct {
 	reader *bufio.Reader
 }
 
-func newBufferedConn(conn net.Conn) *bufferedConn {
-	return &bufferedConn{Conn: conn, reader: bufio.NewReader(conn)}
-}
-
 func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
 
 func serve(listener net.Listener, tlsConfig *tls.Config, handler http.Handler) error {
@@ -82,7 +78,7 @@ func serve(listener net.Listener, tlsConfig *tls.Config, handler http.Handler) e
 // handleConn 按连接首字节识别协议：TLS 握手包包一层 tls.Server 后与纯 HTTP 走同一服务管道。
 // serveSingleConn 返回 false（未发生 hijack）时由本函数收尾关闭连接。
 func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler) {
-	buffered := newBufferedConn(conn)
+	buffered := &bufferedConn{Conn: conn, reader: bufio.NewReader(conn)}
 	isTLS, err := sniffTLS(buffered)
 	if err != nil {
 		conn.Close()

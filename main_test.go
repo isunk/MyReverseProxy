@@ -399,7 +399,7 @@ func TestLoadTLSConfig_RejectsNonCA(t *testing.T) {
 	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := loadTLSConfig(certPath, keyPath); err == nil {
+	if _, _, err := loadTLSConfig(certPath, keyPath, true); err == nil {
 		t.Fatal("want error for non-CA certificate")
 	}
 }
@@ -891,18 +891,18 @@ func TestEnsureConfig_CreatesMissingFile(t *testing.T) {
 	}
 }
 
-func TestResolveTLSConfig_Defaults(t *testing.T) {
+func TestLoadTLSConfig_Defaults(t *testing.T) {
 	dir := t.TempDir()
 	certPath := filepath.Join(dir, "ca.crt")
 	keyPath := filepath.Join(dir, "ca.key")
-	cfg, _, err := resolveTLSConfig(certPath, keyPath, false)
+	cfg, _, err := loadTLSConfig(certPath, keyPath, false)
 	if err != nil || cfg != nil {
 		t.Fatalf("want nil config without certs, got %v err=%v", cfg, err)
 	}
 	if err := os.WriteFile(certPath, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := resolveTLSConfig(certPath, keyPath, false); err == nil {
+	if _, _, err := loadTLSConfig(certPath, keyPath, false); err == nil {
 		t.Fatal("want error for missing key")
 	}
 }
