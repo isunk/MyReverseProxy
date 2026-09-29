@@ -15,7 +15,7 @@ const defaultConfig = `# mrp 反向代理路由配置
 #
 # domain:     按域名精确匹配，HTTPS 用 SNI、HTTP 用 Host 头
 # prefix:     路径前缀，按最长前缀匹配转发到 upstream
-# upstream:   上游服务地址，路径前缀自动映射；也支持本地目录路径（相对进程工作目录，目录命中回退 index.html）
+# upstream:   上游服务地址，路径前缀自动映射；也支持本地目录路径（相对/绝对，含 Windows 盘符如 C:\，目录命中回退 index.html）
 # host:       可选，改写转发时的 Host 头
 # headers:    可选，改写消息头（Set 语义，覆盖同名已有值）
 #   request:  发往上游的请求头
@@ -123,7 +123,7 @@ func buildRoutes(server Server) ([]*route, error) {
 				return nil, fmt.Errorf("domain %q: upstream %q is missing host", server.Domain, routeConfig.Upstream)
 			}
 			entry.target = target
-		case target.Scheme == "":
+		case isLocalPath(routeConfig.Upstream):
 			entry.fileRoot = routeConfig.Upstream
 		default:
 			return nil, fmt.Errorf("domain %q: unsupported upstream scheme %q", server.Domain, routeConfig.Upstream)
@@ -131,4 +131,22 @@ func buildRoutes(server Server) ([]*route, error) {
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+// isLocalPath 判断 upstream 是否为本地目录路径：无 scheme 的相对/绝对路径，
+// 以及 Windows 盘符绝对路径（如 C:\ 或 D:/）。url.Parse 会把 "D:\web" 误判为
+// scheme "d"，故在此显式识别盘符与无冒号路径，交给 http.Dir 托管。
+func isLocalPath(upstream string) bool {
+	if !strings.Contains(upstream, ":") {
+		return true
+	}
+	if len(upstream) >= 3 {
+		c := upstream[0]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			if upstream[1] == ':' && (upstream[2] == '\\' || upstream[2] == '/') {
+				return true
+			}
+		}
+	}
+	return false
 }

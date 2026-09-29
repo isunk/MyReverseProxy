@@ -159,6 +159,36 @@ func TestLoadTable_Errors(t *testing.T) {
 	}
 }
 
+func TestLoadTable_LocalPathUpstream(t *testing.T) {
+	cases := map[string]string{
+		"relative": "./dist",
+		"unix_abs": "/var/www",
+		"win_back": `C:\Users\me\dist`,
+		"win_fwd":  "D:/web/dist",
+		"unc":      `\\server\share`,
+	}
+	for name, up := range cases {
+		t.Run(name, func(t *testing.T) {
+			content := "servers:\n  - domain: a.example.com\n    routes:\n      - prefix: /\n        upstream: " + up + "\n"
+			path := writeConfigFile(t, name+".yaml", content)
+			table, err := loadTable(path)
+			if err != nil {
+				t.Fatalf("loadTable upstream=%q: unexpected error: %v", up, err)
+			}
+			entry, ok := table.pick("a.example.com", "/")
+			if !ok {
+				t.Fatalf("route not found for upstream %q", up)
+			}
+			if entry.fileRoot != up {
+				t.Fatalf("fileRoot: got %q want %q", entry.fileRoot, up)
+			}
+			if entry.target != nil {
+				t.Fatalf("target should be nil for local path %q", up)
+			}
+		})
+	}
+}
+
 func TestPick_LongestPrefix(t *testing.T) {
 	table := &routeTable{byDomain: map[string][]*route{
 		"a": {
