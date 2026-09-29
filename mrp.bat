@@ -387,16 +387,31 @@ if "!DEV_TOOL!"=="adb" (
 if "!errorlevel!"=="0" (echo CA installed as !DEV_CERTS!/!HASH!.0.) else (echo Warning: cert install may have failed; ensure the device is rooted or in developer mode.)
 exit /b
 
-REM Start mrp on device - new window keeps logs; skip if already running
+REM Start mrp on device - new window keeps logs; skip only if confirmed running
 :devRun
+!DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
+if not "!errorlevel!"=="0" goto :devRunLaunch
+REM Re-check after 1s so the probe command itself is not mistaken for mrp
+timeout /t 1 >nul
 !DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
 if "!errorlevel!"=="0" (
     echo mrp already running on device, skipping.
     exit /b
 )
+:devRunLaunch
 echo Starting mrp on device...
 start "mrp device" cmd /k !DEV_TOOL! shell "cd !DEV_REMOTE!; ./!DEV_BIN!"
-echo mrp started in a new window - Ctrl+C to stop, close the window to exit.
+set "DEV_RUN_WAIT=0"
+:devRunWait
+timeout /t 1 >nul
+!DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
+if "!errorlevel!"=="0" (
+    echo mrp is now running on device - Ctrl+C in the new window to stop.
+    exit /b
+)
+set /a "DEV_RUN_WAIT+=1"
+if !DEV_RUN_WAIT! lss 5 goto :devRunWait
+echo Warning: mrp did not start within 5 seconds. Check the new window for errors.
 exit /b
 
 REM Device global HTTP proxy: on sets the port, off clears - adb/hdc clear values differ
