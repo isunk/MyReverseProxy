@@ -14,7 +14,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 ## 文件组织
 
-- `mrp.bat` 为 GBK 编码、CRLF 行尾的 Windows 分发脚本（zh-CN cmd 原生解析，仓库按原始字节存储）。修改流程：`iconv -f GBK -t UTF-8` 转出 → 编辑 → `iconv -f UTF-8 -t GBK` 转回，禁止直接以 UTF-8 内容提交。
+- `mrp.bat` 为 UTF-8 编码（无 BOM）、CRLF 行尾的 Windows 分发脚本（仓库按原始字节存储）。修改后须自检：仍是 CRLF 行尾、UTF-8 无 BOM、脚本头部保留 `chcp 65001 >nul`，禁止改回 LF 或另存 GBK。
 
 按职责拆分，禁止把不相关逻辑塞进同一文件：
 

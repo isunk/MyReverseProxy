@@ -1,6 +1,6 @@
-# mrp.bat 必须保持 GBK 编码 + CRLF 行尾：zh-CN Windows cmd 原生按 GBK 解析，
-# 不依赖 chcp 代码页切换（chcp 65001 会让 certutil/netsh 等系统工具的 GBK
-# 输出乱码，旧版 Windows 上还会干扰 cmd 回读脚本）。
-# 禁止以 UTF-8 内容提交该文件；编辑流程：iconv -f GBK -t UTF-8 转出修改，
-# 再 iconv -f UTF-8 -t GBK 转回。-text 确保按原始字节存储、检出与 Release 分发。
+# mrp.bat 必须保持 UTF-8 编码（无 BOM）+ CRLF 行尾：脚本头部 chcp 65001 切换
+# 代码页，现代终端（PowerShell 7、Windows Terminal、VSCode）与 GitHub 均按
+# UTF-8 解读；CRLF 是 cmd.exe 正确回读批处理的硬性要求，LF 会导致 goto/call
+# 标签寻址错位、跨多字节字符产生乱码。
+# -text 确保按原始字节存储、检出与 Release 分发，不做 EOL 归一化。
 *.bat -text
