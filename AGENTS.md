@@ -14,7 +14,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 ## 文件组织
 
-- `mrp.bat` 为 GBK 编码（CP936，无 BOM）、CRLF 行尾的 Windows 分发脚本（仓库按原始字节存储）。cmd 批处理解析器始终按系统 ANSI 代码页（zh-CN 为 GBK/936）读取脚本，故文件须为 GBK 才能正确解析中文（UTF-8 文件会被截断，REM 残片被当命令执行）；头部 `chcp 65001 >nul` 只把控制台输出切到 UTF-8，令现代终端（PowerShell 7、Windows Terminal、VSCode）也能正常显示。修改后自检：仍是 CRLF 行尾、GBK 无 BOM、头部保留 `chcp 65001 >nul`，禁止改回 LF 或另存 UTF-8。
+- `mrp.bat` 为纯 ASCII（英文 UI）、CRLF 行尾的 Windows 分发脚本（仓库按原始字节存储）。为避免 cmd 批处理解析器按系统 ANSI 代码页读取脚本导致的编码错位/乱码，脚本刻意不使用中文与 `chcp`，故在任何代码页、任何终端（PowerShell 7、Windows Terminal、VSCode、双机 conhost）下都能正确解析与显示。修改后自检：仍是 CRLF 行尾、纯 ASCII（无 BOM、无任何非 ASCII 字节），禁止引入中文或加回 `chcp`。
 
 按职责拆分，禁止把不相关逻辑塞进同一文件：
 

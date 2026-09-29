@@ -1,7 +1,6 @@
-# mrp.bat 必须保持 GBK 编码（CP936，无 BOM）+ CRLF 行尾：cmd 批处理解析器
-# 始终按系统 ANSI 代码页（zh-CN 为 GBK/936）读取脚本，GBK 才能正确解析中文；
-# 头部 chcp 65001 仅把控制台输出切成 UTF-8，供现代终端（PowerShell 7、
-# Windows Terminal、VSCode）正常显示。CRLF 是 cmd.exe 正确回读批处理的硬性
-# 要求，LF 会导致 goto/call 标签寻址错位、跨多字节字符产生乱码。
+# mrp.bat 必须保持纯 ASCII（英文 UI）+ CRLF 行尾：cmd 批处理解析器始终按系统
+# ANSI 代码页读取脚本，ASCII 不含多字节字符，才能在任何代码页、任何终端下
+# 正确解析与显示（脚本不使用中文与 chcp）。CRLF 是 cmd.exe 正确回读批处理的
+# 硬性要求，LF 会导致 goto/call 标签寻址错位。
 # -text 确保按原始字节存储、检出与 Release 分发，不做 EOL 归一化。
 *.bat -text
