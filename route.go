@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -169,11 +170,7 @@ func (t *routeTable) installHandlers(transport *http.Transport) {
 // fingerprint 生成路由表的稳定指纹，用于判断热加载后的配置是否真正变化：
 // 无变化时跳过重建处理器与拆掉存量连接。
 func (t *routeTable) fingerprint() string {
-	domains := make([]string, 0, len(t.byDomain))
-	for domain := range t.byDomain {
-		domains = append(domains, domain)
-	}
-	slices.Sort(domains)
+	domains := slices.Sorted(maps.Keys(t.byDomain))
 	var buffer strings.Builder
 	for _, domain := range domains {
 		buffer.WriteString(domain)
@@ -196,11 +193,7 @@ func (r *route) fingerprint() string {
 }
 
 func headerFingerprint(headers map[string]string) string {
-	keys := make([]string, 0, len(headers))
-	for key := range headers {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
+	keys := slices.Sorted(maps.Keys(headers))
 	var buffer strings.Builder
 	for _, key := range keys {
 		buffer.WriteString(key)

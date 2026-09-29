@@ -111,14 +111,14 @@ func sniffTLS(conn *bufferedConn) (bool, error) {
 // serveSingleConn 在单条连接上跑一次 http.Server.Serve，返回是否发生过 hijack
 func serveSingleConn(server *http.Server, conn net.Conn) bool {
 	listener := newOneConnListener(conn)
-	var once sync.Once
+	finish := sync.OnceFunc(listener.finish)
 	var hijacked atomic.Bool
 	server.ConnState = func(_ net.Conn, state http.ConnState) {
 		if state == http.StateHijacked {
 			hijacked.Store(true)
 		}
 		if state == http.StateClosed || state == http.StateHijacked {
-			once.Do(listener.finish)
+			finish()
 		}
 	}
 	_ = server.Serve(listener)

@@ -44,7 +44,7 @@ func (c *expiringCache[V]) put(key string, value V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.capacity > 0 && len(c.entries) >= c.capacity {
-		c.entries = map[string]expiringEntry[V]{}
+		clear(c.entries)
 	}
 	c.entries[key] = expiringEntry[V]{value: value, expiresAt: time.Now().Add(c.ttl)}
 }
@@ -57,7 +57,7 @@ func (c *expiringCache[V]) evict(key string) {
 
 func (c *expiringCache[V]) clear() {
 	c.mu.Lock()
-	c.entries = map[string]expiringEntry[V]{}
+	clear(c.entries)
 	c.mu.Unlock()
 }
 
