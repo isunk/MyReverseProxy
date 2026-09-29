@@ -34,3 +34,24 @@ This file records user instructions, preferences, and teachings for reference in
 - Instructions:
   - HarmonyOS hdc has no verified global-HTTP-proxy *query* command. The set path is `hdc shell network-cfg set http_proxy <host:port>`, but no equivalent `get` was confirmable from official docs. The user explicitly chose to leave hdc proxy status as `Unknown` rather than wire in a guessed command. Do not add hdc proxy probing with an unverified command; only adb is probed (`adb shell settings get global http_proxy`, compared to `127.0.0.1:<PORT>`).
   - `adb shell` and `hdc shell` both merge device-side stderr into the host-side stdout, and exit codes are unreliable. Remote file-existence checks must therefore use a command that emits nothing on failure (`test -f %1 && echo Y`, judged by temp-file size) — never `ls %1`, whose error line leaks into stdout and makes the path always look present. `pidof <bin>` is safe because it prints nothing when no process matches.
+
+[Project Knowledge Summary]
+- Date: 2026-09-29
+- Context: Discovered by Agent while measuring mrp proxy latency and TLS/DNS overhead during a performance optimization pass
+- Category: Testing Methods
+- Instructions:
+  - The sandbox is `linux/amd64` (Intel Xeon, localhost) but mrp ships on Android/Arm. Absolute latency and throughput figures measured here are only directional; do not present them as target-device numbers without re-measuring on a real device.
+  - To isolate one optimization from the rest of the proxy path, force a fresh upstream connection per request (`transport.DisableKeepAlives = true`, `MaxIdleConns = 0`, `MaxIdleConnsPerHost = 0`) while reusing the client connection; measuring through a fully cold client+transport each iteration produces GC noise (~0.7ms swing) that swamps sub-millisecond gains.
+  - TLS session resumption tests are order-sensitive: the session ticket is a TLS 1.3 post-handshake message, so `DidResume` stays 0 unless the response body is actually read. Reusing a single TCP connection for a second TLS handshake always fails (`tls: first record does not look like a TLS handshake`) — it is not a viable way to simulate connection reuse.
+
+[Project Knowledge Summary]
+- Date: 2026-09-29
+- Context: Discovered by Agent while deciding which of the remaining performance candidates to ship in mrp
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - Performance optimization in mrp is considered done. The two items that measured real, shippable gains are the DNS resolution cache (`--dns-ttl`, 151µs → 44µs per dial) and upstream TLS session resumption (`ClientSessionCache`, ~1.94ms → 878µs per upstream TLS connection). Do not re-propose the ones below; each was measured and rejected:
+  - Tunnel connection pooling is impossible, not just unhelpful: TLS session state is bound to a single connection, so a second handshake on a reused TCP connection fails. Reuse at the client side is already provided for free by mrp.
+  - Client-facing HTTP/2 would require `golang.org/x/net/http2` (stdlib has no `http2.ConfigureServer`), breaking the zero-third-party-dependency rule. It also does not help the dominant path: Android apps reach mrp as an HTTP proxy via `CONNECT`, where mrp relays bytes and cannot participate at the HTTP layer.
+  - Streaming/SSE flushing needs no change: Go's `httputil.ReverseProxy` auto-flushes `text/event-stream` and `ContentLength == -1` responses, and upstream HTTP/2 is already on via `ForceAttemptHTTP2`.
+  - The per-request logging path is the largest purely-mrp allocation cluster left (`logInfof` = 820 ns, 5 allocs, 392 B; `formatLogLine` = 448 ns, 4 allocs) but is ~1.3% of the 62 µs total proxy overhead, so it is not worth adding a `sync.Pool`.
+  - Hardcoded `ResponseHeaderTimeout=30s` and `tunnelDialTimeout=10s` were deliberately left as constants rather than flags: 30 s for response *headers* is already generous for a mobile-network proxy, and disabling it would hang on dead upstreams. The DNS half of the timeout is already tunable via `--dns-timeout`.
