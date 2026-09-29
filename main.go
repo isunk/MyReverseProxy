@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -60,6 +61,7 @@ func main() {
 	if err != nil {
 		fatalf("failed to load routing config: %v", err)
 	}
+	logInfof("dns nameservers=%s", strings.Join(nameservers.serverAddresses(), ","))
 	run(instance, fmt.Sprintf(":%d", *port))
 }
 

@@ -20,11 +20,13 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1137,6 +1139,28 @@ func TestDefaultConfig_Parses(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_DocumentsNameservers(t *testing.T) {
+	for _, line := range []string{"# nameservers:", "#   - \"114.114.114.114\"", "nameservers: []"} {
+		if !strings.Contains(defaultConfig, line) {
+			t.Fatalf("defaultConfig missing %q", line)
+		}
+	}
+}
+
+func TestLoadTable_RejectsUnknownField(t *testing.T) {
+	config := "servers: []\nnameserver: [\"114.114.114.114\"]\n"
+	if _, _, err := loadTable(writeConfigFile(t, "typo.yaml", config)); err == nil {
+		t.Fatal("loadTable accepted unknown field nameserver")
+	}
+}
+
+func TestLoadTable_AcceptsUTF8BOM(t *testing.T) {
+	config := "\ufeffservers: []\nnameservers: [\"114.114.114.114\"]\n"
+	if _, _, err := loadTable(writeConfigFile(t, "bom.yaml", config)); err != nil {
+		t.Fatalf("loadTable(bom): %v", err)
+	}
+}
+
 func TestNameserverSet_Failover(t *testing.T) {
 	echo := echoServer(t)
 	_, port, _ := net.SplitHostPort(echo)
@@ -1190,6 +1214,9 @@ func TestProxy_UpstreamResolvedByNameserver(t *testing.T) {
 	if got := requestBody(t, proxyClient(proxyURL), "http://api.example.com/hello"); !strings.HasPrefix(got, "upstream:/hello") {
 		t.Fatalf("nameserver routing: got %q", got)
 	}
+	if stub.queryCount() == 0 {
+		t.Fatal("configured nameserver received no dns query")
+	}
 }
 
 func TestProxy_ReloadNameservers(t *testing.T) {
@@ -1232,6 +1259,7 @@ func closedUDPPort(t *testing.T) string {
 type dnsStub struct {
 	listener *net.UDPConn
 	records  map[uint16][]net.IP
+	queries  atomic.Int32
 }
 
 func startDNSStub(t *testing.T, records map[uint16][]net.IP) *dnsStub {
@@ -1250,6 +1278,10 @@ func (s *dnsStub) address() string {
 	return s.listener.LocalAddr().String()
 }
 
+func (s *dnsStub) queryCount() int {
+	return int(s.queries.Load())
+}
+
 func (s *dnsStub) serve() {
 	buf := make([]byte, 1500)
 	for {
@@ -1261,6 +1293,7 @@ func (s *dnsStub) serve() {
 		if !ok {
 			continue
 		}
+		s.queries.Add(1)
 		_, _ = s.listener.WriteTo(dnsReply(id, name, qtype, s.records[qtype]), remote)
 	}
 }
@@ -1338,4 +1371,113 @@ func dnsAnswer(qtype uint16, address net.IP) []byte {
 	}
 	binary.BigEndian.PutUint16(answer[10:12], uint16(len(rdata)))
 	return append(answer, rdata...)
+}
+
+func writeCertFiles(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) (string, string) {
+	t.Helper()
+	certPath := writeConfigFile(t, "ca.crt", string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})))
+	key, err := x509.MarshalECPrivateKey(caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := writeConfigFile(t, "ca.key", string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: key})))
+	return certPath, keyPath
+}
+
+func freePort(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
+func mustURL(s string) *url.URL {
+	u, err := url.Parse(s)
+	if err != nil {
+		panic(err)
+	}
+	return u
+}
+
+// TestE2E_ConfigNameserversTakeEffect 用真实 mrp 二进制验证配置文件里的 nameservers 字段驱动上游解析
+func TestE2E_ConfigNameserversTakeEffect(t *testing.T) {
+	binary, err := exec.LookPath("./mrp")
+	if err != nil {
+		t.Skip("mrp binary not built")
+	}
+	up := recordingServer(t, "upstream")
+	_, upPort, err := net.SplitHostPort(up.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	configPath := writeConfigFile(t, "e2e.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: http://api.mrp.local:"+upPort+"\n"+
+			"nameservers:\n  - \"127.0.0.1:"+closedUDPPort(t)+"\"\n  - \""+stub.address()+"\"\n")
+	listenPort := freePort(t)
+	caCert, caKey := testAuthorityCA(t)
+	certPath, keyPath := writeCertFiles(t, caCert, caKey)
+
+	var logs bytes.Buffer
+	cmd := exec.Command(binary, "--config", configPath, "--port", listenPort, "--cert", certPath, "--key", keyPath, "--log", "debug")
+	cmd.Stdout = &logs
+	cmd.Stderr = &logs
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	for i := 0; i < 200; i++ {
+		conn, err := net.DialTimeout("tcp", "127.0.0.1:"+listenPort, time.Second)
+		if err == nil {
+			_ = conn.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	client := &http.Client{Transport: &http.Transport{
+		Proxy:           http.ProxyURL(mustURL("http://127.0.0.1:" + listenPort)),
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}}
+	var body string
+	for i := 0; i < 100; i++ {
+		request, err := http.NewRequest("GET", "http://api.example.com/hello", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			body = err.Error()
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		var buffer bytes.Buffer
+		_, _ = io.Copy(&buffer, response.Body)
+		_ = response.Body.Close()
+		body = buffer.String()
+		if strings.HasPrefix(body, "upstream:/hello") {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !strings.HasPrefix(body, "upstream:/hello") {
+		t.Fatalf("body = %q\nlog:\n%s", body, logs.String())
+	}
+	if stub.queryCount() == 0 {
+		t.Fatalf("configured nameserver received no dns query\nlog:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "dns nameservers=") {
+		t.Fatalf("effective nameservers not logged\nlog:\n%s", logs.String())
+	}
 }

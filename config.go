@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/url"
@@ -21,8 +22,9 @@ const defaultConfig = `# mrp 反向代理路由配置
 #   request:  发往上游的请求头
 #   response: 覆盖下游返回的响应头（如跨域校验 Access-Control-Allow-*）
 #
-# nameservers: 顶层字段，上游域名解析用的 DNS 服务器，支持裸 IP（默认 53 端口）与 host:port 写法，缺省 114.114.114.114 与 8.8.8.8
-#   设备上的 /etc/resolv.conf 常指向 [::1]:53 等守护进程地址，不配置会导致上游域名解析失败
+# nameservers: 顶层字段，上游域名解析用的 DNS 服务器，支持裸 IP（默认 53 端口）与 host:port 写法，按顺序故障切换
+#   设备上的 /etc/resolv.conf 常指向 [::1]:53 等守护进程地址，mrp 读不到可用服务器时上游域名会解析失败，
+#   部署到设备时必须显式配置
 #
 # 示例：
 # servers:
@@ -41,6 +43,10 @@ const defaultConfig = `# mrp 反向代理路由配置
 #         upstream: ./dist
 #       - prefix: /
 #         upstream: http://192.168.1.50:8080
+# nameservers:
+#   - "114.114.114.114"
+#   - "223.5.5.5"
+#   - "[2001:4860:4860::8888]:5353"
 
 servers: []
 nameservers: []
@@ -77,7 +83,9 @@ func loadTable(path string) (*routeTable, []string, error) {
 		return nil, nil, fmt.Errorf("read config: %w", err)
 	}
 	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&config); err != nil {
 		return nil, nil, fmt.Errorf("parse config: %w", err)
 	}
 	table := &routeTable{byDomain: map[string][]*route{}}
