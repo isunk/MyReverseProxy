@@ -921,7 +921,7 @@ func TestTransport_CachesTLSSessions(t *testing.T) {
 	requested := upstream.URL + "/"
 	// NewSessionTicket 是 TLS 1.3 握手后消息，连接立即关闭时可能来不及送达，故多次尝试
 	var resumed bool
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		httpReq, err := http.NewRequest(http.MethodGet, requested, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -1044,7 +1044,7 @@ func TestCertificateAuthority_ConcurrentSameSNI(t *testing.T) {
 	results := make([]*tls.Certificate, n)
 	var start, done sync.WaitGroup
 	start.Add(1)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		done.Add(1)
 		go func(i int) {
 			defer done.Done()
@@ -1072,7 +1072,7 @@ func TestCertificateAuthority_ConcurrentDistinctSNI(t *testing.T) {
 
 	const n = 16
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -1451,7 +1451,7 @@ func TestNameserverSet_CachesResolution(t *testing.T) {
 	_, port, _ := net.SplitHostPort(echo)
 	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
 	servers := testNameservers(t, stub.address())
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		conn, err := servers.DialContext(context.Background(), "tcp", "up.example.com:"+port)
 		if err != nil {
 			t.Fatalf("dial %d: %v", i+1, err)
@@ -1492,7 +1492,7 @@ func TestNameserverSet_CacheDisabled(t *testing.T) {
 	_, port, _ := net.SplitHostPort(echo)
 	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
 	servers := testNameserversWithTimeout(t, defaultAttemptTimeout, 0, []string{stub.address()})
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		conn, err := servers.DialContext(context.Background(), "tcp", "up.example.com:"+port)
 		if err != nil {
 			t.Fatalf("dial %d: %v", i+1, err)
@@ -1837,7 +1837,7 @@ func TestE2E_ConfigNameserversTakeEffect(t *testing.T) {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	})
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		conn, err := net.DialTimeout("tcp", "127.0.0.1:"+listenPort, time.Second)
 		if err == nil {
 			_ = conn.Close()
@@ -1850,7 +1850,7 @@ func TestE2E_ConfigNameserversTakeEffect(t *testing.T) {
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}}
 	var body string
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		request, err := http.NewRequest("GET", "http://api.example.com/hello", nil)
 		if err != nil {
 			t.Fatal(err)
