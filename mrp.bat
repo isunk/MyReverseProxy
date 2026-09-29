@@ -1,5 +1,13 @@
 @echo off
+REM chcp 65001 若在本进程中途执行会让 cmd 解析器字节偏移错位（UTF-8 行被截断），
+REM 故在父进程切码页后重新拉起自身，令整份脚本始终以 UTF-8 从头解析。
+if defined MRP_UTF8 goto :mrpRun
 chcp 65001 >nul
+set "MRP_UTF8=1"
+call "%~f0" %*
+exit /b
+
+:mrpRun
 setlocal enabledelayedexpansion
 title mrp 部署
 
