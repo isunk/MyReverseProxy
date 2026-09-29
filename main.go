@@ -23,11 +23,15 @@ func main() {
 	certPath := flag.String("cert", "ca.crt", "CA certificate file for MITM signing")
 	keyPath := flag.String("key", "ca.key", "CA private key file")
 	logLevel := flag.String("log", "info", "log level: debug, info, warn or error")
+	dnsTimeout := flag.Duration("dns-timeout", defaultAttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
 	flag.Parse()
 
 	level, err := parseLogLevel(*logLevel)
 	if err != nil {
 		fatalf("invalid log level %q: %v", *logLevel, err)
+	}
+	if *dnsTimeout <= 0 {
+		fatalf("invalid --dns-timeout %v: must be positive", *dnsTimeout)
 	}
 	initLogging(level)
 
@@ -45,7 +49,7 @@ func main() {
 		fatalf("--cert and --key must be set together")
 	}
 
-	nameservers, err := newNameserverSet(5*time.Second, defaultNameservers)
+	nameservers, err := newNameserverSet(*dnsTimeout, defaultNameservers)
 	if err != nil {
 		fatalf("failed to initialize dns nameservers: %v", err)
 	}

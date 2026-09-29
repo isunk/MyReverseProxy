@@ -98,7 +98,12 @@ func startProxyWithNameservers(t *testing.T, configPath string, tlsConfig *tls.C
 
 func testNameservers(t *testing.T, entries ...string) *nameserverSet {
 	t.Helper()
-	servers, err := newNameserverSet(2*time.Second, entries)
+	return testNameserversWithTimeout(t, defaultAttemptTimeout, entries)
+}
+
+func testNameserversWithTimeout(t *testing.T, timeout time.Duration, entries []string) *nameserverSet {
+	t.Helper()
+	servers, err := newNameserverSet(timeout, entries)
 	if err != nil {
 		t.Fatalf("newNameserverSet: %v", err)
 	}
@@ -125,6 +130,23 @@ func requestBody(t *testing.T, client *http.Client, rawURL string) string {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	return strings.TrimSpace(string(body))
+}
+
+// getOnce 请求一次并立即关闭响应体，使上游连接回到空闲池以便观测连接复用。
+func getOnce(t *testing.T, client *http.Client, rawURL, prefix string) {
+	t.Helper()
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		t.Fatalf("GET %s: %v", rawURL, err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(body)), prefix) {
+		t.Fatalf("GET %s = %q, want prefix %q", rawURL, body, prefix)
+	}
 }
 
 func TestLoadTable_Valid(t *testing.T) {
@@ -285,6 +307,33 @@ func TestLoadTable_TrimsWhitespace(t *testing.T) {
 	if entry.host != "up-a.example.com" {
 		t.Fatalf("host should be trimmed: got %q", entry.host)
 	}
+}
+
+func TestRouteTable_Fingerprint(t *testing.T) {
+	base := "servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: http://up-a:8080\n"
+	loaded := func(content string) *routeTable {
+		table, _, err := loadTable(writeConfigFile(t, "r.yaml", content))
+		if err != nil {
+			t.Fatalf("loadTable: %v", err)
+		}
+		return table
+	}
+	same := func(a, b *routeTable, what string) {
+		if a.fingerprint() != b.fingerprint() {
+			t.Fatalf("%s must not change the fingerprint: %q != %q", what, a.fingerprint(), b.fingerprint())
+		}
+	}
+	different := func(a, b *routeTable, what string) {
+		if a.fingerprint() == b.fingerprint() {
+			t.Fatalf("%s must change the fingerprint", what)
+		}
+	}
+	headerOnly := strings.Replace(base, "upstream: http://up-a:8080\n",
+		"upstream: http://up-a:8080\n        headers:\n          response:\n            X-Test: \"1\"\n", 1)
+	same(loaded(base), loaded(base), "identical config")
+	different(loaded(base), loaded(strings.Replace(base, "up-a", "up-b", 1)), "upstream change")
+	different(loaded(base), loaded(headerOnly), "header-only change")
+	same(loaded(base), loaded(base+"nameservers:\n  - \"127.0.0.1:53\"\n"), "nameservers-only change")
 }
 
 func TestHostOnly_Lowercase(t *testing.T) {
@@ -666,6 +715,57 @@ func TestReload_SwitchesRoute(t *testing.T) {
 	}
 	if got := requestBody(t, client, "http://api.example.com/x"); !strings.HasPrefix(got, "B:/x") {
 		t.Fatalf("after reload: %q", got)
+	}
+}
+
+func TestReload_UnchangedConfigKeepsIdleConnections(t *testing.T) {
+	upA := recordingServer(t, "A")
+	upB := recordingServer(t, "B")
+	config := "servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: " + upA.URL + "\n"
+	path := writeConfigFile(t, "r.yaml", config)
+
+	var dials int32
+	servers := testNameservers(t)
+	dialing := func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := servers.DialContext(ctx, network, address)
+		if err == nil {
+			atomic.AddInt32(&dials, 1)
+		}
+		return conn, err
+	}
+	p, err := newProxy(path, newTransport(dialing), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("newProxy: %v", err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() { _ = serve(listener, nil, p) }()
+	client := proxyClient("http://" + listener.Addr().String())
+
+	getOnce(t, client, "http://api.example.com/one", "A:/one")
+	if got := atomic.LoadInt32(&dials); got != 1 {
+		t.Fatalf("dials after first request = %d, want 1", got)
+	}
+	if err := p.reload(); err != nil {
+		t.Fatalf("reload unchanged config: %v", err)
+	}
+	getOnce(t, client, "http://api.example.com/two", "A:/two")
+	if got := atomic.LoadInt32(&dials); got != 1 {
+		t.Fatalf("dials after unchanged reload = %d, want 1 (idle upstream connection was torn down)", got)
+	}
+	// 真正变更仍需重建路由并拆掉指向旧目标的连接
+	if err := os.WriteFile(path, []byte(strings.Replace(config, upA.URL, upB.URL, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.reload(); err != nil {
+		t.Fatalf("reload changed config: %v", err)
+	}
+	getOnce(t, client, "http://api.example.com/three", "B:/three")
+	if got := atomic.LoadInt32(&dials); got != 2 {
+		t.Fatalf("dials after route change = %d, want 2", got)
 	}
 }
 
@@ -1187,6 +1287,28 @@ func TestNameserverSet_Failover(t *testing.T) {
 	}
 }
 
+// 首个 nameserver 只收包不回复，验证单次尝试超时会真正生效并限制故障切换等待
+func TestNameserverSet_AttemptTimeout(t *testing.T) {
+	echo := echoServer(t)
+	_, port, _ := net.SplitHostPort(echo)
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	servers := testNameserversWithTimeout(t, 50*time.Millisecond,
+		[]string{"127.0.0.1:" + silentUDPPort(t), stub.address()})
+	started := time.Now()
+	conn, err := servers.DialContext(context.Background(), "tcp", "echo.mrp.local:"+port)
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if elapsed < 40*time.Millisecond {
+		t.Fatalf("failover took %v, first nameserver was not waited on", elapsed)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("failover took %v, per-nameserver attempt timeout not applied", elapsed)
+	}
+}
+
 func TestNameserverSet_UpdateFailureKeepsServers(t *testing.T) {
 	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
 	servers := testNameservers(t, stub.address())
@@ -1254,6 +1376,17 @@ func closedUDPPort(t *testing.T) string {
 	port := conn.LocalAddr().(*net.UDPAddr).Port
 	conn.Close()
 	return strconv.Itoa(port)
+}
+
+// silentUDPPort 返回一个只收包、永不回复的 UDP 端口，用于模拟不可达的 DNS 服务器。
+func silentUDPPort(t *testing.T) string {
+	t.Helper()
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return strconv.Itoa(conn.LocalAddr().(*net.UDPAddr).Port)
 }
 
 type dnsStub struct {

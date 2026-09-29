@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	nameserverDefaultPort    = "53"
-	nameserverAttemptTimeout = 2 * time.Second
-	dialKeepAlive            = 30 * time.Second
+	nameserverDefaultPort = "53"
+	nameserverUDPTimeout  = 5 * time.Second
+	defaultAttemptTimeout = time.Second
+	dialKeepAlive         = 30 * time.Second
 )
 
 var defaultNameservers = []string{"114.114.114.114", "8.8.8.8"}
@@ -22,8 +23,9 @@ var defaultNameservers = []string{"114.114.114.114", "8.8.8.8"}
 // nameserverSet 持有可热更新的 DNS 服务器列表，经 net.Dialer.Resolver 注入拨号链路，
 // 忽略设备 /etc/resolv.conf 里的服务器地址。
 type nameserverSet struct {
-	current   atomic.Pointer[nameserverState]
-	udpDialer *net.Dialer
+	current        atomic.Pointer[nameserverState]
+	attemptTimeout time.Duration
+	udpDialer      *net.Dialer
 }
 
 type nameserverState struct {
@@ -31,13 +33,16 @@ type nameserverState struct {
 	dialers   []*net.Dialer
 }
 
-func newNameserverSet(dialTimeout time.Duration, entries []string) (*nameserverSet, error) {
+func newNameserverSet(attemptTimeout time.Duration, entries []string) (*nameserverSet, error) {
 	addresses, err := normalizeNameservers(entries)
 	if err != nil {
 		return nil, err
 	}
-	set := &nameserverSet{udpDialer: &net.Dialer{Timeout: dialTimeout}}
-	set.current.Store(&nameserverState{addresses: addresses, dialers: buildDialers(set, addresses, dialTimeout)})
+	set := &nameserverSet{
+		attemptTimeout: attemptTimeout,
+		udpDialer:      &net.Dialer{Timeout: nameserverUDPTimeout},
+	}
+	set.current.Store(&nameserverState{addresses: addresses, dialers: buildDialers(set, addresses, nameserverUDPTimeout)})
 	return set, nil
 }
 
@@ -60,7 +65,7 @@ func (s *nameserverSet) update(entries []string) error {
 func (s *nameserverSet) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	var lastError error
 	for _, dialer := range s.current.Load().dialers {
-		attempt, cancel := context.WithTimeout(ctx, nameserverAttemptTimeout)
+		attempt, cancel := context.WithTimeout(ctx, s.attemptTimeout)
 		conn, err := dialer.DialContext(attempt, network, address)
 		cancel()
 		if err == nil {

@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -63,20 +64,30 @@ func (p *proxy) reload() error {
 	if err != nil {
 		return err
 	}
+	current := p.table.Load()
+	routesChanged := current == nil || current.fingerprint() != table.fingerprint()
+	previous := p.nameservers.serverAddresses()
 	if err := p.nameservers.update(nameservers); err != nil {
 		return err
 	}
-	for _, entries := range table.byDomain {
-		for _, entry := range entries {
-			if entry.fileRoot != "" {
-				entry.fileServer = newStaticHandler(entry.fileRoot, entry.prefix, entry.responseHeaders)
-			} else {
-				entry.proxy = p.newRouteProxy(entry)
+	nameserversChanged := !slices.Equal(previous, p.nameservers.serverAddresses())
+	if !routesChanged && !nameserversChanged {
+		logDebugf("config parsed but routes and nameservers unchanged, keeping current pool")
+		return nil
+	}
+	if routesChanged {
+		for _, entries := range table.byDomain {
+			for _, entry := range entries {
+				if entry.fileRoot != "" {
+					entry.fileServer = newStaticHandler(entry.fileRoot, entry.prefix, entry.responseHeaders)
+				} else {
+					entry.proxy = p.newRouteProxy(entry)
+				}
 			}
 		}
+		p.table.Store(table)
 	}
-	p.table.Store(table)
-	// 丢弃旧路由的存量派生缓存：空闲上游连接与已签发证书，避免残留旧目标
+	// 丢弃旧路由的存量派生缓存：空闲上游连接指向旧目标或旧 DNS 解析，已签发证书需重新签发
 	p.transport.CloseIdleConnections()
 	if p.authority != nil {
 		p.authority.clearCache()
