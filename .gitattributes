@@ -1,0 +1,4 @@
+# .bat 必须保持 CRLF 行尾：cmd.exe 按 LF 寻址会错位，
+# 且 mrp.bat 为 UTF-8 中文内容，错位落在多字节字符中间会产生乱码。
+# -text 按原始字节存储与检出，确保 Release 与工作区分发的是 CRLF 文件。
+*.bat -text
