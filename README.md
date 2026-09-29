@@ -136,7 +136,7 @@ wget https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp-linux-
 # Windows（amd64）
 curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp-windows-amd64.exe
 
-# Windows 一键部署脚本（可选，含 CA 本地生成、提权导入、设备部署）
+# Windows 一键部署脚本（可选，内置固定 CA，无需 openssl；支持提权导入与设备安装）
 curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp.bat
 ```
 
@@ -148,7 +148,7 @@ chmod +x mrp-linux-arm64
 ./mrp-linux-arm64
 ```
 
-Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.bat` 双击运行：两级菜单引导完成 CA 生成、导入、运行与系统代理设置，亦支持 Android(adb)/HarmonyOS(hdc) 设备一键部署。
+Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.bat` 双击运行：脚本内置一份固定 CA（`ca.crt` 哈希 `d6cd00d8`，无需 openssl），两级菜单引导完成 Windows 的 CA 导入、进程运行与系统代理设置；Android(adb)/HarmonyOS(hdc) 设备侧提供 install（推文件+装 CA）、start（运行+设代理）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删文件）四项命令。
 
 命令行参数：
 

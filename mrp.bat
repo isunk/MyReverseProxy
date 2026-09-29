@@ -5,10 +5,10 @@ title mrp Deploy
 REM ============================================================
 REM  mrp one-click deployment script
 REM  Two-level menu: first choose a deploy target (Windows / Android / HarmonyOS),
-REM  then choose one-click deploy or stop.
-REM  The CA certificate and private key are generated locally on first deploy,
-REM  never shipped or committed; each user holds their own, so a shared private
-REM  key never weakens the MITM trust model.
+REM  then choose the operation: Windows = deploy / stop, device = install / start /
+REM  stop / uninstall.
+REM  The CA pair is fixed and embedded in this script so openssl is never required;
+REM  the private key is shared by design and deployment works out of the box.
 REM ============================================================
 
 REM Config constants (edit these to change defaults)
@@ -17,7 +17,7 @@ set "EXE=mrp-windows-amd64.exe"
 set "CRT=ca.crt"
 set "KEY=ca.key"
 set "PORT=4000"
-set "CN=DeviceProxy CA"
+set "CA_HASH=d6cd00d8"
 set "DEV_BIN=mrp-linux-arm64"
 set "DEV_CFG=config.yaml"
 
@@ -204,15 +204,19 @@ if "!TOOL_READY!"=="1" (
     echo Device not connected; check USB debugging and connection.
 )
 echo ------------------------------
-echo [1] One-click deploy
-echo [2] Stop - kill process + clear proxy
+echo [1] Install   push files + install CA
+echo [2] Start     run mrp + set proxy
+echo [3] Stop      kill mrp + clear proxy
+echo [4] Uninstall stop + remove CA + files
 echo [0] Back
 set "CHOICE="
 set /p "CHOICE=Select: "
 if "!CHOICE!"=="0" exit /b
 if "!TOOL_READY!"=="0" (echo Device not connected, cannot proceed. & timeout /t 2 >nul & goto :devLoop)
-if "!CHOICE!"=="1" (call :devDeploy & echo. & pause & goto :devLoop)
-if "!CHOICE!"=="2" (call :devStop & echo. & pause & goto :devLoop)
+if "!CHOICE!"=="1" (call :devInstall & echo. & pause & goto :devLoop)
+if "!CHOICE!"=="2" (call :devStart & echo. & pause & goto :devLoop)
+if "!CHOICE!"=="3" (call :devStop & echo. & pause & goto :devLoop)
+if "!CHOICE!"=="4" (call :devUninstall & echo. & pause & goto :devLoop)
 goto :devLoop
 
 REM Device paths and push command: adb vs hdc tmp dir, system cert dir, push verb
@@ -241,11 +245,11 @@ if "!PROXY_VALUE!"=="127.0.0.1:!PORT!" set "DEV_PROXY_DESC=Configured"
 exit /b
 
 REM ============================================================
-REM Device one-click deploy: prepare files -> push -> install CA -> start -> set proxy
+REM Device install: prepare files -> push -> install CA (does not start)
 REM ============================================================
-:devDeploy
+:devInstall
 echo.
-echo [1/5] Prepare files
+echo [1/3] Prepare files
 call :ensureCA
 call :checkDevFiles
 if "!DEV_BIN_MISSING!"=="1" call :fetchFile %DEV_BIN%
@@ -254,18 +258,12 @@ if "!DEV_BIN_MISSING!"=="1" (echo Missing %DEV_BIN%, cannot continue. & exit /b 
 if "!CRT_MISSING!"=="1" (echo Missing CA certificate, cannot continue. & exit /b 1)
 if "!KEY_MISSING!"=="1" (echo Missing CA private key, cannot continue. & exit /b 1)
 
-echo [2/5] Push files to device
+echo [2/3] Push files to device
 call :devPush
 
-echo [3/5] Install CA to device system store
+echo [3/3] Install CA to device system store
 call :devCert
-
-echo [4/5] Start mrp on device
-call :devRun
-
-echo [5/5] Configure device global proxy
-call :devProxyCfg on
-echo Device deploy finished.
+echo Device install finished.
 exit /b
 
 REM Device stop: end mrp process and clear global proxy
@@ -278,17 +276,34 @@ call :devProxyCfg off
 echo Stopped.
 exit /b
 
+REM Device start: run mrp and set global proxy
+:devStart
+echo.
+call :devRun
+call :devProxyCfg on
+echo Device start finished.
+exit /b
+
+REM Device uninstall: stop, clear proxy, then remove CA and device files
+:devUninstall
+echo.
+call :devStop
+call :devRemoveCA
+call :devRemoveFiles
+echo Device uninstall finished.
+exit /b
+
 REM ============================================================
 REM File and status probe subroutines
 REM ============================================================
 
-REM Ensure local CA and binaries exist: generate CA if missing, prompt to copy binary
+REM Ensure local CA and binaries exist: write embedded CA if missing, prompt to copy binary
 :ensureCA
 call :checkFiles
 set "NEED_CA=0"
 if "!CRT_MISSING!"=="1" set "NEED_CA=1"
 if "!KEY_MISSING!"=="1" set "NEED_CA=1"
-if "!NEED_CA!"=="1" call :genCA
+if "!NEED_CA!"=="1" call :writeEmbeddedCA
 call :checkFiles
 exit /b
 
@@ -363,14 +378,10 @@ if exist "%WORKDIR%\%DEV_CFG%" !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%DEV_CFG%" !DEV_R
 echo Files pushed.
 exit /b
 
-REM Install CA to device system cert dir - named by subject_hash_old
+REM Install CA to device system cert dir - named by the embedded CA hash
 :devCert
 echo Installing CA certificate to device system store...
-call :findOpenSSL
-if "!OSSL!"=="" (echo openssl not found; cannot compute cert hash; skipping device cert install. & exit /b)
-set "HASH="
-for /f "delims=" %%i in ('"!OSSL!" x509 -subject_hash_old -in "%WORKDIR%\%CRT%" 2^>nul') do if not defined HASH set "HASH=%%i"
-if not defined HASH (echo Cannot compute CA cert hash; skipping device cert install. & exit /b)
+set "HASH=!CA_HASH!"
 echo Cert hash: !HASH!.0
 if "!DEV_TOOL!"=="adb" (
     !DEV_TOOL! root
@@ -428,6 +439,27 @@ if not "!errorlevel!"=="0" (echo Warning: device proxy set failed; check device 
 if /i "%~1"=="off" (echo Device global proxy cleared.) else (echo Device global proxy set to 127.0.0.1:!PORT!.)
 exit /b
 
+REM Remove CA from device system cert dir
+:devRemoveCA
+echo Removing CA certificate from device...
+if /i "!DEV_TOOL!"=="adb" (
+    !DEV_TOOL! root
+    timeout /t 3 >nul
+    !DEV_TOOL! wait-for-device
+    !DEV_TOOL! remount
+)
+!DEV_TOOL! shell rm -f !DEV_CERTS!/!CA_HASH!.0
+exit /b
+
+REM Remove mrp binary, config and CA from device
+:devRemoveFiles
+echo Removing device files...
+!DEV_TOOL! shell rm -f !DEV_REMOTE!/!DEV_BIN!
+!DEV_TOOL! shell rm -f !DEV_REMOTE!/!CRT!
+!DEV_TOOL! shell rm -f !DEV_REMOTE!/!KEY!
+if exist "%WORKDIR%\%DEV_CFG%" !DEV_TOOL! shell rm -f !DEV_REMOTE!/!DEV_CFG!
+exit /b
+
 REM ============================================================
 REM Common utility subroutines
 REM ============================================================
@@ -438,22 +470,29 @@ call :isAdmin
 if "!ADMIN!"=="1" (call :%~1) else (call :elevate %~1)
 exit /b
 
-REM Generate a self-signed CA locally - only when ca.crt / ca.key are missing
-:genCA
-echo CA cert/key missing, generating locally...
-call :findOpenSSL
-if "!OSSL!"=="" (echo openssl not found. Install Git for Windows, or generate ca.crt / ca.key manually per README, then retry. & exit /b 1)
-"!OSSL!" req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout "%WORKDIR%\%KEY%" -out "%WORKDIR%\%CRT%" -nodes -days 3650 -subj "/CN=%CN%" -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,digitalSignature" >nul 2>&1
-if exist "%WORKDIR%\%CRT%" (echo Generated %CRT% and %KEY%.) else (echo Generation failed; check openssl availability.)
-exit /b
-
-REM Probe the openssl path - PATH first, then common Git for Windows locations
-:findOpenSSL
-set "OSSL="
-where openssl >nul 2>&1 && set "OSSL=openssl"
-if "!OSSL!"=="" if exist "C:\Program Files\Git\usr\bin\openssl.exe" set "OSSL=C:\Program Files\Git\usr\bin\openssl.exe"
-if "!OSSL!"=="" if exist "C:\Program Files\Git\mingw64\bin\openssl.exe" set "OSSL=C:\Program Files\Git\mingw64\bin\openssl.exe"
-if "!OSSL!"=="" if exist "C:\Program Files (x86)\Git\usr\bin\openssl.exe" set "OSSL=C:\Program Files (x86)\Git\usr\bin\openssl.exe"
+REM Write the fixed embedded CA pair - only when ca.crt / ca.key are missing
+:writeEmbeddedCA
+if exist "%WORKDIR%\%CRT%" goto :writeCAKey
+>"%WORKDIR%\%CRT%" echo -----BEGIN CERTIFICATE-----
+>>"%WORKDIR%\%CRT%" echo MIIBmDCCAT2gAwIBAgIUVfZslYEayBAiv6+V9lA5ktPf9jYwCgYIKoZIzj0EAwIw
+>>"%WORKDIR%\%CRT%" echo GTEXMBUGA1UEAwwORGV2aWNlUHJveHkgQ0EwHhcNMjYwOTI5MDMwNTQzWhcNMzYw
+>>"%WORKDIR%\%CRT%" echo OTI2MDMwNTQzWjAZMRcwFQYDVQQDDA5EZXZpY2VQcm94eSBDQTBZMBMGByqGSM49
+>>"%WORKDIR%\%CRT%" echo AgEGCCqGSM49AwEHA0IABCh7WdaFBMOCXNjbRjaICJfAGQ2uCcBjKE+mDiqxCzxL
+>>"%WORKDIR%\%CRT%" echo 9LbtiJm7iKZDg7FUvb6vPGdRSHhYUIwlAIDbgBTTQJmjYzBhMB0GA1UdDgQWBBTo
+>>"%WORKDIR%\%CRT%" echo tHWQTTk1+kp3Gn/omx7RbgFd6TAfBgNVHSMEGDAWgBTotHWQTTk1+kp3Gn/omx7R
+>>"%WORKDIR%\%CRT%" echo bgFd6TAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIChDAKBggqhkjOPQQD
+>>"%WORKDIR%\%CRT%" echo AgNJADBGAiEAsrLEFOvjAceXTc2WfnFCAoU0sGFVWrbOy3mj0A0r3CYCIQDYLtbX
+>>"%WORKDIR%\%CRT%" echo It95OQr70jbFEwPw4mcqqHVaq59Vg35lGsF50Q==
+>>"%WORKDIR%\%CRT%" echo -----END CERTIFICATE-----
+:writeCAKey
+if exist "%WORKDIR%\%KEY%" goto :writeCADone
+>"%WORKDIR%\%KEY%" echo -----BEGIN PRIVATE KEY-----
+>>"%WORKDIR%\%KEY%" echo MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgkFv91z9F6RVPe5cI
+>>"%WORKDIR%\%KEY%" echo cKsnH6OQt66aQXn3bB+mQqJo+j2hRANCAAQoe1nWhQTDglzY20Y2iAiXwBkNrgnA
+>>"%WORKDIR%\%KEY%" echo YyhPpg4qsQs8S/S27YiZu4imQ4OxVL2+rzxnUUh4WFCMJQCA24AU00CZ
+>>"%WORKDIR%\%KEY%" echo -----END PRIVATE KEY-----
+:writeCADone
+echo CA pair written from embedded template.
 exit /b
 
 REM Request admin elevation for a subroutine - -Wait blocks until done; single quotes in path escaped; reports UAC cancel
