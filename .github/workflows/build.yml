@@ -63,6 +63,9 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Stage release extras
+        run: cp mrp.bat dist/mrp.bat
+
       - name: Generate checksums
         run: (cd dist && sha256sum * > checksums.txt)
 
