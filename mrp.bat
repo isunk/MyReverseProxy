@@ -217,8 +217,8 @@ exit /b
 set "TOOL=!DEV_TOOL!"
 call :probeDevReady
 call :setDevPaths
-set "DEV_FILE_DESC=Not ready"
-set "DEV_RUN_DESC=Not running"
+set "DEV_CERT_DESC=Not installed"
+set "DEV_APP_DESC=Not installed"
 set "DEV_PROXY_DESC=Unknown"
 if "!TOOL_READY!"=="1" call :probeDevState
 cls
@@ -228,8 +228,8 @@ echo ==============================
 echo Device tool: !DEV_TOOL! - !TOOL_DESC!
 echo ------------------------------
 if "!TOOL_READY!"=="1" (
-    echo [A] Device files    !DEV_FILE_DESC!
-    echo [B] Device process  !DEV_RUN_DESC!
+    echo [A] CA certificate !DEV_CERT_DESC!
+    echo [B] mrp application !DEV_APP_DESC!
     echo [C] Device proxy    !DEV_PROXY_DESC!
 ) else (
     echo Device not connected; check USB debugging and connection.
@@ -239,7 +239,7 @@ echo [1] Install   push files + install CA
 echo [2] Start     run mrp + set proxy
 echo [3] Sync config push config.yaml to device
 echo [4] Stop      kill mrp + clear proxy
-echo [5] Uninstall stop + remove CA + files
+    echo [5] Uninstall stop + remove CA + work dir
 echo [0] Back
 set "CHOICE="
 set /p "CHOICE=Select: "
@@ -252,29 +252,35 @@ if "!CHOICE!"=="4" (call :devStop & echo. & pause & goto :devLoop)
 if "!CHOICE!"=="5" (call :devUninstall & echo. & pause & goto :devLoop)
 goto :devLoop
 
-REM Device paths and push command: adb vs hdc tmp dir, system cert dir, push verb
+REM Device paths and push command: work dir is /data/local/mrp for both adb and hdc
 :setDevPaths
 if /i "!DEV_TOOL!"=="adb" (
-    set "DEV_REMOTE=/data/local/tmp"
+    set "DEV_REMOTE=/data/local/mrp"
     set "DEV_CERTS=/system/etc/security/cacerts"
     set "PUSHCMD=push"
 ) else (
-    set "DEV_REMOTE=data/local/mrp"
+    set "DEV_REMOTE=/data/local/mrp"
     set "DEV_CERTS=/etc/security/certificates"
     set "PUSHCMD=file send"
 )
 exit /b
 
-REM Device status lazy probe: file / process / proxy
+REM Device status probe: CA installed / app state / proxy
 :probeDevState
+call :devTestFile !DEV_CERTS!/!CA_HASH!.0
+if "!DEV_FILE_FOUND!"=="1" set "DEV_CERT_DESC=Installed"
 call :devTestFile !DEV_REMOTE!/!DEV_BIN!
-if "!DEV_FILE_FOUND!"=="1" set "DEV_FILE_DESC=Ready"
+set "DEV_BIN_FOUND=!DEV_FILE_FOUND!"
 call :devPid
-if defined PIDS set "DEV_RUN_DESC=Running"
+if defined PIDS (
+    set "DEV_APP_DESC=Running"
+) else if "!DEV_BIN_FOUND!"=="1" (
+    set "DEV_APP_DESC=Installed, stopped"
+)
 if /i not "!DEV_TOOL!"=="adb" exit /b
 set "PROXY_VALUE="
 for /f "delims=" %%i in ('!DEV_TOOL! shell settings get global http_proxy 2^>nul') do set "PROXY_VALUE=%%i"
-if "!PROXY_VALUE!"=="127.0.0.1:!PORT!" set "DEV_PROXY_DESC=Configured"
+if "!PROXY_VALUE!"=="127.0.0.1:!PORT!" (set "DEV_PROXY_DESC=Configured") else (set "DEV_PROXY_DESC=Not set")
 exit /b
 
 REM ============================================================
@@ -321,13 +327,13 @@ REM Device sync config: push local config.yaml to device so mrp hot reloads it
 :devSyncConfig
 echo.
 if not exist "%WORKDIR%\%DEV_CFG%" (echo %DEV_CFG% not found next to this script. & exit /b 1)
-if /i not "!DEV_TOOL!"=="adb" !DEV_TOOL! shell mkdir -p !DEV_REMOTE!
+!DEV_TOOL! shell mkdir -p !DEV_REMOTE!
 !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%DEV_CFG%" !DEV_REMOTE!
 if not "!errorlevel!"=="0" (echo Sync failed; check device connection. & exit /b 1)
 echo %DEV_CFG% synced to device - mrp hot reloads it automatically.
 exit /b
 
-REM Device uninstall: stop, clear proxy, then remove CA and device files
+REM Device uninstall: stop, clear proxy, then remove CA and the work dir
 :devUninstall
 echo.
 call :devStop
@@ -412,7 +418,7 @@ REM ============================================================
 REM Push binary, config and CA to device - PUSHCMD is push / file send
 :devPush
 echo Pushing files to device [!DEV_TOOL!]...
-if /i not "!DEV_TOOL!"=="adb" !DEV_TOOL! shell mkdir -p !DEV_REMOTE!
+!DEV_TOOL! shell mkdir -p !DEV_REMOTE!
 !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%DEV_BIN%" !DEV_REMOTE!
 if exist "%WORKDIR%\%DEV_CFG%" !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%DEV_CFG%" !DEV_REMOTE!
 !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%CRT%" !DEV_REMOTE!
@@ -512,13 +518,10 @@ if /i "!DEV_TOOL!"=="adb" (
 !DEV_TOOL! shell rm -f !DEV_CERTS!/!CA_HASH!.0
 exit /b
 
-REM Remove mrp binary, config and CA from device
+REM Remove the whole device working directory (binary, config, CA)
 :devRemoveFiles
-echo Removing device files...
-!DEV_TOOL! shell rm -f !DEV_REMOTE!/!DEV_BIN!
-!DEV_TOOL! shell rm -f !DEV_REMOTE!/!CRT!
-!DEV_TOOL! shell rm -f !DEV_REMOTE!/!KEY!
-if exist "%WORKDIR%\%DEV_CFG%" !DEV_TOOL! shell rm -f !DEV_REMOTE!/!DEV_CFG!
+echo Removing device working directory !DEV_REMOTE!...
+!DEV_TOOL! shell rm -rf !DEV_REMOTE!
 exit /b
 
 REM ============================================================

@@ -148,7 +148,7 @@ chmod +x mrp-linux-arm64
 ./mrp-linux-arm64
 ```
 
-Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.bat` 双击运行：脚本内置一份固定 CA（`ca.crt` 哈希 `d6cd00d8`，无需 openssl），Windows 侧提供 install（准备文件+导入 CA）、start（运行+设代理）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删文件）；Android(adb)/HarmonyOS(hdc) 设备侧提供 install（推文件+装 CA）、start（运行+设代理）、sync config（把本地 config.yaml 同步到设备）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删文件）。
+Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.bat` 双击运行：脚本内置一份固定 CA（`ca.crt` 哈希 `d6cd00d8`，无需 openssl），Windows 侧提供 install（准备文件+导入 CA）、start（运行+设代理）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删文件）；Android(adb)/HarmonyOS(hdc) 设备侧工作目录统一为 `/data/local/mrp`，提供 install（推文件+装 CA）、start（运行+设代理）、sync config（把本地 config.yaml 同步到设备）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删整个工作目录）。设备菜单统一展示证书状态（是否安装）、应用状态（未安装/已安装未运行/已运行）、代理状态（adb 可查询，hdc 因无可验证命令显示 Unknown）。
 
 命令行参数：
 
@@ -193,14 +193,15 @@ mrp 可跑在设备本机（代理地址填 `127.0.0.1`，免局域网依赖）�
 
 ```bash
 # --- 设备本机运行（linux/arm64 静态产物，Android 直接执行） ---
-adb push mrp-linux-arm64 /data/local/tmp/mrp
+adb shell mkdir -p /data/local/mrp
+adb push mrp-linux-arm64 /data/local/mrp/
 
 # 路由配置，按需推送
-adb push config.yaml /data/local/tmp/config.yaml
-adb shell chmod +x /data/local/tmp/mrp
+adb push config.yaml /data/local/mrp/
+adb shell chmod +x /data/local/mrp/mrp-linux-arm64
 
 # 前台输出日志，Ctrl+C 结束
-adb shell "cd /data/local/tmp && ./mrp"
+adb shell "cd /data/local/mrp && ./mrp-linux-arm64"
 
 # 全局代理指向本机
 adb shell settings put global http_proxy 127.0.0.1:4000
@@ -225,17 +226,17 @@ adb shell settings put global http_proxy :0
 
 ```bash
 # --- mrp 跑在设备本机（linux/arm64 静态产物） ---
-hdc shell mkdir -p data/local/mrp
-hdc file send ca.key data/local/mrp
-hdc file send ca.crt data/local/mrp
+hdc shell mkdir -p /data/local/mrp
+hdc file send ca.key /data/local/mrp/
+hdc file send ca.crt /data/local/mrp/
 
 # 路由配置，按需推送
-hdc file send config.yaml data/local/mrp
-hdc file send mrp-linux-arm64 data/local/mrp
-hdc shell "chmod +x data/local/mrp/mrp-linux-arm64"
+hdc file send config.yaml /data/local/mrp/
+hdc file send mrp-linux-arm64 /data/local/mrp/
+hdc shell "chmod +x /data/local/mrp/mrp-linux-arm64"
 
 # 运行（前台输出日志，Ctrl+C 结束）
-hdc shell "cd data/local/mrp && ./mrp-linux-arm64"
+hdc shell "cd /data/local/mrp && ./mrp-linux-arm64"
 
 # 全局代理指向本机
 hdc shell network-cfg set http_proxy 127.0.0.1:4000
