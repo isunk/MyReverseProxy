@@ -1,4 +1,6 @@
-# .bat 必须保持 CRLF 行尾：cmd.exe 按 LF 寻址会错位，
-# 且 mrp.bat 为 UTF-8 中文内容，错位落在多字节字符中间会产生乱码。
-# -text 按原始字节存储与检出，确保 Release 与工作区分发的是 CRLF 文件。
+# mrp.bat 必须保持 GBK 编码 + CRLF 行尾：zh-CN Windows cmd 原生按 GBK 解析，
+# 不依赖 chcp 代码页切换（chcp 65001 会让 certutil/netsh 等系统工具的 GBK
+# 输出乱码，旧版 Windows 上还会干扰 cmd 回读脚本）。
+# 禁止以 UTF-8 内容提交该文件；编辑流程：iconv -f GBK -t UTF-8 转出修改，
+# 再 iconv -f UTF-8 -t GBK 转回。-text 确保按原始字节存储、检出与 Release 分发。
 *.bat -text
