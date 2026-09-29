@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"io"
 	"net"
@@ -20,6 +21,7 @@ const (
 	tunnelDialTimeout  = 10 * time.Second
 )
 
+// proxy 持有当前生效的路由表与 DNS 解析器，路由表整体替换以支持热加载。
 type proxy struct {
 	configPath  string
 	table       atomic.Pointer[routeTable]
@@ -27,14 +29,16 @@ type proxy struct {
 	tlsConfig   *tls.Config
 	authority   *certificateAuthority
 	passthrough *httputil.ReverseProxy
+	resolver    *dnsResolver
 }
 
-func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *certificateAuthority) (*proxy, error) {
+func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *certificateAuthority, resolver *dnsResolver) (*proxy, error) {
 	p := &proxy{
 		configPath: configPath,
 		transport:  transport,
 		tlsConfig:  tlsConfig,
 		authority:  authority,
+		resolver:   resolver,
 	}
 	p.passthrough = &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
@@ -55,8 +59,11 @@ func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Confi
 }
 
 func (p *proxy) reload() error {
-	table, err := loadTable(p.configPath)
+	table, nameservers, err := loadTable(p.configPath)
 	if err != nil {
+		return err
+	}
+	if err := p.resolver.update(nameservers); err != nil {
 		return err
 	}
 	for _, entries := range table.byDomain {
@@ -263,7 +270,9 @@ func (p *proxy) serveConnect(client net.Conn, request *http.Request) bool {
 }
 
 func (p *proxy) tunnel(client net.Conn, target string) {
-	upstream, err := net.DialTimeout("tcp", target, tunnelDialTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), tunnelDialTimeout)
+	defer cancel()
+	upstream, err := p.resolver.DialContext(ctx, "tcp", target)
 	if err != nil {
 		logErrorf("tunnel target connection failed target=%s: %v", target, err)
 		_, _ = client.Write([]byte(connectBadGateway))

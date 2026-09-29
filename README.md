@@ -94,6 +94,10 @@ sudo update-ca-certificates
 mrp 首次运行会自动在当前目录创建 `config.yaml`（含注释模板），按需编辑：
 
 ```yaml
+# 上游域名解析用的 DNS 服务器，缺省 114.114.114.114 与 8.8.8.8
+nameservers:
+  - "114.114.114.114"
+  - "8.8.8.8"
 servers:
   - domain: api.target-app.com
     routes:
@@ -122,6 +126,9 @@ servers:
 | `routes[].host` | 可选，改写转发时的 Host 头 |
 | `routes[].headers.request` | 可选，改写发往上游的请求头（Set 语义，覆盖同名已有值） |
 | `routes[].headers.response` | 可选，覆盖下游返回的响应头（如跨域校验头 `Access-Control-Allow-*`） |
+| `nameservers` | 顶层字段，上游域名解析用的 DNS 服务器列表；支持裸 IP（默认 53 端口）与 `host:port`、`[::1]:5353` 写法，按顺序故障切换，单次尝试 2 秒超时。缺省 `114.114.114.114` 与 `8.8.8.8` |
+
+Android / HarmonyOS 设备上的 `/etc/resolv.conf` 常把 nameserver 指向 `[::1]` 或网关等非标准地址（解析交给 netd 等守护进程完成），mrp 自带的 Go DNS 解析器读不到有效服务器时上游域名会解析失败，报 `read udp ...->[::1]:53: connection refused`。因此设备部署时必须显式配置 `nameservers`。
 
 未匹配的域名透传原目标。修改 `config.yaml` 后自动热加载，无需重启。
 

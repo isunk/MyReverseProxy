@@ -21,6 +21,9 @@ const defaultConfig = `# mrp 反向代理路由配置
 #   request:  发往上游的请求头
 #   response: 覆盖下游返回的响应头（如跨域校验 Access-Control-Allow-*）
 #
+# nameservers: 顶层字段，上游域名解析用的 DNS 服务器，支持裸 IP（默认 53 端口）与 host:port 写法，缺省 114.114.114.114 与 8.8.8.8
+#   设备上的 /etc/resolv.conf 常指向 [::1]:53 等守护进程地址，不配置会导致上游域名解析失败
+#
 # 示例：
 # servers:
 #   - domain: api.target-app.com
@@ -40,10 +43,13 @@ const defaultConfig = `# mrp 反向代理路由配置
 #         upstream: http://192.168.1.50:8080
 
 servers: []
+nameservers: []
 `
 
+// Config 顶层配置：Servers 为监听入口，Nameservers 为上游域名解析用的 DNS 服务器。
 type Config struct {
-	Servers []Server `yaml:"servers"`
+	Servers     []Server `yaml:"servers"`
+	Nameservers []string `yaml:"nameservers"`
 }
 
 type Server struct {
@@ -65,31 +71,31 @@ type RouteHeaders struct {
 	Response map[string]string `yaml:"response"`
 }
 
-func loadTable(path string) (*routeTable, error) {
+func loadTable(path string) (*routeTable, []string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
+		return nil, nil, fmt.Errorf("read config: %w", err)
 	}
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
+		return nil, nil, fmt.Errorf("parse config: %w", err)
 	}
 	table := &routeTable{byDomain: map[string][]*route{}}
 	for _, server := range config.Servers {
 		domain := strings.ToLower(strings.TrimSpace(server.Domain))
 		if domain == "" {
-			return nil, errors.New("domain must not be empty")
+			return nil, nil, errors.New("domain must not be empty")
 		}
 		if _, exists := table.byDomain[domain]; exists {
-			return nil, fmt.Errorf("duplicate domain %q", server.Domain)
+			return nil, nil, fmt.Errorf("duplicate domain %q", server.Domain)
 		}
 		entries, err := buildRoutes(server)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		table.byDomain[domain] = entries
 	}
-	return table, nil
+	return table, config.Nameservers, nil
 }
 
 func buildRoutes(server Server) ([]*route, error) {

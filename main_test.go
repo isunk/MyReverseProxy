@@ -3,12 +3,16 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
+	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -17,13 +21,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"encoding/pem"
-	"fmt"
 )
 
 func init() {
@@ -72,9 +75,13 @@ func recordingServer(t *testing.T, tag string) *httptest.Server {
 }
 
 func startProxy(t *testing.T, configPath string, tlsConfig *tls.Config) (string, *proxy) {
+	return startProxyWithResolver(t, configPath, tlsConfig, testResolver(t))
+}
+
+func startProxyWithResolver(t *testing.T, configPath string, tlsConfig *tls.Config, resolver *dnsResolver) (string, *proxy) {
 	t.Helper()
-	transport := newTransport(2 * time.Second)
-	p, err := newProxy(configPath, transport, tlsConfig, nil)
+	transport := newTransport(resolver)
+	p, err := newProxy(configPath, transport, tlsConfig, nil, resolver)
 	if err != nil {
 		t.Fatalf("newProxy: %v", err)
 	}
@@ -85,6 +92,15 @@ func startProxy(t *testing.T, configPath string, tlsConfig *tls.Config) (string,
 	t.Cleanup(func() { listener.Close() })
 	go func() { _ = serve(listener, tlsConfig, p) }()
 	return "http://" + listener.Addr().String(), p
+}
+
+func testResolver(t *testing.T) *dnsResolver {
+	t.Helper()
+	resolver, err := newDNSResolver(2 * time.Second)
+	if err != nil {
+		t.Fatalf("newDNSResolver: %v", err)
+	}
+	return resolver
 }
 
 func proxyClient(proxyURL string) *http.Client {
@@ -123,7 +139,7 @@ servers:
       - prefix: /
         upstream: https://up-b
 `)
-	table, err := loadTable(path)
+	table, _, err := loadTable(path)
 	if err != nil {
 		t.Fatalf("loadTable: %v", err)
 	}
@@ -152,7 +168,7 @@ func TestLoadTable_Errors(t *testing.T) {
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
 			path := writeConfigFile(t, name+".yaml", content)
-			if _, err := loadTable(path); err == nil {
+			if _, _, err := loadTable(path); err == nil {
 				t.Fatalf("expected error for %s", name)
 			}
 		})
@@ -171,7 +187,7 @@ func TestLoadTable_LocalPathUpstream(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			content := "servers:\n  - domain: a.example.com\n    routes:\n      - prefix: /\n        upstream: " + up + "\n"
 			path := writeConfigFile(t, name+".yaml", content)
-			table, err := loadTable(path)
+			table, _, err := loadTable(path)
 			if err != nil {
 				t.Fatalf("loadTable upstream=%q: unexpected error: %v", up, err)
 			}
@@ -241,7 +257,7 @@ func TestJoinPath(t *testing.T) {
 func TestLoadTable_NormalizesDomainCase(t *testing.T) {
 	path := writeConfigFile(t, "r.yaml",
 		"servers:\n  - domain: API.Example.COM\n    routes:\n      - prefix: /\n        upstream: http://up-a\n")
-	table, err := loadTable(path)
+	table, _, err := loadTable(path)
 	if err != nil {
 		t.Fatalf("loadTable: %v", err)
 	}
@@ -253,7 +269,7 @@ func TestLoadTable_NormalizesDomainCase(t *testing.T) {
 func TestLoadTable_TrimsWhitespace(t *testing.T) {
 	path := writeConfigFile(t, "r.yaml",
 		"servers:\n  - domain: \" api.example.com \"\n    routes:\n      - prefix: \" /v1/ \"\n        upstream: http://up-a\n        host: \" up-a.example.com \"\n")
-	table, err := loadTable(path)
+	table, _, err := loadTable(path)
 	if err != nil {
 		t.Fatalf("loadTable: %v", err)
 	}
@@ -1062,4 +1078,296 @@ func TestLogf_LevelFilter(t *testing.T) {
 	if out.String() != formatLogLine(time.Now(), logWarn, "shown", false) {
 		t.Fatalf("filter mismatch: %q", out.String())
 	}
+}
+
+func TestNormalizeNameserver(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+		fail  bool
+	}{
+		{"114.114.114.114", "114.114.114.114:53", false},
+		{"8.8.8.8:5353", "8.8.8.8:5353", false},
+		{"[::1]:53", "[::1]:53", false},
+		{"  1.1.1.1  ", "1.1.1.1:53", false},
+		{"", "", true},
+		{"dns.example.com", "", true},
+		{"127.0.0.1:abc", "", true},
+		{"127.0.0.1:0", "", true},
+		{"127.0.0.1:65536", "", true},
+	}
+	for _, tc := range tests {
+		got, err := normalizeNameserver(tc.input)
+		if tc.fail {
+			if err == nil {
+				t.Fatalf("normalizeNameserver(%q) accepted %q", tc.input, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("normalizeNameserver(%q): %v", tc.input, err)
+		}
+		if got != tc.want {
+			t.Fatalf("normalizeNameserver(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestNormalizeNameservers_Defaults(t *testing.T) {
+	addresses, err := normalizeNameservers(nil)
+	if err != nil {
+		t.Fatalf("normalizeNameservers: %v", err)
+	}
+	want := []string{"114.114.114.114:53", "8.8.8.8:53"}
+	if !slices.Equal(addresses, want) {
+		t.Fatalf("defaults = %v, want %v", addresses, want)
+	}
+}
+
+func TestDefaultConfig_Parses(t *testing.T) {
+	table, nameservers, err := loadTable(writeConfigFile(t, "default.yaml", defaultConfig))
+	if err != nil {
+		t.Fatalf("loadTable(defaultConfig): %v", err)
+	}
+	if len(table.byDomain) != 0 {
+		t.Fatalf("default table = %v", table)
+	}
+	if len(nameservers) != 0 {
+		t.Fatalf("default nameservers = %v", nameservers)
+	}
+}
+
+func TestDNSResolver_Failover(t *testing.T) {
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	refused := "127.0.0.1:" + closedUDPPort(t)
+	resolver := testResolver(t)
+	if err := resolver.update([]string{refused, stub.address()}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	addresses, err := resolver.LookupIPAddr(context.Background(), "target.mrp.local")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if addresses[0].IP.String() != "127.0.0.1" {
+		t.Fatalf("lookup = %v, want 127.0.0.1", addresses)
+	}
+}
+
+func TestDNSResolver_UpdateFailureKeepsServers(t *testing.T) {
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	resolver := testResolver(t)
+	if err := resolver.update([]string{stub.address()}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if err := resolver.update([]string{"dns.example.com"}); err == nil {
+		t.Fatal("hostname nameserver should be rejected")
+	}
+	addresses, err := resolver.LookupIPAddr(context.Background(), "target.mrp.local")
+	if err != nil {
+		t.Fatalf("lookup after failed update: %v", err)
+	}
+	if addresses[0].IP.String() != "127.0.0.1" {
+		t.Fatalf("lookup = %v, want 127.0.0.1", addresses)
+	}
+}
+
+func TestDNSResolver_DialContext(t *testing.T) {
+	echo := echoServer(t)
+	_, port, _ := net.SplitHostPort(echo)
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	resolver := testResolver(t)
+	if err := resolver.update([]string{stub.address()}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	conn, err := resolver.DialContext(context.Background(), "tcp", "echo.mrp.local:"+port)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	payload := []byte("ping")
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	echoed := make([]byte, len(payload))
+	if _, err := io.ReadFull(conn, echoed); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(echoed, payload) {
+		t.Fatalf("echo = %q, want %q", echoed, payload)
+	}
+}
+
+func TestProxy_UpstreamResolvedByNameserver(t *testing.T) {
+	up := recordingServer(t, "upstream")
+	_, port, _ := net.SplitHostPort(up.Listener.Addr().String())
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	config := "servers:\n" +
+		"  - domain: api.example.com\n" +
+		"    routes:\n" +
+		"      - prefix: /\n" +
+		"        upstream: http://api.mrp.local:" + port + "\n" +
+		"nameservers:\n" +
+		"  - \"127.0.0.1:" + closedUDPPort(t) + "\"\n" +
+		"  - \"" + stub.address() + "\"\n"
+	proxyURL, _ := startProxyWithResolver(t, writeConfigFile(t, "r.yaml", config), nil, testResolver(t))
+	if got := requestBody(t, proxyClient(proxyURL), "http://api.example.com/hello"); !strings.HasPrefix(got, "upstream:/hello") {
+		t.Fatalf("nameserver routing: got %q", got)
+	}
+}
+
+func TestProxy_ReloadNameservers(t *testing.T) {
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	refused := "127.0.0.1:" + closedUDPPort(t)
+	config := "servers:\n" +
+		"  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: http://unused\n" +
+		"nameservers:\n  - \"" + refused + "\"\n"
+	path := writeConfigFile(t, "r.yaml", config)
+	resolver := testResolver(t)
+	p, err := newProxy(path, newTransport(resolver), nil, nil, resolver)
+	if err != nil {
+		t.Fatalf("newProxy: %v", err)
+	}
+	if got := resolverAddresses(t, resolver); !slices.Equal(got, []string{refused}) {
+		t.Fatalf("initial nameservers = %v, want %v", got, []string{refused})
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(config, refused, stub.address(), 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := resolverAddresses(t, resolver); !slices.Equal(got, []string{stub.address()}) {
+		t.Fatalf("reloaded nameservers = %v, want %v", got, []string{stub.address()})
+	}
+}
+
+func resolverAddresses(t *testing.T, resolver *dnsResolver) []string {
+	t.Helper()
+	servers, err := resolver.snapshot()
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	return nameserverAddresses(servers)
+}
+
+func closedUDPPort(t *testing.T) string {
+	t.Helper()
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	port := conn.LocalAddr().(*net.UDPAddr).Port
+	conn.Close()
+	return strconv.Itoa(port)
+}
+
+type dnsStub struct {
+	listener *net.UDPConn
+	records  map[uint16][]net.IP
+}
+
+func startDNSStub(t *testing.T, records map[uint16][]net.IP) *dnsStub {
+	t.Helper()
+	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	stub := &dnsStub{listener: listener.(*net.UDPConn), records: records}
+	t.Cleanup(func() { _ = stub.listener.Close() })
+	go stub.serve()
+	return stub
+}
+
+func (s *dnsStub) address() string {
+	return s.listener.LocalAddr().String()
+}
+
+func (s *dnsStub) serve() {
+	buf := make([]byte, 1500)
+	for {
+		n, remote, err := s.listener.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		id, name, qtype, ok := parseDNSQuestion(buf[:n])
+		if !ok {
+			continue
+		}
+		_, _ = s.listener.WriteTo(dnsReply(id, name, qtype, s.records[qtype]), remote)
+	}
+}
+
+func parseDNSQuestion(data []byte) (uint16, string, uint16, bool) {
+	if len(data) < 12 {
+		return 0, "", 0, false
+	}
+	id := binary.BigEndian.Uint16(data[0:2])
+	if binary.BigEndian.Uint16(data[4:6]) != 1 {
+		return 0, "", 0, false
+	}
+	offset := 12
+	name := ""
+	for {
+		if offset >= len(data) {
+			return 0, "", 0, false
+		}
+		length := int(data[offset])
+		if length == 0 {
+			offset++
+			break
+		}
+		if length&0xc0 != 0 || offset+1+length > len(data) {
+			return 0, "", 0, false
+		}
+		name += "." + string(data[offset+1:offset+1+length])
+		offset += 1 + length
+	}
+	if offset+4 > len(data) {
+		return 0, "", 0, false
+	}
+	return id, strings.TrimPrefix(name, "."), binary.BigEndian.Uint16(data[offset : offset+2]), true
+}
+
+func dnsReply(id uint16, name string, qtype uint16, records []net.IP) []byte {
+	header := make([]byte, 12)
+	binary.BigEndian.PutUint16(header[0:2], id)
+	binary.BigEndian.PutUint16(header[2:4], 0x8180)
+	binary.BigEndian.PutUint16(header[4:6], 1)
+	binary.BigEndian.PutUint16(header[6:8], uint16(len(records)))
+	binary.BigEndian.PutUint16(header[8:10], 0)
+	binary.BigEndian.PutUint16(header[10:12], 0)
+	reply := append(header, dnsQuestion(name, qtype)...)
+	for _, record := range records {
+		reply = append(reply, dnsAnswer(qtype, record)...)
+	}
+	return reply
+}
+
+func dnsQuestion(name string, qtype uint16) []byte {
+	var question []byte
+	for _, label := range strings.Split(name, ".") {
+		if len(label) == 0 {
+			continue
+		}
+		question = append(question, byte(len(label)))
+		question = append(question, label...)
+	}
+	question = append(question, 0)
+	tail := make([]byte, 4)
+	binary.BigEndian.PutUint16(tail[0:2], qtype)
+	binary.BigEndian.PutUint16(tail[2:4], 1)
+	return append(question, tail...)
+}
+
+func dnsAnswer(qtype uint16, address net.IP) []byte {
+	answer := make([]byte, 12)
+	binary.BigEndian.PutUint16(answer[0:2], 0xc00c)
+	binary.BigEndian.PutUint16(answer[2:4], qtype)
+	binary.BigEndian.PutUint16(answer[4:6], 1)
+	rdata := address.To16()
+	if v4 := address.To4(); v4 != nil {
+		rdata = v4
+	}
+	binary.BigEndian.PutUint16(answer[10:12], uint16(len(rdata)))
+	return append(answer, rdata...)
 }
