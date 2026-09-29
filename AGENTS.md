@@ -5,11 +5,11 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 ## 命名风格
 
 - 遵循 Go 惯例 camelCase：类型名大驼峰，变量、字段、函数、方法小驼峰。不用下划线分隔。
-  - 正例：`transport`、`routeTable`、`listenAddr`、`handleConn`、`handleConnect`、`byDomain`、`oneConnListener`、`logWriter`
+  - 正例：`transport`、`routeTable`、`listenAddr`、`handleConn`、`handleConnect`、`byDomain`、`oneConnListener`、`statusRecorder`、`target`、`routeTable.installHandlers`
   - 反例：`trVerify`（缩写）、`transport_verify`（下划线）、`route_table`（下划线）
 - 单词尽量完整，避免缩写：`transport` 不写 `tr`、`entry` 不写 `r`、`server` 不写 `s`。循环局部变量允许使用 `i`、`k`、`v` 等约定单字母，紧邻上下文允许 `r`（request）、`w`（writer）、`c`（conn）。
-- 类型名大驼峰导出或小驼峰非导出（如 `route`、`routeTable`、`routeEntry`、`logWriter`、`oneConnListener`、`ctxKey`）。
-- **YAML 反射字段**：`gopkg.in/yaml.v3` 要求结构体字段导出，采用大驼峰，如 `Domain`、`Routes`、`Prefix`、`Upstream`、`Host`。
+- 类型名大驼峰导出或小驼峰非导出（如 `route`、`target`、`headerRewrite`、`routeTable`、`expiringCache`、`statusRecorder`、`oneConnListener`、`certCall`）。
+- **YAML 反射字段**：`gopkg.in/yaml.v3` 要求结构体字段导出，采用大驼峰，如 `Config.Domains`（键 `servers`）、`Domain.Name`（键 `domain`）、`Route.Prefix`、`Route.Upstream`、`Route.Host`。改名须同步验证 `yaml` 键仍与既有配置文件兼容。
 - **标准库接口方法**保持其原始拼写，如 `ServeHTTP`、`Accept`、`Close`、`Addr`、`WriteHeader`、`Unwrap`，因为须满足 `http.Handler` / `net.Listener` / `http.ResponseWriter` 等接口。
 
 ## 文件组织
@@ -20,12 +20,14 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 | 文件 | 职责 | 不应包含 |
 |------|------|----------|
-| `main.go` | flags 解析、信号循环、`run`、`fatalf` | 路由/转发逻辑 |
-| `config.go` | YAML 配置结构、`loadTable`、`buildRoutes` | 任何运行期依赖 |
+| `main.go` | flags 解析（`parseStartupOptions`）、`buildProxy`、信号循环、`run`、`fatalf` | 路由/转发逻辑 |
+| `config.go` | YAML 配置结构、`loadTable`、`parseConfig`、`buildTable`、`buildRoutes`、`parseUpstream` | 任何运行期依赖 |
+| `route.go` | `route`、`target`、`headerRewrite`、`routeTable`、`pick`、`installHandlers`、`fingerprint`、`staticHandler`、`joinPath` | I/O、日志 |
+| `proxy.go` | `proxy` 结构、`ServeHTTP`、`handleConnect`/`hijackConn`/`serveConnect`、`tunnel`、`reload`、`watchFile` 热加载 | 连接级 TLS 服务细节 |
+| `server.go` | 单端口监听、TLS/HTTP 协议识别（`handleConn`/`sniffTLS`）、`oneConnListener`、`certificateAuthority` 现场签发、`statusRecorder` | 路由决策逻辑 |
+| `resolver.go` | 上游 DNS 解析与故障切换、`nameserverSet`、解析结果缓存 | 路由决策逻辑 |
+| `cache.go` | 通用 `expiringCache` 并发缓存 | 具体业务逻辑 |
 | `logging.go` | console 日志（`logXxxf` 模板字符串、级别过滤、按级别整行着色、TTY 检测） | 路由/转发逻辑 |
-| `route.go` | `route`、`routeTable`、`pick` | I/O、日志 |
-| `proxy.go` | `proxy` 结构、`ServeHTTP`、`handleConnect`/`hijackConn`/`serveConnect`、`tunnel`、`reload`、`watchFile` 热加载、转发构建、`applyResponseHeaders` | 连接级 TLS 服务细节 |
-| `server.go` | 单端口监听、TLS/HTTP 协议识别（`handleConn`/`sniffTLS`）、`oneConnListener`、纯工具函数、`logWriter` | 路由决策逻辑 |
 | `main_test.go` | 单元与集成测试 | — |
 
 新增文件时保持单一职责，文件名单词式小写。
@@ -43,6 +45,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 ## 并发与热加载
 
 - 路由表通过 `atomic.Pointer[routeTable]` 持有，`reload` 整体替换，禁止对存量 `routeTable` 做原地修改。
+- 处理器在 `loadTable` 内由 `installHandlers` 构建完毕，此后路由表内容只读；运行期只做前缀匹配，不区分远程上游与本地目录。
 - `reload` 失败时保留旧路由表，仅记录错误，不影响存量连接。
 - TLS 配置在启动时加载一次；路由配置文件修改后自动热加载（轮询变更），`SIGHUP` 手动触发仍可用，均只重载路由、不重载证书。
 

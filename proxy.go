@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"slices"
-	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -41,7 +40,16 @@ func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Confi
 		authority:   authority,
 		nameservers: nameservers,
 	}
-	p.passthrough = &httputil.ReverseProxy{
+	p.passthrough = newPassthroughProxy(transport)
+	if err := p.reload(); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// newPassthroughProxy 未命中路由时透传到原始目标，沿用入站 scheme 与 Host。
+func newPassthroughProxy(transport *http.Transport) *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
 			scheme := "http"
 			if request.In.TLS != nil {
@@ -51,12 +59,8 @@ func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Confi
 			request.Out.Host = request.In.Host
 		},
 		Transport:    transport,
-		ErrorHandler: p.errorHandler,
+		ErrorHandler: upstreamErrorHandler,
 	}
-	if err := p.reload(); err != nil {
-		return nil, err
-	}
-	return p, nil
 }
 
 func (p *proxy) reload() error {
@@ -76,24 +80,32 @@ func (p *proxy) reload() error {
 		return nil
 	}
 	if routesChanged {
-		for _, entries := range table.byDomain {
-			for _, entry := range entries {
-				if entry.fileRoot != "" {
-					entry.fileServer = newStaticHandler(entry.fileRoot, entry.prefix, entry.responseHeaders)
-				} else {
-					entry.proxy = p.newRouteProxy(entry)
-				}
-			}
-		}
+		table.installHandlers(p.transport)
 		p.table.Store(table)
 	}
-	// 丢弃旧路由的存量派生缓存：空闲上游连接与已解析地址指向旧目标，已签发证书需重新签发
+	p.resetCaches()
+	return nil
+}
+
+// resetCaches 丢弃与旧配置绑定的派生状态：空闲上游连接、已解析地址、已签发证书。
+func (p *proxy) resetCaches() {
 	p.transport.CloseIdleConnections()
 	p.nameservers.clearCache()
 	if p.authority != nil {
 		p.authority.clearCache()
 	}
-	return nil
+}
+
+// routeHandler 选出本次请求的处理器：命中路由走该路由，否则透传原始目标。
+func (p *proxy) routeHandler(request *http.Request) (http.Handler, string) {
+	domain := domainOf(request)
+	route, matched := p.table.Load().pick(domain, request.URL.Path)
+	if !matched {
+		logDebugf("no route matched, passing through to original target domain=%s", domain)
+		return p.passthrough, domain
+	}
+	logDebugf("route matched domain=%s prefix=%s upstream=%s", domain, route.prefix, route.target.summary)
+	return route.handler, domain
 }
 
 func (p *proxy) watchFile(interval time.Duration, stop <-chan struct{}) {
@@ -126,113 +138,18 @@ func (p *proxy) watchFile(interval time.Duration, stop <-chan struct{}) {
 	}
 }
 
-func (p *proxy) newRouteProxy(entry *route) *httputil.ReverseProxy {
-	return &httputil.ReverseProxy{
-		Rewrite: func(request *httputil.ProxyRequest) {
-			request.SetURL(entry.target)
-			request.Out.URL.Path = joinPath(entry.target.Path, strings.TrimPrefix(request.In.URL.Path, entry.prefix))
-			request.Out.URL.RawPath = ""
-			if entry.host != "" {
-				request.Out.Host = entry.host
-			}
-			for name, value := range entry.requestHeaders {
-				request.Out.Header.Set(name, value)
-			}
-		},
-		Transport:      p.transport,
-		ErrorHandler:   p.errorHandler,
-		ModifyResponse: applyResponseHeaders(entry.responseHeaders),
-	}
-}
-
-// applyResponseHeaders 返回覆盖响应头的 ModifyResponse 钩子；无配置时返回 nil 以跳过
-func applyResponseHeaders(headers map[string]string) func(*http.Response) error {
-	if len(headers) == 0 {
-		return nil
-	}
-	return func(response *http.Response) error {
-		for name, value := range headers {
-			response.Header.Set(name, value)
-		}
-		return nil
-	}
-}
-
-type staticHandler struct {
-	root            http.Dir
-	prefix          string
-	responseHeaders map[string]string
-}
-
-func newStaticHandler(root, prefix string, responseHeaders map[string]string) *staticHandler {
-	return &staticHandler{root: http.Dir(root), prefix: prefix, responseHeaders: responseHeaders}
-}
-
-// ServeHTTP 以本地目录为根托起静态文件：目录命中时回退 index.html，
-// 不生成目录列表；路径解析交由 http.Dir 以阻断路径穿越。
-func (h *staticHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	for name, value := range h.responseHeaders {
-		writer.Header().Set(name, value)
-	}
-	relPath := strings.TrimPrefix(strings.TrimPrefix(request.URL.Path, h.prefix), "/")
-	file, err := h.root.Open(relPath)
-	if err != nil {
-		http.NotFound(writer, request)
-		return
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		http.NotFound(writer, request)
-		return
-	}
-	if !info.IsDir() {
-		http.ServeContent(writer, request, info.Name(), info.ModTime(), file)
-		return
-	}
-	index, err := h.root.Open(relPath + "/index.html")
-	if err != nil {
-		http.NotFound(writer, request)
-		return
-	}
-	defer index.Close()
-	indexInfo, err := index.Stat()
-	if err != nil || indexInfo.IsDir() {
-		http.NotFound(writer, request)
-		return
-	}
-	http.ServeContent(writer, request, indexInfo.Name(), indexInfo.ModTime(), index)
-}
-
-func (p *proxy) errorHandler(writer http.ResponseWriter, request *http.Request, err error) {
-	logErrorf("upstream request failed host=%s path=%s: %v", request.Host, request.URL.Path, err)
-	writer.WriteHeader(http.StatusBadGateway)
-	_, _ = io.WriteString(writer, "502 Bad Gateway")
-}
-
 func (p *proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if request.Method == http.MethodConnect {
 		p.handleConnect(writer, request)
 		return
 	}
-	domain := domainOf(request)
-	entry, matched := p.table.Load().pick(domain, request.URL.Path)
 	start := time.Now()
-	recorder := &logWriter{ResponseWriter: writer, status: http.StatusOK}
+	recorder := &statusRecorder{ResponseWriter: writer, status: http.StatusOK}
+	handler, domain := p.routeHandler(request)
 	defer func() {
 		logInfof("request domain=%s path=%s status=%d elapsed=%s", domain, request.URL.Path, recorder.status, time.Since(start))
 	}()
-	if matched {
-		logDebugf("route matched domain=%s prefix=%s upstream=%s", domain, entry.prefix, entry.upstream())
-		if entry.fileServer != nil {
-			entry.fileServer.ServeHTTP(recorder, request)
-		} else {
-			entry.proxy.ServeHTTP(recorder, request)
-		}
-		return
-	}
-	logDebugf("no route matched, passing through to original target domain=%s", domain)
-	p.passthrough.ServeHTTP(recorder, request)
+	handler.ServeHTTP(recorder, request)
 }
 
 func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request) {

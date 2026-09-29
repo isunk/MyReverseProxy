@@ -155,25 +155,7 @@ func hostOnly(host string) string {
 	return strings.ToLower(host)
 }
 
-func joinPath(base, rest string) string {
-	if rest == "" {
-		rest = "/"
-	}
-	if !strings.HasPrefix(rest, "/") {
-		rest = "/" + rest
-	}
-	if base == "" {
-		return rest
-	}
-	return strings.TrimSuffix(base, "/") + rest
-}
-
 var serialLimit = new(big.Int).Lsh(big.NewInt(1), 128)
-
-type cacheEntry struct {
-	cert      *tls.Certificate
-	expiresAt time.Time
-}
 
 // certCall 承载一次进行中的签发，让同域名并发握手等待同一结果而非重复签发
 type certCall struct {
@@ -182,11 +164,23 @@ type certCall struct {
 	err  error
 }
 
+func newCertCall() *certCall { return &certCall{done: make(chan struct{})} }
+
+func (c *certCall) wait() (*tls.Certificate, error) {
+	<-c.done
+	return c.cert, c.err
+}
+
+func (c *certCall) deliver(cert *tls.Certificate, err error) {
+	c.cert, c.err = cert, err
+	close(c.done)
+}
+
 type certificateAuthority struct {
 	cert     *x509.Certificate
 	key      crypto.Signer
 	mu       sync.Mutex
-	cache    map[string]cacheEntry
+	cache    *expiringCache[*tls.Certificate]
 	inflight map[string]*certCall
 }
 
@@ -194,54 +188,57 @@ func newCertificateAuthority(cert *x509.Certificate, key crypto.Signer) *certifi
 	return &certificateAuthority{
 		cert:     cert,
 		key:      key,
-		cache:    map[string]cacheEntry{},
+		cache:    newExpiringCache[*tls.Certificate](maxCachedCerts, serverCertTTL),
 		inflight: map[string]*certCall{},
 	}
 }
 
-// getCertificate 查缓存命中即返回；未命中时同域名握手合并为一次签发。
+// getCertificate 命中缓存即返回；未命中时同域名并发握手合并为一次签发。
 // ECDSA 密钥生成与签名耗时较长，须在锁外执行，避免串行化所有域名的握手。
 func (ca *certificateAuthority) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	if hello.ServerName == "" {
+	serverName := strings.ToLower(hello.ServerName)
+	if serverName == "" {
 		return nil, errors.New("missing SNI, cannot sign certificate for domain")
 	}
-	serverName := strings.ToLower(hello.ServerName)
-	ca.mu.Lock()
-	if entry, ok := ca.cache[serverName]; ok && time.Now().Before(entry.expiresAt) {
-		ca.mu.Unlock()
-		return entry.cert, nil
+	if cert, ok := ca.cache.get(serverName); ok {
+		return cert, nil
 	}
-	if call, ok := ca.inflight[serverName]; ok {
-		ca.mu.Unlock()
-		<-call.done
-		return call.cert, call.err
+	call, leader := ca.begin(serverName)
+	if !leader {
+		return call.wait()
 	}
-	call := &certCall{done: make(chan struct{})}
-	ca.inflight[serverName] = call
-	ca.mu.Unlock()
-
 	cert, err := ca.sign(serverName)
+	if err == nil {
+		ca.cache.put(serverName, cert)
+	}
+	ca.end(serverName, call, cert, err)
+	return cert, err
+}
 
+// begin 登记一次进行中的签发，返回的第二个值表示调用方是否为首个等待者。
+// 首个等待者负责签发，其余等待者复用同一结果。
+func (ca *certificateAuthority) begin(serverName string) (*certCall, bool) {
+	ca.mu.Lock()
+	defer ca.mu.Unlock()
+	if call, ok := ca.inflight[serverName]; ok {
+		return call, false
+	}
+	call := newCertCall()
+	ca.inflight[serverName] = call
+	return call, true
+}
+
+// end 注销进行中的签发并广播结果，唤醒所有等待该域名的握手
+func (ca *certificateAuthority) end(serverName string, call *certCall, cert *tls.Certificate, err error) {
 	ca.mu.Lock()
 	delete(ca.inflight, serverName)
-	if err == nil {
-		if len(ca.cache) >= maxCachedCerts {
-			ca.cache = map[string]cacheEntry{}
-		}
-		ca.cache[serverName] = cacheEntry{cert: cert, expiresAt: time.Now().Add(serverCertTTL)}
-	}
 	ca.mu.Unlock()
-
-	call.cert, call.err = cert, err
-	close(call.done)
-	return cert, err
+	call.deliver(cert, err)
 }
 
 // clearCache 清空已签发证书缓存，热加载后调用以丢弃旧状态
 func (ca *certificateAuthority) clearCache() {
-	ca.mu.Lock()
-	ca.cache = map[string]cacheEntry{}
-	ca.mu.Unlock()
+	ca.cache.clear()
 }
 
 func (ca *certificateAuthority) sign(serverName string) (*tls.Certificate, error) {
@@ -272,16 +269,18 @@ func (ca *certificateAuthority) sign(serverName string) (*tls.Certificate, error
 	}, nil
 }
 
-type logWriter struct {
+// statusRecorder 记录响应状态码供请求日志使用，其余能力透传给底层 writer；
+// 提供 Unwrap，使包装链上的 flusher/hijacker 等接口继续可用。
+type statusRecorder struct {
 	http.ResponseWriter
 	status int
 }
 
-func (w *logWriter) WriteHeader(code int) {
+func (w *statusRecorder) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)
 }
 
-func (w *logWriter) Unwrap() http.ResponseWriter {
+func (w *statusRecorder) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }

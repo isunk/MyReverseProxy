@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -220,11 +221,11 @@ func TestLoadTable_LocalPathUpstream(t *testing.T) {
 			if !ok {
 				t.Fatalf("route not found for upstream %q", up)
 			}
-			if entry.fileRoot != up {
-				t.Fatalf("fileRoot: got %q want %q", entry.fileRoot, up)
+			if entry.target.root != up {
+				t.Fatalf("target.root: got %q want %q", entry.target.root, up)
 			}
-			if entry.target != nil {
-				t.Fatalf("target should be nil for local path %q", up)
+			if entry.target.url != nil {
+				t.Fatalf("target.url should be nil for local path %q", up)
 			}
 		})
 	}
@@ -335,6 +336,43 @@ func TestRouteTable_Fingerprint(t *testing.T) {
 	different(loaded(base), loaded(strings.Replace(base, "up-a", "up-b", 1)), "upstream change")
 	different(loaded(base), loaded(headerOnly), "header-only change")
 	same(loaded(base), loaded(base+"nameservers:\n  - \"127.0.0.1:53\"\n"), "nameservers-only change")
+}
+
+func TestRouteTable_InstallHandlers(t *testing.T) {
+	table, _, err := loadTable(writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n"+
+			"      - prefix: /\n        upstream: http://up-a:8080\n"+
+			"      - prefix: /api/\n        upstream: http://up-b:8080\n"+
+			"        headers:\n          response:\n            X-Test: \"1\"\n"+
+			"      - prefix: /files/\n        upstream: ./dist\n"))
+	if err != nil {
+		t.Fatalf("loadTable: %v", err)
+	}
+	table.installHandlers(newTransport(nil))
+
+	remote, ok := table.pick("api.example.com", "/v1")
+	if !ok || remote.handler == nil {
+		t.Fatalf("remote route must get a handler: %+v ok=%v", remote, ok)
+	}
+	if handler, ok := remote.handler.(*httputil.ReverseProxy); !ok {
+		t.Fatalf("remote route handler: got %T", remote.handler)
+	} else if handler.ModifyResponse != nil {
+		t.Fatal("route without response headers must not mount a modify hook")
+	}
+	hooked, ok := table.pick("api.example.com", "/api/x")
+	if !ok {
+		t.Fatal("/api/ prefix should match")
+	}
+	if handler, ok := hooked.handler.(*httputil.ReverseProxy); !ok || handler.ModifyResponse == nil {
+		t.Fatalf("route with response headers must mount a modify hook: %T", hooked.handler)
+	}
+	files, ok := table.pick("api.example.com", "/files/a")
+	if !ok {
+		t.Fatal("/files/ prefix should match")
+	}
+	if _, ok := files.handler.(*staticHandler); !ok {
+		t.Fatalf("local route handler: got %T", files.handler)
+	}
 }
 
 func TestHostOnly_Lowercase(t *testing.T) {

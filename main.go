@@ -17,74 +17,112 @@ import (
 	"time"
 )
 
-func main() {
-	configPath := flag.String("config", "config.yaml", "routing config file, created automatically when missing")
-	port := flag.Int("port", 4000, "listen port, HTTP and TLS detected per connection")
-	certPath := flag.String("cert", "ca.crt", "CA certificate file for MITM signing")
-	keyPath := flag.String("key", "ca.key", "CA private key file")
-	logLevel := flag.String("log", "info", "log level: debug, info, warn or error")
-	dnsTimeout := flag.Duration("dns-timeout", defaultAttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
-	dnsTTL := flag.Duration("dns-ttl", defaultDNSTTL, "ttl of cached upstream resolutions, 0 disables the cache")
-	flag.Parse()
-
-	level, err := parseLogLevel(*logLevel)
-	if err != nil {
-		fatalf("invalid log level %q: %v", *logLevel, err)
-	}
-	if *dnsTimeout <= 0 {
-		fatalf("invalid --dns-timeout %v: must be positive", *dnsTimeout)
-	}
-	if *dnsTTL < 0 {
-		fatalf("invalid --dns-ttl %v: must be zero or positive", *dnsTTL)
-	}
-	initLogging(level)
-
-	specified := map[string]bool{}
-	flag.Visit(func(f *flag.Flag) { specified[f.Name] = true })
-
-	if !specified["config"] {
-		if err := ensureConfig(*configPath); err != nil {
-			fatalf("failed to initialize routing config: %v", err)
-		}
-	}
-
-	certSet, keySet := specified["cert"], specified["key"]
-	if certSet != keySet {
-		fatalf("--cert and --key must be set together")
-	}
-
-	nameservers, err := newNameserverSet(*dnsTimeout, *dnsTTL, defaultNameservers)
-	if err != nil {
-		fatalf("failed to initialize dns nameservers: %v", err)
-	}
-
-	transport := newTransport(nameservers.DialContext)
-
-	tlsConfig, authority, err := resolveTLSConfig(*certPath, *keyPath, certSet && keySet)
-	if err != nil {
-		fatalf("TLS certificate configuration error: %v", err)
-	}
-
-	instance, err := newProxy(*configPath, transport, tlsConfig, authority, nameservers)
-	if err != nil {
-		fatalf("failed to load routing config: %v", err)
-	}
-	logInfof("dns nameservers=%s dns-ttl=%s", strings.Join(nameservers.serverAddresses(), ","), *dnsTTL)
-	run(instance, fmt.Sprintf(":%d", *port))
+// startupOptions 命令行解析结果，构建代理实例所需的全部启动参数。
+type startupOptions struct {
+	configPath      string
+	port            int
+	certPath        string
+	keyPath         string
+	logLevel        logLevel
+	dnsTimeout      time.Duration
+	dnsTTL          time.Duration
+	configSpecified bool
+	certSpecified   bool
+	keySpecified    bool
 }
 
-const maxCachedTLSSessions = 64
+// parseStartupOptions 解析并校验命令行参数，非法取值在此集中报错。
+func parseStartupOptions() (startupOptions, error) {
+	var opts startupOptions
+	levelName := ""
+	flag.StringVar(&opts.configPath, "config", "config.yaml", "routing config file, created automatically when missing")
+	flag.IntVar(&opts.port, "port", 4000, "listen port, HTTP and TLS detected per connection")
+	flag.StringVar(&opts.certPath, "cert", "ca.crt", "CA certificate file for MITM signing")
+	flag.StringVar(&opts.keyPath, "key", "ca.key", "CA private key file")
+	flag.StringVar(&levelName, "log", "info", "log level: debug, info, warn or error")
+	flag.DurationVar(&opts.dnsTimeout, "dns-timeout", defaultAttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
+	flag.DurationVar(&opts.dnsTTL, "dns-ttl", defaultDNSTTL, "ttl of cached upstream resolutions, 0 disables the cache")
+	flag.Parse()
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "config":
+			opts.configSpecified = true
+		case "cert":
+			opts.certSpecified = true
+		case "key":
+			opts.keySpecified = true
+		}
+	})
+	level, err := parseLogLevel(levelName)
+	if err != nil {
+		return opts, err
+	}
+	opts.logLevel = level
+	if opts.dnsTimeout <= 0 {
+		return opts, fmt.Errorf("invalid --dns-timeout %v: must be positive", opts.dnsTimeout)
+	}
+	if opts.dnsTTL < 0 {
+		return opts, fmt.Errorf("invalid --dns-ttl %v: must be zero or positive", opts.dnsTTL)
+	}
+	return opts, nil
+}
 
+// buildProxy 组装代理实例：初始化配置与 DNS 服务器、构建上游连接池与路由表。
+func buildProxy(opts startupOptions) (*proxy, error) {
+	if !opts.configSpecified {
+		if err := ensureConfig(opts.configPath); err != nil {
+			return nil, fmt.Errorf("initialize routing config: %w", err)
+		}
+	}
+	if opts.certSpecified != opts.keySpecified {
+		return nil, errors.New("--cert and --key must be set together")
+	}
+	nameservers, err := newNameserverSet(opts.dnsTimeout, opts.dnsTTL, defaultNameservers)
+	if err != nil {
+		return nil, fmt.Errorf("initialize dns nameservers: %w", err)
+	}
+	logInfof("dns nameservers=%s dns-ttl=%s", strings.Join(nameservers.serverAddresses(), ","), opts.dnsTTL)
+	transport := newTransport(nameservers.DialContext)
+	tlsConfig, authority, err := resolveTLSConfig(opts.certPath, opts.keyPath, opts.certSpecified)
+	if err != nil {
+		return nil, fmt.Errorf("tls certificate configuration: %w", err)
+	}
+	return newProxy(opts.configPath, transport, tlsConfig, authority, nameservers)
+}
+
+func main() {
+	opts, err := parseStartupOptions()
+	if err != nil {
+		fatalf("invalid flags: %v", err)
+	}
+	initLogging(opts.logLevel)
+	proxy, err := buildProxy(opts)
+	if err != nil {
+		fatalf("startup failed: %v", err)
+	}
+	run(proxy, fmt.Sprintf(":%d", opts.port))
+}
+
+const (
+	maxCachedTLSSessions   = 64
+	responseHeaderTimeout  = 30 * time.Second
+	maxIdleConnections     = 256
+	maxIdleConnectionsHost = 64
+	transportBufferSize    = 32 << 10
+)
+
+// newTransport 构建上游连接池：关闭环境代理防回环、放宽同主机连接复用，
+// 并开启 TLS 会话复用，避免每条新上游连接重跑完整握手。
 func newTransport(dialContext func(context.Context, string, string) (net.Conn, error)) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil // 禁用环境代理，避免代理流量经上游代理回环到自身
 	transport.DialContext = dialContext
-	transport.ResponseHeaderTimeout = 30 * time.Second
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
 	// 默认 MaxIdleConnsPerHost=2，代理到同一上游的并发请求会频繁重建连接（TCP+TLS 握手）
-	transport.MaxIdleConns = 256
-	transport.MaxIdleConnsPerHost = 64
-	transport.ReadBufferSize = 32 << 10
-	transport.WriteBufferSize = 32 << 10
+	transport.MaxIdleConns = maxIdleConnections
+	transport.MaxIdleConnsPerHost = maxIdleConnectionsHost
+	transport.ReadBufferSize = transportBufferSize
+	transport.WriteBufferSize = transportBufferSize
 	// ClientSessionCache 为 nil 时 Go 禁用会话复用，每次新上游连接都要走完整 TLS 握手
 	transport.TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true, // mrp 位于设备与上游之间，上游证书校验交由设备端完成

@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -32,7 +31,7 @@ type nameserverSet struct {
 	dnsTTL         time.Duration
 	udpDialer      *net.Dialer
 	tcpDialer      *net.Dialer
-	cache          *dnsCache
+	cache          *expiringCache[[]string]
 }
 
 type nameserverState struct {
@@ -50,9 +49,9 @@ func newNameserverSet(attemptTimeout, dnsTTL time.Duration, entries []string) (*
 		dnsTTL:         dnsTTL,
 		udpDialer:      &net.Dialer{Timeout: dialerTimeout},
 		tcpDialer:      &net.Dialer{Timeout: dialerTimeout, KeepAlive: dialKeepAlive},
-		cache:          newDNSCache(),
+		cache:          newExpiringCache[[]string](maxCachedDNS, dnsTTL),
 	}
-	set.current.Store(&nameserverState{addresses: addresses, resolvers: buildResolvers(set, addresses)})
+	set.current.Store(&nameserverState{addresses: addresses, resolvers: set.buildResolvers(addresses)})
 	return set, nil
 }
 
@@ -65,8 +64,7 @@ func (s *nameserverSet) update(entries []string) error {
 	if slices.Equal(current.addresses, addresses) {
 		return nil
 	}
-	next := &nameserverState{addresses: addresses, resolvers: buildResolvers(s, addresses)}
-	s.current.Store(next)
+	s.current.Store(&nameserverState{addresses: addresses, resolvers: s.buildResolvers(addresses)})
 	s.cache.clear()
 	logInfof("dns nameservers=%s", strings.Join(addresses, ","))
 	return nil
@@ -88,17 +86,18 @@ func (s *nameserverSet) DialContext(ctx context.Context, network, address string
 	return s.dialHost(ctx, network, host, port)
 }
 
+// dialHost 先取缓存的解析结果，未命中才发 DNS 查询，再逐个尝试解析出的地址。
 func (s *nameserverSet) dialHost(ctx context.Context, network, host, port string) (net.Conn, error) {
-	targets, cached, err := s.lookup(ctx, host, port)
+	targets, fromCache, err := s.lookup(ctx, host, port)
 	if err != nil {
 		return nil, err
 	}
 	conn, lastError := s.connectAny(ctx, network, targets)
-	if conn != nil || !cached {
+	if conn != nil || !fromCache {
 		return conn, lastError
 	}
-	// 缓存的地址已连不上：视为解析结果过期，清掉后重新解析一次
-	s.cache.evict(net.JoinHostPort(host, port))
+	// 缓存的地址已连不上：视为解析结果过期，丢弃后立即重解析一次
+	s.dropCached(host, port)
 	fresh, _, err := s.lookup(ctx, host, port)
 	if err != nil {
 		return nil, err
@@ -122,12 +121,9 @@ func (s *nameserverSet) connect(ctx context.Context, network, address string) (n
 	return s.tcpDialer.DialContext(ctx, network, address)
 }
 
-// lookup 命中未过期缓存即返回，否则向配置的 DNS 服务器查询并写入缓存。
+// lookup 命中未过期缓存即返回；否则向配置的 DNS 服务器查询并写入缓存。
+// 第二个返回值标记本次结果来自缓存，调用方据此决定是否重试解析。
 func (s *nameserverSet) lookup(ctx context.Context, host, port string) ([]string, bool, error) {
-	if s.dnsTTL <= 0 {
-		targets, err := s.resolve(ctx, host, port)
-		return targets, false, err
-	}
 	key := net.JoinHostPort(host, port)
 	if targets, ok := s.cache.get(key); ok {
 		return targets, true, nil
@@ -136,8 +132,13 @@ func (s *nameserverSet) lookup(ctx context.Context, host, port string) ([]string
 	if err != nil {
 		return nil, false, err
 	}
-	s.cache.put(key, targets, s.dnsTTL)
+	s.cache.put(key, targets)
 	return targets, false, nil
+}
+
+// dropCached 丢弃缓存的解析结果，缓存地址全部连不上时调用以触发立即重解析。
+func (s *nameserverSet) dropCached(host, port string) {
+	s.cache.evict(net.JoinHostPort(host, port))
 }
 
 // resolve 按配置顺序尝试 DNS 服务器，单次尝试超时后切换下一台。
@@ -178,72 +179,20 @@ func (s *nameserverSet) clearCache() {
 	s.cache.clear()
 }
 
-func buildResolvers(set *nameserverSet, addresses []string) []*net.Resolver {
+// buildResolvers 按地址构建解析器，每台 DNS 服务器一台，供 resolve 依次尝试。
+func (s *nameserverSet) buildResolvers(addresses []string) []*net.Resolver {
 	resolvers := make([]*net.Resolver, len(addresses))
 	for i, address := range addresses {
-		resolvers[i] = &net.Resolver{PreferGo: true, Dial: set.dialServer(address)}
+		resolvers[i] = &net.Resolver{PreferGo: true, Dial: s.dialServer(address)}
 	}
 	return resolvers
 }
 
+// dialServer 固定拨向指定 DNS 服务器，忽略系统 resolv.conf 给出的服务器地址。
 func (s *nameserverSet) dialServer(address string) func(context.Context, string, string) (net.Conn, error) {
-	// 忽略系统 resolv.conf 给出的服务器地址，固定拨向本 DNS 服务器。
 	return func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return s.udpDialer.DialContext(ctx, network, address)
 	}
-}
-
-// dnsCache 按主机:端口缓存解析出的地址，条目过期时惰性清除。
-type dnsCache struct {
-	mu      sync.Mutex
-	entries map[string]dnsEntry
-}
-
-type dnsEntry struct {
-	targets   []string
-	expiresAt time.Time
-}
-
-func newDNSCache() *dnsCache {
-	return &dnsCache{entries: map[string]dnsEntry{}}
-}
-
-func (c *dnsCache) get(key string) ([]string, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	entry, ok := c.entries[key]
-	if !ok || !time.Now().Before(entry.expiresAt) {
-		delete(c.entries, key)
-		return nil, false
-	}
-	return entry.targets, true
-}
-
-func (c *dnsCache) put(key string, targets []string, ttl time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.entries) >= maxCachedDNS {
-		c.entries = map[string]dnsEntry{}
-	}
-	c.entries[key] = dnsEntry{targets: targets, expiresAt: time.Now().Add(ttl)}
-}
-
-func (c *dnsCache) evict(key string) {
-	c.mu.Lock()
-	delete(c.entries, key)
-	c.mu.Unlock()
-}
-
-func (c *dnsCache) clear() {
-	c.mu.Lock()
-	c.entries = map[string]dnsEntry{}
-	c.mu.Unlock()
-}
-
-func (c *dnsCache) size() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.entries)
 }
 
 func normalizeNameservers(entries []string) ([]string, error) {

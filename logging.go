@@ -75,9 +75,8 @@ func (l logLevel) String() string {
 		return "WARN"
 	case logError:
 		return "ERROR"
-	default:
-		return "INFO"
 	}
+	return "UNKNOWN"
 }
 
 func levelColor(level logLevel) string {
