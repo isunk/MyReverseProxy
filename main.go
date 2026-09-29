@@ -24,6 +24,7 @@ func main() {
 	keyPath := flag.String("key", "ca.key", "CA private key file")
 	logLevel := flag.String("log", "info", "log level: debug, info, warn or error")
 	dnsTimeout := flag.Duration("dns-timeout", defaultAttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
+	dnsTTL := flag.Duration("dns-ttl", defaultDNSTTL, "ttl of cached upstream resolutions, 0 disables the cache")
 	flag.Parse()
 
 	level, err := parseLogLevel(*logLevel)
@@ -32,6 +33,9 @@ func main() {
 	}
 	if *dnsTimeout <= 0 {
 		fatalf("invalid --dns-timeout %v: must be positive", *dnsTimeout)
+	}
+	if *dnsTTL < 0 {
+		fatalf("invalid --dns-ttl %v: must be zero or positive", *dnsTTL)
 	}
 	initLogging(level)
 
@@ -49,7 +53,7 @@ func main() {
 		fatalf("--cert and --key must be set together")
 	}
 
-	nameservers, err := newNameserverSet(*dnsTimeout, defaultNameservers)
+	nameservers, err := newNameserverSet(*dnsTimeout, *dnsTTL, defaultNameservers)
 	if err != nil {
 		fatalf("failed to initialize dns nameservers: %v", err)
 	}
@@ -65,7 +69,7 @@ func main() {
 	if err != nil {
 		fatalf("failed to load routing config: %v", err)
 	}
-	logInfof("dns nameservers=%s", strings.Join(nameservers.serverAddresses(), ","))
+	logInfof("dns nameservers=%s dns-ttl=%s", strings.Join(nameservers.serverAddresses(), ","), *dnsTTL)
 	run(instance, fmt.Sprintf(":%d", *port))
 }
 

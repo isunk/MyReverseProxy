@@ -98,12 +98,13 @@ func startProxyWithNameservers(t *testing.T, configPath string, tlsConfig *tls.C
 
 func testNameservers(t *testing.T, entries ...string) *nameserverSet {
 	t.Helper()
-	return testNameserversWithTimeout(t, defaultAttemptTimeout, entries)
+	return testNameserversWithTimeout(t, defaultAttemptTimeout, defaultDNSTTL, entries)
 }
 
-func testNameserversWithTimeout(t *testing.T, timeout time.Duration, entries []string) *nameserverSet {
+// testNameserversWithTimeout 显式指定单次尝试超时与 DNS 缓存 TTL，TTL 为 0 时禁用缓存
+func testNameserversWithTimeout(t *testing.T, attemptTimeout, dnsTTL time.Duration, entries []string) *nameserverSet {
 	t.Helper()
-	servers, err := newNameserverSet(timeout, entries)
+	servers, err := newNameserverSet(attemptTimeout, dnsTTL, entries)
 	if err != nil {
 		t.Fatalf("newNameserverSet: %v", err)
 	}
@@ -769,6 +770,65 @@ func TestReload_UnchangedConfigKeepsIdleConnections(t *testing.T) {
 	}
 }
 
+// 路由变更后清掉解析缓存；仅改注释不触发
+func TestReload_ClearsDNSCache(t *testing.T) {
+	up := recordingServer(t, "upstream")
+	_, port, _ := net.SplitHostPort(up.Listener.Addr().String())
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	config := "servers:\n" +
+		"  - domain: api.example.com\n" +
+		"    routes:\n" +
+		"      - prefix: /\n" +
+		"        upstream: http://api.mrp.local:" + port + "\n" +
+		"nameservers:\n" +
+		"  - \"" + stub.address() + "\"\n"
+	servers := testNameservers(t)
+	path := writeConfigFile(t, "r.yaml", config)
+	p, err := newProxy(path, newTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("newProxy: %v", err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() { _ = serve(listener, nil, p) }()
+	client := proxyClient("http://" + listener.Addr().String())
+
+	getOnce(t, client, "http://api.example.com/one", "upstream:/one")
+	if got := servers.cache.size(); got != 1 {
+		t.Fatalf("cached entries after first request = %d, want 1", got)
+	}
+	if got := stub.queryCount(); got != 2 {
+		t.Fatalf("queries after first request = %d, want 2", got)
+	}
+	// 仅改注释：不重建路由，也不清解析缓存
+	if err := os.WriteFile(path, []byte("# comment only\n"+config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.reload(); err != nil {
+		t.Fatalf("reload comment-only change: %v", err)
+	}
+	if got := servers.cache.size(); got != 1 {
+		t.Fatalf("cached entries after comment-only reload = %d, want 1", got)
+	}
+	// 改上游地址：必须丢弃旧解析结果
+	if err := os.WriteFile(path, []byte(strings.Replace(config, "api.mrp.local", "api2.mrp.local", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.reload(); err != nil {
+		t.Fatalf("reload upstream change: %v", err)
+	}
+	if got := servers.cache.size(); got != 0 {
+		t.Fatalf("cached entries after upstream change = %d, want 0", got)
+	}
+	getOnce(t, client, "http://api.example.com/two", "upstream:/two")
+	if got := stub.queryCount(); got != 4 {
+		t.Fatalf("queries after upstream change = %d, want 4", got)
+	}
+}
+
 func TestEnsureConfig_CreatesMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := ensureConfig(path); err != nil {
@@ -1292,7 +1352,7 @@ func TestNameserverSet_AttemptTimeout(t *testing.T) {
 	echo := echoServer(t)
 	_, port, _ := net.SplitHostPort(echo)
 	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
-	servers := testNameserversWithTimeout(t, 50*time.Millisecond,
+	servers := testNameserversWithTimeout(t, 50*time.Millisecond, defaultDNSTTL,
 		[]string{"127.0.0.1:" + silentUDPPort(t), stub.address()})
 	started := time.Now()
 	conn, err := servers.DialContext(context.Background(), "tcp", "echo.mrp.local:"+port)
@@ -1306,6 +1366,102 @@ func TestNameserverSet_AttemptTimeout(t *testing.T) {
 	}
 	if elapsed > time.Second {
 		t.Fatalf("failover took %v, per-nameserver attempt timeout not applied", elapsed)
+	}
+}
+
+// 首次连接解析并缓存，同主机:端口的后续连接直接复用解析结果
+func TestNameserverSet_CachesResolution(t *testing.T) {
+	echo := echoServer(t)
+	_, port, _ := net.SplitHostPort(echo)
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	servers := testNameservers(t, stub.address())
+	for i := 0; i < 3; i++ {
+		conn, err := servers.DialContext(context.Background(), "tcp", "up.example.com:"+port)
+		if err != nil {
+			t.Fatalf("dial %d: %v", i+1, err)
+		}
+		conn.Close()
+	}
+	if got := stub.queryCount(); got != 2 {
+		t.Fatalf("dns queries for 3 dials = %d, want 2 (one lookup then cache hits)", got)
+	}
+}
+
+func TestNameserverSet_CacheTTLExpires(t *testing.T) {
+	echo := echoServer(t)
+	_, port, _ := net.SplitHostPort(echo)
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	servers := testNameserversWithTimeout(t, defaultAttemptTimeout, 20*time.Millisecond, []string{stub.address()})
+	dial := func() {
+		conn, err := servers.DialContext(context.Background(), "tcp", "up.example.com:"+port)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		conn.Close()
+	}
+	dial()
+	if got := stub.queryCount(); got != 2 {
+		t.Fatalf("queries before expiry = %d, want 2", got)
+	}
+	time.Sleep(50 * time.Millisecond)
+	dial()
+	if got := stub.queryCount(); got != 4 {
+		t.Fatalf("queries after ttl expiry = %d, want 4", got)
+	}
+}
+
+// TTL 为 0 时禁用缓存，每次连接都重新解析
+func TestNameserverSet_CacheDisabled(t *testing.T) {
+	echo := echoServer(t)
+	_, port, _ := net.SplitHostPort(echo)
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	servers := testNameserversWithTimeout(t, defaultAttemptTimeout, 0, []string{stub.address()})
+	for i := 0; i < 2; i++ {
+		conn, err := servers.DialContext(context.Background(), "tcp", "up.example.com:"+port)
+		if err != nil {
+			t.Fatalf("dial %d: %v", i+1, err)
+		}
+		conn.Close()
+	}
+	if got := stub.queryCount(); got != 4 {
+		t.Fatalf("queries with cache disabled = %d, want 4", got)
+	}
+	if got := servers.cache.size(); got != 0 {
+		t.Fatalf("cached entries with cache disabled = %d, want 0", got)
+	}
+}
+
+// 缓存的地址连不上时立即重解析，不等 TTL 过期
+func TestNameserverSet_StaleCacheRetries(t *testing.T) {
+	echo := echoServer(t)
+	_, port, _ := net.SplitHostPort(echo)
+	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.2")}})
+	servers := testNameservers(t, stub.address())
+	if _, err := servers.DialContext(context.Background(), "tcp", "up.example.com:"+port); err == nil {
+		t.Fatal("dial to an unreachable address should fail")
+	}
+	if got := stub.queryCount(); got != 2 {
+		t.Fatalf("queries after first dial = %d, want 2", got)
+	}
+	stub.setRecords(map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	conn, err := servers.DialContext(context.Background(), "tcp", "up.example.com:"+port)
+	if err != nil {
+		t.Fatalf("dial after upstream moved: %v", err)
+	}
+	payload := []byte("ping")
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	echoed := make([]byte, len(payload))
+	if _, err := io.ReadFull(conn, echoed); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	_ = conn.Close()
+	if !bytes.Equal(echoed, payload) {
+		t.Fatalf("echo = %q, want %q", echoed, payload)
+	}
+	if got := stub.queryCount(); got != 4 {
+		t.Fatalf("stale cached address was not evicted and re-resolved, queries = %d", got)
 	}
 }
 
@@ -1391,17 +1547,29 @@ func silentUDPPort(t *testing.T) string {
 
 type dnsStub struct {
 	listener *net.UDPConn
+	mu       sync.Mutex
 	records  map[uint16][]net.IP
+	ttl      uint16
 	queries  atomic.Int32
 }
 
+func (s *dnsStub) setRecords(records map[uint16][]net.IP) {
+	s.mu.Lock()
+	s.records = records
+	s.mu.Unlock()
+}
+
 func startDNSStub(t *testing.T, records map[uint16][]net.IP) *dnsStub {
+	return startDNSStubWithTTL(t, records, 0)
+}
+
+func startDNSStubWithTTL(t *testing.T, records map[uint16][]net.IP, ttl uint16) *dnsStub {
 	t.Helper()
 	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen udp: %v", err)
 	}
-	stub := &dnsStub{listener: listener.(*net.UDPConn), records: records}
+	stub := &dnsStub{listener: listener.(*net.UDPConn), records: records, ttl: ttl}
 	t.Cleanup(func() { _ = stub.listener.Close() })
 	go stub.serve()
 	return stub
@@ -1426,8 +1594,11 @@ func (s *dnsStub) serve() {
 		if !ok {
 			continue
 		}
+		s.mu.Lock()
+		reply := dnsReply(id, name, qtype, s.records[qtype], s.ttl)
+		s.mu.Unlock()
 		s.queries.Add(1)
-		_, _ = s.listener.WriteTo(dnsReply(id, name, qtype, s.records[qtype]), remote)
+		_, _ = s.listener.WriteTo(reply, remote)
 	}
 }
 
@@ -1462,7 +1633,7 @@ func parseDNSQuestion(data []byte) (uint16, string, uint16, bool) {
 	return id, strings.TrimPrefix(name, "."), binary.BigEndian.Uint16(data[offset : offset+2]), true
 }
 
-func dnsReply(id uint16, name string, qtype uint16, records []net.IP) []byte {
+func dnsReply(id uint16, name string, qtype uint16, records []net.IP, ttl uint16) []byte {
 	header := make([]byte, 12)
 	binary.BigEndian.PutUint16(header[0:2], id)
 	binary.BigEndian.PutUint16(header[2:4], 0x8180)
@@ -1472,7 +1643,7 @@ func dnsReply(id uint16, name string, qtype uint16, records []net.IP) []byte {
 	binary.BigEndian.PutUint16(header[10:12], 0)
 	reply := append(header, dnsQuestion(name, qtype)...)
 	for _, record := range records {
-		reply = append(reply, dnsAnswer(qtype, record)...)
+		reply = append(reply, dnsAnswer(qtype, record, ttl)...)
 	}
 	return reply
 }
@@ -1493,11 +1664,12 @@ func dnsQuestion(name string, qtype uint16) []byte {
 	return append(question, tail...)
 }
 
-func dnsAnswer(qtype uint16, address net.IP) []byte {
+func dnsAnswer(qtype uint16, address net.IP, ttl uint16) []byte {
 	answer := make([]byte, 12)
 	binary.BigEndian.PutUint16(answer[0:2], 0xc00c)
 	binary.BigEndian.PutUint16(answer[2:4], qtype)
 	binary.BigEndian.PutUint16(answer[4:6], 1)
+	binary.BigEndian.PutUint16(answer[6:8], ttl)
 	rdata := address.To16()
 	if v4 := address.To4(); v4 != nil {
 		rdata = v4
@@ -1541,6 +1713,24 @@ func mustURL(s string) *url.URL {
 	return u
 }
 
+// syncBuffer 供 os/exec 的管道拷贝 goroutine 写入、测试主 goroutine 读取
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // TestE2E_ConfigNameserversTakeEffect 用真实 mrp 二进制验证配置文件里的 nameservers 字段驱动上游解析
 func TestE2E_ConfigNameserversTakeEffect(t *testing.T) {
 	binary, err := exec.LookPath("./mrp")
@@ -1560,7 +1750,7 @@ func TestE2E_ConfigNameserversTakeEffect(t *testing.T) {
 	caCert, caKey := testAuthorityCA(t)
 	certPath, keyPath := writeCertFiles(t, caCert, caKey)
 
-	var logs bytes.Buffer
+	var logs syncBuffer
 	cmd := exec.Command(binary, "--config", configPath, "--port", listenPort, "--cert", certPath, "--key", keyPath, "--log", "debug")
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs

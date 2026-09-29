@@ -87,8 +87,9 @@ func (p *proxy) reload() error {
 		}
 		p.table.Store(table)
 	}
-	// 丢弃旧路由的存量派生缓存：空闲上游连接指向旧目标或旧 DNS 解析，已签发证书需重新签发
+	// 丢弃旧路由的存量派生缓存：空闲上游连接与已解析地址指向旧目标，已签发证书需重新签发
 	p.transport.CloseIdleConnections()
+	p.nameservers.clearCache()
 	if p.authority != nil {
 		p.authority.clearCache()
 	}

@@ -126,11 +126,11 @@ servers:
 | `routes[].host` | 可选，改写转发时的 Host 头 |
 | `routes[].headers.request` | 可选，改写发往上游的请求头（Set 语义，覆盖同名已有值） |
 | `routes[].headers.response` | 可选，覆盖下游返回的响应头（如跨域校验头 `Access-Control-Allow-*`） |
-| `nameservers` | 顶层字段，上游域名解析用的 DNS 服务器列表；支持裸 IP（默认 53 端口）与 `host:port`、`[::1]:5353` 写法，按顺序故障切换，单次尝试超时由 `--dns-timeout` 控制。缺省 `114.114.114.114` 与 `8.8.8.8` |
+| `nameservers` | 顶层字段，上游域名解析用的 DNS 服务器列表；支持裸 IP（默认 53 端口）与 `host:port`、`[::1]:5353` 写法，按顺序故障切换，单次尝试超时由 `--dns-timeout` 控制。解析结果按 `host:port` 缓存 `--dns-ttl` 时长，避免每条新上游连接重复发查询；`nameservers` 或路由变更时缓存整体清空。缺省 `114.114.114.114` 与 `8.8.8.8` |
 
 Android / HarmonyOS 设备上的 `/etc/resolv.conf` 常把 nameserver 指向 `[::1]` 或网关等非标准地址（解析交给 netd 等守护进程完成），mrp 自带的 Go DNS 解析器读不到有效服务器时上游域名会解析失败，报 `read udp ...->[::1]:53: connection refused`。因此设备部署时必须显式配置 `nameservers`。
 
-未匹配的域名透传原目标。修改 `config.yaml` 后自动热加载，无需重启；只有路由或 `nameservers` 真正变化时才重建转发与拆掉旧的上游连接，改注释不会打断已有连接。
+未匹配的域名透传原目标。修改 `config.yaml` 后自动热加载，无需重启；只有路由或 `nameservers` 真正变化时才重建转发、拆掉旧的上游连接并清空 DNS 解析缓存，改注释不会打断已有连接。
 
 ### 4. 启动服务
 
@@ -166,6 +166,7 @@ Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.bat` 
 | `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书/私钥，成对提供；mrp 按客户端 SNI 动态签发服务端证书；缺省时仅支持 HTTP 与 CONNECT 隧道 |
 | `--log` | `info` | debug / info / warn / error |
 | `--dns-timeout` | `1s` | 单个 DNS 服务器的解析尝试超时，超时后切到下一个 `nameservers` |
+| `--dns-ttl` | `30s` | 上游 `host:port` 解析结果的缓存时长，`0` 关闭缓存改为每次连接都解析 |
 
 ### 5. 测试验证
 
