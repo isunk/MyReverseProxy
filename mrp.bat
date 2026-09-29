@@ -267,8 +267,8 @@ exit /b
 
 REM Device status lazy probe: file / process / proxy
 :probeDevState
-!DEV_TOOL! shell test -f !DEV_REMOTE!/!DEV_BIN! >nul 2>&1
-if "!errorlevel!"=="0" set "DEV_FILE_DESC=Ready"
+call :devTestFile !DEV_REMOTE!/!DEV_BIN!
+if "!DEV_FILE_FOUND!"=="1" set "DEV_FILE_DESC=Ready"
 call :devPid
 if defined PIDS set "DEV_RUN_DESC=Running"
 if /i not "!DEV_TOOL!"=="adb" exit /b
@@ -437,14 +437,22 @@ if "!DEV_TOOL!"=="adb" (
     copy /y "%WORKDIR%\%CRT%" "%TEMP%\!HASH!.0" >nul
     !DEV_TOOL! file send "%TEMP%\!HASH!.0" !DEV_CERTS!
 )
-!DEV_TOOL! shell test -f !DEV_CERTS!/!HASH!.0 >nul 2>&1
-if "!errorlevel!"=="0" (echo CA installed as !DEV_CERTS!/!HASH!.0.) else (echo Warning: cert install may have failed; ensure the device is rooted or in developer mode.)
+call :devTestFile !DEV_CERTS!/!HASH!.0
+if "!DEV_FILE_FOUND!"=="1" (echo CA installed as !DEV_CERTS!/!HASH!.0.) else (echo Warning: cert install may have failed; ensure the device is rooted or in developer mode.)
 exit /b
 
 REM Capture device pidof output into PIDS (empty when mrp is not running)
 :devPid
 set "PIDS="
 for /f "delims=" %%i in ('!DEV_TOOL! shell pidof !DEV_BIN! 2^>nul') do set "PIDS=%%i"
+exit /b
+
+REM Test if a remote file exists - sets DEV_FILE_FOUND=1 when present. %1 = remote path
+:devTestFile
+set "DEV_FILE_FOUND=0"
+set "DEV_FILE_OUT="
+for /f "delims=" %%i in ('!DEV_TOOL! shell ls %1 2^>nul') do set "DEV_FILE_OUT=%%i"
+if defined DEV_FILE_OUT set "DEV_FILE_FOUND=1"
 exit /b
 
 REM Start mrp on device - new window keeps logs; skip only if confirmed running
