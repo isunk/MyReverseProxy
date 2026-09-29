@@ -1,25 +1,17 @@
 @echo off
-REM chcp 65001 è‹¥åœ¨æœ¬è¿›ç¨‹ä¸­é€”æ‰§è¡Œä¼šè®© cmd è§£æå™¨å­—èŠ‚åç§»é”™ä½ï¼ˆUTF-8 è¡Œè¢«æˆªæ–­ï¼‰ï¼Œ
-REM æ•…åœ¨çˆ¶è¿›ç¨‹åˆ‡ç é¡µåé‡æ–°æ‹‰èµ·è‡ªèº«ï¼Œä»¤æ•´ä»½è„šæœ¬å§‹ç»ˆä»¥ UTF-8 ä»å¤´è§£æã€‚
-if defined MRP_UTF8 goto :mrpRun
 chcp 65001 >nul
-set "MRP_UTF8=1"
-call "%~f0" %*
-exit /b
-
-:mrpRun
 setlocal enabledelayedexpansion
-title mrp éƒ¨ç½²
+title mrp ²¿Êğ
 
 REM ============================================================
-REM  mrp ä¸€é”®éƒ¨ç½²è„šæœ¬
-REM  ä¸¤çº§èœå•ï¼šå…ˆé€‰éƒ¨ç½²ç›®æ ‡ï¼ˆWindows / Android / HarmonyOSï¼‰ï¼Œ
-REM  å†é€‰ä¸€é”®éƒ¨ç½²æˆ–åœæ­¢ã€‚
-REM  CA è¯ä¹¦ä¸ç§é’¥åœ¨é¦–æ¬¡éƒ¨ç½²æ—¶æœ¬åœ°ç”Ÿæˆï¼ˆä¸å†…ç½®ã€ä¸æäº¤ï¼‰ï¼Œ
-REM  æ¯ä¸ªç”¨æˆ·ç‹¬ç«‹æŒæœ‰ï¼Œé¿å…å…±äº«ç§é’¥ç ´å MITM ä¿¡ä»»æ¨¡å‹ã€‚
+REM  mrp Ò»¼ü²¿Êğ½Å±¾
+REM  Á½¼¶²Ëµ¥£ºÏÈÑ¡²¿ÊğÄ¿±ê£¨Windows / Android / HarmonyOS£©£¬
+REM  ÔÙÑ¡Ò»¼ü²¿Êğ»òÍ£Ö¹¡£
+REM  CA Ö¤ÊéÓëË½Ô¿ÔÚÊ×´Î²¿ÊğÊ±±¾µØÉú³É£¨²»ÄÚÖÃ¡¢²»Ìá½»£©£¬
+REM  Ã¿¸öÓÃ»§¶ÀÁ¢³ÖÓĞ£¬±ÜÃâ¹²ÏíË½Ô¿ÆÆ»µ MITM ĞÅÈÎÄ£ĞÍ¡£
 REM ============================================================
 
-:: é…ç½®å¸¸é‡ï¼ˆæ”¹è¿™é‡Œå³å¯æ”¹é»˜è®¤å€¼ï¼‰
+:: ÅäÖÃ³£Á¿£¨¸ÄÕâÀï¼´¿É¸ÄÄ¬ÈÏÖµ£©
 set "WORKDIR=%~dp0"
 set "EXE=mrp-windows-amd64.exe"
 set "CRT=ca.crt"
@@ -29,7 +21,7 @@ set "CN=DeviceProxy CA"
 set "DEV_BIN=mrp-linux-arm64"
 set "DEV_CFG=config.yaml"
 
-:: ææƒåˆ†å‘ï¼šææƒå®ä¾‹å¸¦ä¸€ä¸ªå­ç¨‹åºåå‚æ•°ï¼Œæ‰§è¡Œåæš‚åœå±•ç¤ºç»“æœå†é€€å‡º
+:: ÌáÈ¨·Ö·¢£ºÌáÈ¨ÊµÀı´øÒ»¸ö×Ó³ÌĞòÃû²ÎÊı£¬Ö´ĞĞºóÔİÍ£Õ¹Ê¾½á¹ûÔÙÍË³ö
 if not "%~1"=="" (
     call :%~1
     echo.
@@ -38,7 +30,7 @@ if not "%~1"=="" (
 )
 
 :: ============================================================
-:: ä¸»å¾ªç¯ï¼šæ¢æµ‹è®¾å¤‡å·¥å…·å¯ç”¨æ€§åæ¸²æŸ“ä¸»èœå•
+:: Ö÷Ñ­»·£ºÌ½²âÉè±¸¹¤¾ß¿ÉÓÃĞÔºóäÖÈ¾Ö÷²Ëµ¥
 :: ============================================================
 :main
 set "TOOL=adb"
@@ -52,21 +44,21 @@ if "!QUIT!"=="1" goto :end
 goto :main
 
 :: ============================================================
-:: ä¸»èœå•ï¼šé€‰æ‹©éƒ¨ç½²ç›®æ ‡
+:: Ö÷²Ëµ¥£ºÑ¡Ôñ²¿ÊğÄ¿±ê
 :: ============================================================
 :mainMenu
 cls
 echo ==============================
-echo     mrp éƒ¨ç½²
+echo     mrp ²¿Êğ
 echo ==============================
 echo [1] Windows
 echo [2] Android       !ANDROID_DESC!
 echo [3] HarmonyOS     !HARMONY_DESC!
 echo ------------------------------
-echo [0] é€€å‡º
+echo [0] ÍË³ö
 set "QUIT="
 set "CHOICE="
-set /p "CHOICE=è¯·é€‰æ‹© [0-3]: "
+set /p "CHOICE=ÇëÑ¡Ôñ [0-3]: "
 if "!CHOICE!"=="0" set "QUIT=1"
 if "!CHOICE!"=="1" call :subWindows
 if "!CHOICE!"=="2" call :subAndroid
@@ -74,107 +66,107 @@ if "!CHOICE!"=="3" call :subHarmony
 exit /b
 
 :: ============================================================
-:: è®¾å¤‡å·¥å…·æ¢æµ‹ï¼š!TOOL! æ˜¯å¦å®‰è£…ä¸”æœ‰å·²è¿æ¥è®¾å¤‡
-::   è¾“å‡º TOOL_READYï¼ˆ0/1ï¼‰ã€TOOL_DESCï¼ˆå®‰è£…/è¿æ¥æè¿°ï¼‰
+:: Éè±¸¹¤¾ßÌ½²â£º!TOOL! ÊÇ·ñ°²×°ÇÒÓĞÒÑÁ¬½ÓÉè±¸
+::   Êä³ö TOOL_READY£¨0/1£©¡¢TOOL_DESC£¨°²×°/Á¬½ÓÃèÊö£©
 :: ============================================================
 :probeDevReady
 set "TOOL_READY=0"
-set "TOOL_DESC=æœªå®‰è£…"
+set "TOOL_DESC=Î´°²×°"
 where !TOOL! >nul 2>&1
 if not "!errorlevel!"=="0" exit /b
-set "TOOL_DESC=å·²å®‰è£…ï¼Œæœªè¿æ¥è®¾å¤‡"
+set "TOOL_DESC=ÒÑ°²×°£¬Î´Á¬½ÓÉè±¸"
 if /i "!TOOL!"=="adb" (
     for /f "skip=1 tokens=2" %%i in ('adb devices 2^>nul') do if "!TOOL_READY!"=="0" if "%%i"=="device" set "TOOL_READY=1"
 ) else (
     for /f "tokens=1" %%i in ('hdc list targets 2^>nul') do if "!TOOL_READY!"=="0" if not "%%i"=="[Empty]" if not "%%i"=="Connect" set "TOOL_READY=1"
 )
-if "!TOOL_READY!"=="1" set "TOOL_DESC=å·²è¿æ¥è®¾å¤‡"
+if "!TOOL_READY!"=="1" set "TOOL_DESC=ÒÑÁ¬½ÓÉè±¸"
 exit /b
 
 :: ============================================================
-:: Windows å­èœå•
+:: Windows ×Ó²Ëµ¥
 :: ============================================================
 :subWindows
 :winLoop
 call :probeWin
 cls
 echo ==============================
-echo     Windows éƒ¨ç½²
+echo     Windows ²¿Êğ
 echo ==============================
-echo [A] æ–‡ä»¶å°±ä½      !A_DESC!
-echo [B] CA è¯ä¹¦       !B_DESC!
-echo [C] mrp è¿›ç¨‹      !C_DESC!
-echo [D] ç³»ç»Ÿä»£ç†      !D_DESC!
+echo [A] ÎÄ¼ş¾ÍÎ»      !A_DESC!
+echo [B] CA Ö¤Êé       !B_DESC!
+echo [C] mrp ½ø³Ì      !C_DESC!
+echo [D] ÏµÍ³´úÀí      !D_DESC!
 echo ------------------------------
-echo [1] ä¸€é”®éƒ¨ç½²
-echo [2] åœæ­¢ï¼ˆå…³è¿›ç¨‹ + æ¸…ä»£ç†ï¼‰
-echo [0] è¿”å›
+echo [1] Ò»¼ü²¿Êğ
+echo [2] Í£Ö¹£¨¹Ø½ø³Ì + Çå´úÀí£©
+echo [0] ·µ»Ø
 set "CHOICE="
-set /p "CHOICE=è¯·é€‰æ‹©: "
+set /p "CHOICE=ÇëÑ¡Ôñ: "
 if "!CHOICE!"=="1" (call :winDeploy & echo. & pause & goto :winLoop)
 if "!CHOICE!"=="2" (call :winStop & echo. & pause & goto :winLoop)
 if "!CHOICE!"=="0" exit /b
 goto :winLoop
 
-:: Windows çŠ¶æ€æ¢æµ‹ä¸æè¿°
+:: Windows ×´Ì¬Ì½²âÓëÃèÊö
 :probeWin
 call :checkFiles
 call :probeCert
 call :probeRun
 call :probeProxy
-if "!A_STATE!"=="OK" (set "A_DESC=OK") else (set "A_DESC=ç¼ºå¤±!MISS!")
-if "!B_STATE!"=="NONE" (set "B_DESC=æœªå¯¼å…¥") else (set "B_DESC=å·²å¯¼å…¥ [!B_STATE!]")
-if "!C_STATE!"=="RUN" (set "C_DESC=è¿è¡Œä¸­") else (set "C_DESC=æœªè¿è¡Œ")
-if "!D_STATE!"=="ON" (set "D_DESC=å·²è®¾ç½®") else (set "D_DESC=æœªè®¾ç½®")
+if "!A_STATE!"=="OK" (set "A_DESC=OK") else (set "A_DESC=È±Ê§!MISS!")
+if "!B_STATE!"=="NONE" (set "B_DESC=Î´µ¼Èë") else (set "B_DESC=ÒÑµ¼Èë [!B_STATE!]")
+if "!C_STATE!"=="RUN" (set "C_DESC=ÔËĞĞÖĞ") else (set "C_DESC=Î´ÔËĞĞ")
+if "!D_STATE!"=="ON" (set "D_DESC=ÒÑÉèÖÃ") else (set "D_DESC=Î´ÉèÖÃ")
 exit /b
 
 :: ============================================================
-:: Windows ä¸€é”®éƒ¨ç½²ï¼šå‡†å¤‡æ–‡ä»¶ â†’ å¯¼å…¥ CA â†’ å¯åŠ¨ mrp â†’ è®¾ç½®ä»£ç†
-::   æ¯æ­¥å…ˆæ¢æµ‹ï¼Œå·²å®Œæˆåˆ™è·³è¿‡
+:: Windows Ò»¼ü²¿Êğ£º×¼±¸ÎÄ¼ş ¡ú µ¼Èë CA ¡ú Æô¶¯ mrp ¡ú ÉèÖÃ´úÀí
+::   Ã¿²½ÏÈÌ½²â£¬ÒÑÍê³ÉÔòÌø¹ı
 :: ============================================================
 :winDeploy
 echo.
-echo [1/4] å‡†å¤‡æ–‡ä»¶
+echo [1/4] ×¼±¸ÎÄ¼ş
 call :ensureCA
 if "!EXE_MISSING!"=="1" call :fetchFile %EXE%
 call :checkFiles
-if "!A_STATE!"=="BAD" (echo æ–‡ä»¶ä»ç¼ºå¤±ï¼Œæ— æ³•ç»§ç»­éƒ¨ç½²ã€‚ & exit /b 1)
+if "!A_STATE!"=="BAD" (echo ÎÄ¼şÈÔÈ±Ê§£¬ÎŞ·¨¼ÌĞø²¿Êğ¡£ & exit /b 1)
 
-echo [2/4] å¯¼å…¥ CA è¯ä¹¦
+echo [2/4] µ¼Èë CA Ö¤Êé
 call :probeCert
-if "!B_STATE!"=="NONE" (certutil -user -addstore Root "%WORKDIR%\%CRT%") else (echo å·²å¯¼å…¥ï¼ˆ!B_STATE!ï¼‰ï¼Œè·³è¿‡ã€‚)
+if "!B_STATE!"=="NONE" (certutil -user -addstore Root "%WORKDIR%\%CRT%") else (echo ÒÑµ¼Èë£¨!B_STATE!£©£¬Ìø¹ı¡£)
 
-echo [3/4] å¯åŠ¨ mrp
+echo [3/4] Æô¶¯ mrp
 call :probeRun
-if "!C_STATE!"=="RUN" (echo mrp å·²åœ¨è¿è¡Œï¼Œè·³è¿‡ã€‚) else (start "mrp" /D "%WORKDIR%" "%WORKDIR%\%EXE%" & echo mrp å·²åœ¨æ–°çª—å£å¯åŠ¨ã€‚)
+if "!C_STATE!"=="RUN" (echo mrp ÒÑÔÚÔËĞĞ£¬Ìø¹ı¡£) else (start "mrp" /D "%WORKDIR%" "%WORKDIR%\%EXE%" & echo mrp ÒÑÔÚĞÂ´°¿ÚÆô¶¯¡£)
 
-echo [4/4] è®¾ç½®ç³»ç»Ÿä»£ç†
+echo [4/4] ÉèÖÃÏµÍ³´úÀí
 call :probeProxy
 if "!D_STATE!"=="ON" (
-    echo ç³»ç»Ÿä»£ç†å·²è®¾ç½®ï¼Œè·³è¿‡ã€‚
+    echo ÏµÍ³´úÀíÒÑÉèÖÃ£¬Ìø¹ı¡£
 ) else (
     call :runElevated doProxySet
     call :probeProxy
-    if "!D_STATE!"=="ON" (echo ç³»ç»Ÿä»£ç†å·²è®¾ç½®ä¸º 127.0.0.1:!PORT!ã€‚) else (echo è­¦å‘Šï¼šç³»ç»Ÿä»£ç†è®¾ç½®æœªç”Ÿæ•ˆï¼Œå¯èƒ½å–æ¶ˆäº†æˆæƒæˆ–å‘½ä»¤å¤±è´¥ã€‚)
+    if "!D_STATE!"=="ON" (echo ÏµÍ³´úÀíÒÑÉèÖÃÎª 127.0.0.1:!PORT!¡£) else (echo ¾¯¸æ£ºÏµÍ³´úÀíÉèÖÃÎ´ÉúĞ§£¬¿ÉÄÜÈ¡ÏûÁËÊÚÈ¨»òÃüÁîÊ§°Ü¡£)
 )
-echo Windows éƒ¨ç½²å®Œæˆã€‚
+echo Windows ²¿ÊğÍê³É¡£
 exit /b
 
-:: Windows åœæ­¢ï¼šå…³é—­è¿›ç¨‹å¹¶æ¸…ç©ºç³»ç»Ÿä»£ç†
+:: Windows Í£Ö¹£º¹Ø±Õ½ø³Ì²¢Çå¿ÕÏµÍ³´úÀí
 :winStop
 echo.
-echo åœæ­¢ mrp è¿›ç¨‹...
+echo Í£Ö¹ mrp ½ø³Ì...
 call :probeRun
-if "!C_STATE!"=="RUN" (taskkill /im "%EXE%" /f) else (echo mrp æœªè¿è¡Œï¼Œè·³è¿‡ã€‚)
-echo æ¸…ç©ºç³»ç»Ÿä»£ç†...
+if "!C_STATE!"=="RUN" (taskkill /im "%EXE%" /f) else (echo mrp Î´ÔËĞĞ£¬Ìø¹ı¡£)
+echo Çå¿ÕÏµÍ³´úÀí...
 call :runElevated doProxyReset
 call :probeProxy
-if "!D_STATE!"=="ON" echo è­¦å‘Šï¼šç³»ç»Ÿä»£ç†æ¸…é™¤æœªç”Ÿæ•ˆã€‚
-echo å·²åœæ­¢ã€‚
+if "!D_STATE!"=="ON" echo ¾¯¸æ£ºÏµÍ³´úÀíÇå³ıÎ´ÉúĞ§¡£
+echo ÒÑÍ£Ö¹¡£
 exit /b
 
 :: ============================================================
-:: è®¾å¤‡å­èœå•ï¼šAndroid / HarmonyOS å…±ç”¨ï¼ŒDEV_TOOL åŒºåˆ†
+:: Éè±¸×Ó²Ëµ¥£ºAndroid / HarmonyOS ¹²ÓÃ£¬DEV_TOOL Çø·Ö
 :: ============================================================
 :subAndroid
 set "DEV_TOOL=adb"
@@ -193,36 +185,36 @@ exit /b
 set "TOOL=!DEV_TOOL!"
 call :probeDevReady
 call :setDevPaths
-set "DEV_FILE_DESC=æœªå°±ä½"
-set "DEV_RUN_DESC=æœªè¿è¡Œ"
-set "DEV_PROXY_DESC=æœªçŸ¥"
+set "DEV_FILE_DESC=Î´¾ÍÎ»"
+set "DEV_RUN_DESC=Î´ÔËĞĞ"
+set "DEV_PROXY_DESC=Î´Öª"
 if "!TOOL_READY!"=="1" call :probeDevState
 cls
 echo ==============================
-echo     !DEV_NAME! éƒ¨ç½²
+echo     !DEV_NAME! ²¿Êğ
 echo ==============================
-echo è®¾å¤‡å·¥å…·ï¼š!DEV_TOOL!ï¼ˆ!TOOL_DESC!ï¼‰
+echo Éè±¸¹¤¾ß£º!DEV_TOOL!£¨!TOOL_DESC!£©
 echo ------------------------------
 if "!TOOL_READY!"=="1" (
-    echo [A] è®¾å¤‡æ–‡ä»¶      !DEV_FILE_DESC!
-    echo [B] è®¾å¤‡è¿›ç¨‹      !DEV_RUN_DESC!
-    echo [C] è®¾å¤‡ä»£ç†      !DEV_PROXY_DESC!
+    echo [A] Éè±¸ÎÄ¼ş      !DEV_FILE_DESC!
+    echo [B] Éè±¸½ø³Ì      !DEV_RUN_DESC!
+    echo [C] Éè±¸´úÀí      !DEV_PROXY_DESC!
 ) else (
-    echo è®¾å¤‡æœªè¿æ¥ï¼Œè¯·æ£€æŸ¥ USB è°ƒè¯•ä¸è¿æ¥çŠ¶æ€ã€‚
+    echo Éè±¸Î´Á¬½Ó£¬Çë¼ì²é USB µ÷ÊÔÓëÁ¬½Ó×´Ì¬¡£
 )
 echo ------------------------------
-echo [1] ä¸€é”®éƒ¨ç½²
-echo [2] åœæ­¢ï¼ˆå…³è¿›ç¨‹ + æ¸…ä»£ç†ï¼‰
-echo [0] è¿”å›
+echo [1] Ò»¼ü²¿Êğ
+echo [2] Í£Ö¹£¨¹Ø½ø³Ì + Çå´úÀí£©
+echo [0] ·µ»Ø
 set "CHOICE="
-set /p "CHOICE=è¯·é€‰æ‹©: "
+set /p "CHOICE=ÇëÑ¡Ôñ: "
 if "!CHOICE!"=="0" exit /b
-if "!TOOL_READY!"=="0" (echo æœªè¿æ¥è®¾å¤‡ï¼Œæ— æ³•æ‰§è¡Œã€‚ & timeout /t 2 >nul & goto :devLoop)
+if "!TOOL_READY!"=="0" (echo Î´Á¬½ÓÉè±¸£¬ÎŞ·¨Ö´ĞĞ¡£ & timeout /t 2 >nul & goto :devLoop)
 if "!CHOICE!"=="1" (call :devDeploy & echo. & pause & goto :devLoop)
 if "!CHOICE!"=="2" (call :devStop & echo. & pause & goto :devLoop)
 goto :devLoop
 
-:: è®¾å¤‡è·¯å¾„ä¸æ¨é€å‘½ä»¤ï¼šadb ä¸ hdc çš„ä¸´æ—¶ç›®å½•ã€ç³»ç»Ÿè¯ä¹¦ç›®å½•ã€æ¨é€åŠ¨è¯ä¸åŒ
+:: Éè±¸Â·¾¶ÓëÍÆËÍÃüÁî£ºadb Óë hdc µÄÁÙÊ±Ä¿Â¼¡¢ÏµÍ³Ö¤ÊéÄ¿Â¼¡¢ÍÆËÍ¶¯´Ê²»Í¬
 :setDevPaths
 if /i "!DEV_TOOL!"=="adb" (
     set "DEV_REMOTE=/data/local/tmp"
@@ -235,61 +227,61 @@ if /i "!DEV_TOOL!"=="adb" (
 )
 exit /b
 
-:: è®¾å¤‡çŠ¶æ€æ‡’æ¢æµ‹ï¼šæ–‡ä»¶ / è¿›ç¨‹ / ä»£ç†
+:: Éè±¸×´Ì¬ÀÁÌ½²â£ºÎÄ¼ş / ½ø³Ì / ´úÀí
 :probeDevState
 !DEV_TOOL! shell test -f !DEV_REMOTE!/!DEV_BIN! >nul 2>&1
-if "!errorlevel!"=="0" set "DEV_FILE_DESC=å·²å°±ä½"
+if "!errorlevel!"=="0" set "DEV_FILE_DESC=ÒÑ¾ÍÎ»"
 !DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
-if "!errorlevel!"=="0" set "DEV_RUN_DESC=è¿è¡Œä¸­"
+if "!errorlevel!"=="0" set "DEV_RUN_DESC=ÔËĞĞÖĞ"
 if /i not "!DEV_TOOL!"=="adb" exit /b
 set "PROXY_VALUE="
 for /f "delims=" %%i in ('!DEV_TOOL! shell settings get global http_proxy 2^>nul') do set "PROXY_VALUE=%%i"
-if "!PROXY_VALUE!"=="127.0.0.1:!PORT!" set "DEV_PROXY_DESC=å·²è®¾ç½®"
+if "!PROXY_VALUE!"=="127.0.0.1:!PORT!" set "DEV_PROXY_DESC=ÒÑÉèÖÃ"
 exit /b
 
 :: ============================================================
-:: è®¾å¤‡ä¸€é”®éƒ¨ç½²ï¼šå‡†å¤‡æ–‡ä»¶ â†’ æ¨é€ â†’ å®‰è£… CA â†’ å¯åŠ¨ â†’ è®¾ç½®ä»£ç†
+:: Éè±¸Ò»¼ü²¿Êğ£º×¼±¸ÎÄ¼ş ¡ú ÍÆËÍ ¡ú °²×° CA ¡ú Æô¶¯ ¡ú ÉèÖÃ´úÀí
 :: ============================================================
 :devDeploy
 echo.
-echo [1/5] å‡†å¤‡æ–‡ä»¶
+echo [1/5] ×¼±¸ÎÄ¼ş
 call :ensureCA
 call :checkDevFiles
 if "!DEV_BIN_MISSING!"=="1" call :fetchFile %DEV_BIN%
 call :checkDevFiles
-if "!DEV_BIN_MISSING!"=="1" (echo ç¼ºå°‘ %DEV_BIN%ï¼Œæ— æ³•ç»§ç»­éƒ¨ç½²ã€‚ & exit /b 1)
-if "!CRT_MISSING!"=="1" (echo ç¼ºå°‘ CA è¯ä¹¦ï¼Œæ— æ³•ç»§ç»­éƒ¨ç½²ã€‚ & exit /b 1)
-if "!KEY_MISSING!"=="1" (echo ç¼ºå°‘ CA ç§é’¥ï¼Œæ— æ³•ç»§ç»­éƒ¨ç½²ã€‚ & exit /b 1)
+if "!DEV_BIN_MISSING!"=="1" (echo È±ÉÙ %DEV_BIN%£¬ÎŞ·¨¼ÌĞø²¿Êğ¡£ & exit /b 1)
+if "!CRT_MISSING!"=="1" (echo È±ÉÙ CA Ö¤Êé£¬ÎŞ·¨¼ÌĞø²¿Êğ¡£ & exit /b 1)
+if "!KEY_MISSING!"=="1" (echo È±ÉÙ CA Ë½Ô¿£¬ÎŞ·¨¼ÌĞø²¿Êğ¡£ & exit /b 1)
 
-echo [2/5] æ¨é€æ–‡ä»¶åˆ°è®¾å¤‡
+echo [2/5] ÍÆËÍÎÄ¼şµ½Éè±¸
 call :devPush
 
-echo [3/5] å®‰è£… CA åˆ°è®¾å¤‡ç³»ç»Ÿè¯ä¹¦
+echo [3/5] °²×° CA µ½Éè±¸ÏµÍ³Ö¤Êé
 call :devCert
 
-echo [4/5] åœ¨è®¾å¤‡ä¸Šå¯åŠ¨ mrp
+echo [4/5] ÔÚÉè±¸ÉÏÆô¶¯ mrp
 call :devRun
 
-echo [5/5] è®¾ç½®è®¾å¤‡å…¨å±€ä»£ç†
+echo [5/5] ÉèÖÃÉè±¸È«¾Ö´úÀí
 call :devProxyCfg on
-echo è®¾å¤‡éƒ¨ç½²å®Œæˆã€‚
+echo Éè±¸²¿ÊğÍê³É¡£
 exit /b
 
-:: è®¾å¤‡åœæ­¢ï¼šç»“æŸ mrp è¿›ç¨‹å¹¶æ¸…ç©ºå…¨å±€ä»£ç†
+:: Éè±¸Í£Ö¹£º½áÊø mrp ½ø³Ì²¢Çå¿ÕÈ«¾Ö´úÀí
 :devStop
 echo.
-echo åœæ­¢è®¾å¤‡ mrp è¿›ç¨‹...
+echo Í£Ö¹Éè±¸ mrp ½ø³Ì...
 !DEV_TOOL! shell pkill -f !DEV_BIN! >nul 2>&1
-echo æ¸…ç©ºè®¾å¤‡å…¨å±€ä»£ç†...
+echo Çå¿ÕÉè±¸È«¾Ö´úÀí...
 call :devProxyCfg off
-echo å·²åœæ­¢ã€‚
+echo ÒÑÍ£Ö¹¡£
 exit /b
 
 :: ============================================================
-:: æ–‡ä»¶ä¸çŠ¶æ€æ¢æµ‹å­ç¨‹åº
+:: ÎÄ¼şÓë×´Ì¬Ì½²â×Ó³ÌĞò
 :: ============================================================
 
-:: ç¡®ä¿æœ¬åœ° CA ä¸äºŒè¿›åˆ¶å°±ä½ï¼šç¼º CA åˆ™ç”Ÿæˆï¼Œç¼ºäºŒè¿›åˆ¶åˆ™æç¤ºå¤åˆ¶
+:: È·±£±¾µØ CA Óë¶ş½øÖÆ¾ÍÎ»£ºÈ± CA ÔòÉú³É£¬È±¶ş½øÖÆÔòÌáÊ¾¸´ÖÆ
 :ensureCA
 call :checkFiles
 set "NEED_CA=0"
@@ -299,17 +291,17 @@ if "!NEED_CA!"=="1" call :genCA
 call :checkFiles
 exit /b
 
-:: ç¼ºäºŒè¿›åˆ¶æ—¶å‘ç”¨æˆ·ç´¢å–æ‰€åœ¨ç›®å½•å¹¶å¤åˆ¶è¿›æ¥ï¼ˆ%1 = æ–‡ä»¶åï¼‰
+:: È±¶ş½øÖÆÊ±ÏòÓÃ»§Ë÷È¡ËùÔÚÄ¿Â¼²¢¸´ÖÆ½øÀ´£¨%1 = ÎÄ¼şÃû£©
 :fetchFile
-echo æœªæ‰¾åˆ° %~1ã€‚è¯·è¾“å…¥åŒ…å«å®ƒçš„ç›®å½•ï¼ˆGitHub Releases ä¸‹è½½åæ‰€åœ¨ç›®å½•ï¼‰ï¼š
+echo Î´ÕÒµ½ %~1¡£ÇëÊäÈë°üº¬ËüµÄÄ¿Â¼£¨GitHub Releases ÏÂÔØºóËùÔÚÄ¿Â¼£©£º
 set "SRC="
-set /p "SRC=ç›®å½•: "
+set /p "SRC=Ä¿Â¼: "
 if not defined SRC exit /b
 set SRC=!SRC:"=!
-if exist "!SRC!\%~1" (copy /y "!SRC!\%~1" "%WORKDIR%\" >nul & echo å·²å¤åˆ¶ %~1ã€‚) else (echo è¯¥ç›®å½•ä¸‹æœªæ‰¾åˆ° %~1ã€‚)
+if exist "!SRC!\%~1" (copy /y "!SRC!\%~1" "%WORKDIR%\" >nul & echo ÒÑ¸´ÖÆ %~1¡£) else (echo ¸ÃÄ¿Â¼ÏÂÎ´ÕÒµ½ %~1¡£)
 exit /b
 
-:: EXE / ca.crt / ca.key æ˜¯å¦å°±ä½
+:: EXE / ca.crt / ca.key ÊÇ·ñ¾ÍÎ»
 :checkFiles
 set "A_STATE=OK"
 set "EXE_MISSING=0"
@@ -321,7 +313,7 @@ if not exist "%WORKDIR%\%CRT%" (set "A_STATE=BAD" & set "CRT_MISSING=1" & set "M
 if not exist "%WORKDIR%\%KEY%" (set "A_STATE=BAD" & set "KEY_MISSING=1" & set "MISS=!MISS! %KEY%")
 exit /b
 
-:: CA æ˜¯å¦å·²å¯¼å…¥ç”¨æˆ·/æœºå™¨ Root å­˜å‚¨
+:: CA ÊÇ·ñÒÑµ¼ÈëÓÃ»§/»úÆ÷ Root ´æ´¢
 :probeCert
 set "B_STATE=NONE"
 set "CN="
@@ -336,49 +328,49 @@ if "!B_STATE!"=="NONE" (
 )
 exit /b
 
-:: mrp è¿›ç¨‹æ˜¯å¦è¿è¡Œ
+:: mrp ½ø³ÌÊÇ·ñÔËĞĞ
 :probeRun
 set "C_STATE=STOP"
 tasklist /fi "imagename eq %EXE%" /nh 2>nul | find /i "%EXE%" >nul && set "C_STATE=RUN"
 exit /b
 
-:: WinHTTP ç³»ç»Ÿä»£ç†æ˜¯å¦æŒ‡å‘æœ¬æœºç«¯å£
+:: WinHTTP ÏµÍ³´úÀíÊÇ·ñÖ¸Ïò±¾»ú¶Ë¿Ú
 :probeProxy
 set "D_STATE=OFF"
 netsh winhttp show proxy 2>nul | find /i "127.0.0.1:%PORT%" >nul && set "D_STATE=ON"
 exit /b
 
-:: æœ¬åœ°è®¾å¤‡äºŒè¿›åˆ¶æ˜¯å¦å°±ä½
+:: ±¾µØÉè±¸¶ş½øÖÆÊÇ·ñ¾ÍÎ»
 :checkDevFiles
 set "DEV_BIN_MISSING=0"
 if not exist "%WORKDIR%\%DEV_BIN%" set "DEV_BIN_MISSING=1"
 exit /b
 
 :: ============================================================
-:: è®¾å¤‡æ“ä½œå­ç¨‹åº
+:: Éè±¸²Ù×÷×Ó³ÌĞò
 :: ============================================================
 
-:: æ¨é€äºŒè¿›åˆ¶ã€é…ç½®ä¸ CA åˆ°è®¾å¤‡ï¼ˆPUSHCMD åŒºåˆ† push / file sendï¼‰
+:: ÍÆËÍ¶ş½øÖÆ¡¢ÅäÖÃÓë CA µ½Éè±¸£¨PUSHCMD Çø·Ö push / file send£©
 :devPush
-echo æ¨é€æ–‡ä»¶åˆ°è®¾å¤‡ï¼ˆ!DEV_TOOL!ï¼‰...
+echo ÍÆËÍÎÄ¼şµ½Éè±¸£¨!DEV_TOOL!£©...
 if /i not "!DEV_TOOL!"=="adb" !DEV_TOOL! shell mkdir -p !DEV_REMOTE!
 !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%DEV_BIN%" !DEV_REMOTE!
 if exist "%WORKDIR%\%DEV_CFG%" !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%DEV_CFG%" !DEV_REMOTE!
 !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%CRT%" !DEV_REMOTE!
 !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%KEY%" !DEV_REMOTE!
 !DEV_TOOL! shell chmod +x !DEV_REMOTE!/!DEV_BIN!
-echo æ–‡ä»¶å·²æ¨é€ã€‚
+echo ÎÄ¼şÒÑÍÆËÍ¡£
 exit /b
 
-:: å®‰è£… CA åˆ°è®¾å¤‡ç³»ç»Ÿè¯ä¹¦ç›®å½•ï¼ˆæŒ‰ subject_hash_old å‘½åï¼‰
+:: °²×° CA µ½Éè±¸ÏµÍ³Ö¤ÊéÄ¿Â¼£¨°´ subject_hash_old ÃüÃû£©
 :devCert
-echo å®‰è£… CA è¯ä¹¦åˆ°è®¾å¤‡ç³»ç»Ÿè¯ä¹¦ç›®å½•...
+echo °²×° CA Ö¤Êéµ½Éè±¸ÏµÍ³Ö¤ÊéÄ¿Â¼...
 call :findOpenSSL
-if "!OSSL!"=="" (echo æœªæ£€æµ‹åˆ° opensslï¼Œæ— æ³•è®¡ç®—è¯ä¹¦å“ˆå¸Œï¼Œè·³è¿‡è®¾å¤‡è¯ä¹¦å®‰è£…ã€‚ & exit /b)
+if "!OSSL!"=="" (echo Î´¼ì²âµ½ openssl£¬ÎŞ·¨¼ÆËãÖ¤Êé¹şÏ££¬Ìø¹ıÉè±¸Ö¤Êé°²×°¡£ & exit /b)
 set "HASH="
 for /f "delims=" %%i in ('"!OSSL!" x509 -subject_hash_old -in "%WORKDIR%\%CRT%" 2^>nul') do if not defined HASH set "HASH=%%i"
-if not defined HASH (echo æ— æ³•è®¡ç®— CA è¯ä¹¦å“ˆå¸Œï¼Œè·³è¿‡è®¾å¤‡è¯ä¹¦å®‰è£…ã€‚ & exit /b)
-echo è¯ä¹¦å“ˆå¸Œï¼š!HASH!.0
+if not defined HASH (echo ÎŞ·¨¼ÆËã CA Ö¤Êé¹şÏ££¬Ìø¹ıÉè±¸Ö¤Êé°²×°¡£ & exit /b)
+echo Ö¤Êé¹şÏ££º!HASH!.0
 if "!DEV_TOOL!"=="adb" (
     !DEV_TOOL! root
     timeout /t 3 >nul
@@ -391,22 +383,22 @@ if "!DEV_TOOL!"=="adb" (
     !DEV_TOOL! file send "%TEMP%\!HASH!.0" !DEV_CERTS!
 )
 !DEV_TOOL! shell test -f !DEV_CERTS!/!HASH!.0 >nul 2>&1
-if "!errorlevel!"=="0" (echo CA å·²å®‰è£…ä¸º !DEV_CERTS!/!HASH!.0ã€‚) else (echo è­¦å‘Šï¼šè¯ä¹¦å®‰è£…å¯èƒ½å¤±è´¥ï¼Œè¯·ç¡®è®¤è®¾å¤‡å·² Root æˆ–å¤„äºå¼€å‘è€…æ¨¡å¼ã€‚)
+if "!errorlevel!"=="0" (echo CA ÒÑ°²×°Îª !DEV_CERTS!/!HASH!.0¡£) else (echo ¾¯¸æ£ºÖ¤Êé°²×°¿ÉÄÜÊ§°Ü£¬ÇëÈ·ÈÏÉè±¸ÒÑ Root »ò´¦ÓÚ¿ª·¢ÕßÄ£Ê½¡£)
 exit /b
 
-:: åœ¨è®¾å¤‡ä¸Šå¯åŠ¨ mrpï¼ˆæ–°çª—å£ä¿ç•™æ—¥å¿—ï¼Œå·²åœ¨è¿è¡Œåˆ™è·³è¿‡ï¼‰
+:: ÔÚÉè±¸ÉÏÆô¶¯ mrp£¨ĞÂ´°¿Ú±£ÁôÈÕÖ¾£¬ÒÑÔÚÔËĞĞÔòÌø¹ı£©
 :devRun
 !DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
 if "!errorlevel!"=="0" (
-    echo mrp å·²åœ¨è®¾å¤‡ä¸Šè¿è¡Œï¼Œè·³è¿‡å¯åŠ¨ã€‚
+    echo mrp ÒÑÔÚÉè±¸ÉÏÔËĞĞ£¬Ìø¹ıÆô¶¯¡£
     exit /b
 )
-echo åœ¨è®¾å¤‡ä¸Šå¯åŠ¨ mrp...
-start "mrp è®¾å¤‡" cmd /k !DEV_TOOL! shell "cd !DEV_REMOTE!; ./!DEV_BIN!"
-echo mrp å·²åœ¨æ–°çª—å£å¯åŠ¨ï¼ˆCtrl+C åœæ­¢ï¼Œå…³é—­çª—å£é€€å‡ºï¼‰ã€‚
+echo ÔÚÉè±¸ÉÏÆô¶¯ mrp...
+start "mrp Éè±¸" cmd /k !DEV_TOOL! shell "cd !DEV_REMOTE!; ./!DEV_BIN!"
+echo mrp ÒÑÔÚĞÂ´°¿ÚÆô¶¯£¨Ctrl+C Í£Ö¹£¬¹Ø±Õ´°¿ÚÍË³ö£©¡£
 exit /b
 
-:: è®¾å¤‡å…¨å±€ HTTP ä»£ç†ï¼šon è®¾ç½®ç«¯å£ä»£ç†ï¼Œoff æ¸…ç©ºï¼ˆadb/hdc æ¸…ç©ºå€¼ä¸åŒï¼‰
+:: Éè±¸È«¾Ö HTTP ´úÀí£ºon ÉèÖÃ¶Ë¿Ú´úÀí£¬off Çå¿Õ£¨adb/hdc Çå¿ÕÖµ²»Í¬£©
 :devProxyCfg
 set "V_ADB=127.0.0.1:!PORT!"
 set "V_HDC=127.0.0.1:!PORT!"
@@ -416,30 +408,30 @@ if /i "!DEV_TOOL!"=="adb" (
 ) else (
     !DEV_TOOL! shell network-cfg set http_proxy !V_HDC!
 )
-if not "!errorlevel!"=="0" (echo è­¦å‘Šï¼šè®¾å¤‡ä»£ç†è®¾ç½®å¤±è´¥ï¼Œè¯·æ£€æŸ¥è®¾å¤‡è¿æ¥ã€‚ & exit /b)
-if /i "%~1"=="off" (echo è®¾å¤‡å…¨å±€ä»£ç†å·²æ¸…ç©ºã€‚) else (echo è®¾å¤‡å…¨å±€ä»£ç†å·²è®¾ç½®ä¸º 127.0.0.1:!PORT!ã€‚)
+if not "!errorlevel!"=="0" (echo ¾¯¸æ£ºÉè±¸´úÀíÉèÖÃÊ§°Ü£¬Çë¼ì²éÉè±¸Á¬½Ó¡£ & exit /b)
+if /i "%~1"=="off" (echo Éè±¸È«¾Ö´úÀíÒÑÇå¿Õ¡£) else (echo Éè±¸È«¾Ö´úÀíÒÑÉèÖÃÎª 127.0.0.1:!PORT!¡£)
 exit /b
 
 :: ============================================================
-:: é€šç”¨å·¥å…·å­ç¨‹åº
+:: Í¨ÓÃ¹¤¾ß×Ó³ÌĞò
 :: ============================================================
 
-:: éœ€ç®¡ç†å‘˜çš„æ“ä½œï¼šå½“å‰å·²æ˜¯ç®¡ç†å‘˜åˆ™ç›´æ¥æ‰§è¡Œï¼Œå¦åˆ™ææƒæ‰§è¡Œï¼ˆ%1 = å­ç¨‹åºåï¼‰
+:: Ğè¹ÜÀíÔ±µÄ²Ù×÷£ºµ±Ç°ÒÑÊÇ¹ÜÀíÔ±ÔòÖ±½ÓÖ´ĞĞ£¬·ñÔòÌáÈ¨Ö´ĞĞ£¨%1 = ×Ó³ÌĞòÃû£©
 :runElevated
 call :isAdmin
 if "!ADMIN!"=="1" (call :%~1) else (call :elevate %~1)
 exit /b
 
-:: æœ¬åœ°ç”Ÿæˆè‡ªç­¾ CAï¼ˆä»…å½“ ca.crt / ca.key ç¼ºå¤±ï¼‰
+:: ±¾µØÉú³É×ÔÇ© CA£¨½öµ± ca.crt / ca.key È±Ê§£©
 :genCA
-echo ç¼ºå°‘ CA è¯ä¹¦/ç§é’¥ï¼Œå¼€å§‹æœ¬åœ°ç”Ÿæˆ...
+echo È±ÉÙ CA Ö¤Êé/Ë½Ô¿£¬¿ªÊ¼±¾µØÉú³É...
 call :findOpenSSL
-if "!OSSL!"=="" (echo æœªæ£€æµ‹åˆ° opensslã€‚è¯·å®‰è£… Git for Windowsï¼Œæˆ–æŒ‰ README ç”¨ openssl æ‰‹åŠ¨ç”Ÿæˆ ca.crt / ca.key åé‡è¯•ã€‚ & exit /b 1)
+if "!OSSL!"=="" (echo Î´¼ì²âµ½ openssl¡£Çë°²×° Git for Windows£¬»ò°´ README ÓÃ openssl ÊÖ¶¯Éú³É ca.crt / ca.key ºóÖØÊÔ¡£ & exit /b 1)
 "!OSSL!" req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout "%WORKDIR%\%KEY%" -out "%WORKDIR%\%CRT%" -nodes -days 3650 -subj "/CN=%CN%" -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,digitalSignature" >nul 2>&1
-if exist "%WORKDIR%\%CRT%" (echo å·²ç”Ÿæˆ %CRT% ä¸ %KEY%ã€‚) else (echo ç”Ÿæˆå¤±è´¥ï¼Œè¯·æ£€æŸ¥ openssl æ˜¯å¦å¯ç”¨ã€‚)
+if exist "%WORKDIR%\%CRT%" (echo ÒÑÉú³É %CRT% Óë %KEY%¡£) else (echo Éú³ÉÊ§°Ü£¬Çë¼ì²é openssl ÊÇ·ñ¿ÉÓÃ¡£)
 exit /b
 
-:: æ¢æµ‹ openssl è·¯å¾„ï¼ˆPATH ä¼˜å…ˆï¼Œå†æŸ¥ Git for Windows å¸¸è§ä½ç½®ï¼‰
+:: Ì½²â openssl Â·¾¶£¨PATH ÓÅÏÈ£¬ÔÙ²é Git for Windows ³£¼ûÎ»ÖÃ£©
 :findOpenSSL
 set "OSSL="
 where openssl >nul 2>&1 && set "OSSL=openssl"
@@ -448,31 +440,31 @@ if "!OSSL!"=="" if exist "C:\Program Files\Git\mingw64\bin\openssl.exe" set "OSS
 if "!OSSL!"=="" if exist "C:\Program Files (x86)\Git\usr\bin\openssl.exe" set "OSSL=C:\Program Files (x86)\Git\usr\bin\openssl.exe"
 exit /b
 
-:: è¯·æ±‚ç®¡ç†å‘˜ææƒæ‰§è¡ŒæŒ‡å®šå­ç¨‹åºï¼ˆ-Wait é˜»å¡è‡³å®Œæˆï¼›è·¯å¾„ä¸­å•å¼•å·è½¬ä¹‰ï¼Œå–æ¶ˆ UAC æ—¶å¦‚å®æŠ¥å‘Šï¼‰
+:: ÇëÇó¹ÜÀíÔ±ÌáÈ¨Ö´ĞĞÖ¸¶¨×Ó³ÌĞò£¨-Wait ×èÈûÖÁÍê³É£»Â·¾¶ÖĞµ¥ÒıºÅ×ªÒå£¬È¡Ïû UAC Ê±ÈçÊµ±¨¸æ£©
 :elevate
-echo éœ€è¦ç®¡ç†å‘˜æƒé™ï¼Œæ­£åœ¨è¯·æ±‚ææƒ...
+echo ĞèÒª¹ÜÀíÔ±È¨ÏŞ£¬ÕıÔÚÇëÇóÌáÈ¨...
 set "ELEVATE_PATH=%~f0"
 set ELEVATE_PATH=!ELEVATE_PATH:'=''!
 powershell -NoProfile -Command "Start-Process -FilePath '!ELEVATE_PATH!' -Verb RunAs -Wait -ArgumentList '%~1'" >nul 2>&1
-if not "!errorlevel!"=="0" echo ææƒè¢«å–æ¶ˆæˆ–å¤±è´¥ï¼Œæ“ä½œæœªæ‰§è¡Œã€‚
+if not "!errorlevel!"=="0" echo ÌáÈ¨±»È¡Ïû»òÊ§°Ü£¬²Ù×÷Î´Ö´ĞĞ¡£
 exit /b
 
-:: å½“å‰æ˜¯å¦ç®¡ç†å‘˜ï¼ˆnet session æˆåŠŸå³ç®¡ç†å‘˜ï¼‰
+:: µ±Ç°ÊÇ·ñ¹ÜÀíÔ±£¨net session ³É¹¦¼´¹ÜÀíÔ±£©
 :isAdmin
 set "ADMIN=0"
 net session >nul 2>&1 && set "ADMIN=1"
 exit /b
 
-:: WinHTTP è®¾ç½®ï¼ˆææƒå®ä¾‹ç›´æ¥æ‰§è¡Œï¼‰
+:: WinHTTP ÉèÖÃ£¨ÌáÈ¨ÊµÀıÖ±½ÓÖ´ĞĞ£©
 :doProxySet
 netsh winhttp set proxy 127.0.0.1:%PORT%
 exit /b
 
-:: WinHTTP é‡ç½®ï¼ˆææƒå®ä¾‹ç›´æ¥æ‰§è¡Œï¼‰
+:: WinHTTP ÖØÖÃ£¨ÌáÈ¨ÊµÀıÖ±½ÓÖ´ĞĞ£©
 :doProxyReset
 netsh winhttp reset proxy
 exit /b
 
 :end
-echo å†è§ã€‚
+echo ÔÙ¼û¡£
 endlocal
