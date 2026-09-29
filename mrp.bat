@@ -5,8 +5,8 @@ title mrp Deploy
 REM ============================================================
 REM  mrp one-click deployment script
 REM  Two-level menu: first choose a deploy target (Windows / Android / HarmonyOS),
-REM  then choose the operation: Windows = deploy / stop, device = install / start /
-REM  sync config / stop / uninstall.
+REM  then choose the operation: Windows = install / start / stop / uninstall,
+REM  device = install / start / sync config / stop / uninstall.
 REM  The CA pair is fixed and embedded in this script so openssl is never required;
 REM  the private key is shared by design and deployment works out of the box.
 REM ============================================================
@@ -99,14 +99,18 @@ echo [B] CA certificate !B_DESC!
 echo [C] mrp process    !C_DESC!
 echo [D] System proxy   !D_DESC!
 echo ------------------------------
-echo [1] One-click deploy
-echo [2] Stop - kill process + clear proxy
+echo [1] Install   prepare files + import CA
+echo [2] Start     run mrp + set proxy
+echo [3] Stop      kill mrp + clear proxy
+echo [4] Uninstall stop + remove CA + files
 echo [0] Back
 set "CHOICE="
 set /p "CHOICE=Select: "
-if "!CHOICE!"=="1" (call :winDeploy & echo. & pause & goto :winLoop)
-if "!CHOICE!"=="2" (call :winStop & echo. & pause & goto :winLoop)
 if "!CHOICE!"=="0" exit /b
+if "!CHOICE!"=="1" (call :winInstall & echo. & pause & goto :winLoop)
+if "!CHOICE!"=="2" (call :winStart & echo. & pause & goto :winLoop)
+if "!CHOICE!"=="3" (call :winStop & echo. & pause & goto :winLoop)
+if "!CHOICE!"=="4" (call :winUninstall & echo. & pause & goto :winLoop)
 goto :winLoop
 
 REM Windows status probe and descriptions
@@ -122,26 +126,30 @@ if "!D_STATE!"=="ON" (set "D_DESC=Configured") else (set "D_DESC=Not set")
 exit /b
 
 REM ============================================================
-REM Windows one-click deploy: prepare files -> import CA -> start mrp -> set proxy
-REM   Each step probes first and skips if already done
+REM Windows install: prepare files -> import CA (does not start)
 REM ============================================================
-:winDeploy
+:winInstall
 echo.
-echo [1/4] Prepare files
+echo [1/2] Prepare files
 call :ensureCA
 if "!EXE_MISSING!"=="1" call :fetchFile %EXE%
 call :checkFiles
 if "!A_STATE!"=="BAD" (echo Files still missing, cannot continue. & exit /b 1)
 
-echo [2/4] Import CA certificate
+echo [2/2] Import CA certificate
 call :probeCert
 if "!B_STATE!"=="NONE" (certutil -user -addstore Root "%WORKDIR%\%CRT%") else (echo Already imported - !B_STATE!, skipped.)
+echo Windows install finished.
+exit /b
 
-echo [3/4] Start mrp
+REM Windows start: run mrp and set system proxy
+:winStart
+echo.
+echo [1/2] Start mrp
 call :probeRun
 if "!C_STATE!"=="RUN" (echo mrp already running, skipped.) else (start "mrp" /D "%WORKDIR%" "%WORKDIR%\%EXE%" & echo mrp started in a new window.)
 
-echo [4/4] Configure system proxy
+echo [2/2] Configure system proxy
 call :probeProxy
 if "!D_STATE!"=="ON" (
     echo System proxy already set, skipped.
@@ -150,7 +158,7 @@ if "!D_STATE!"=="ON" (
     call :probeProxy
     if "!D_STATE!"=="ON" (echo System proxy set to 127.0.0.1:!PORT!.) else (echo Warning: proxy not applied; UAC may have been cancelled or the command failed.)
 )
-echo Windows deploy finished.
+echo Windows start finished.
 exit /b
 
 REM Windows stop: close process and clear system proxy
@@ -164,6 +172,29 @@ call :runElevated doProxyReset
 call :probeProxy
 if "!D_STATE!"=="ON" echo Warning: system proxy clear failed.
 echo Stopped.
+exit /b
+
+REM Windows uninstall: stop, clear proxy, remove CA and delete files
+:winUninstall
+echo.
+call :winStop
+call :winRemoveCert
+call :winRemoveFiles
+echo Windows uninstall finished.
+exit /b
+
+REM Remove the embedded CA from the user Root store
+:winRemoveCert
+echo Removing CA certificate from Windows trust store...
+powershell -NoProfile -Command "Get-ChildItem Cert:\CurrentUser\Root | Where-Object {$_.Subject -eq 'CN=DeviceProxy CA'} | Remove-Item -Force" >nul 2>&1
+exit /b
+
+REM Remove the Windows mrp binary and CA files
+:winRemoveFiles
+echo Removing Windows mrp files...
+if exist "%WORKDIR%\%EXE%" del /q "%WORKDIR%\%EXE%"
+if exist "%WORKDIR%\%CRT%" del /q "%WORKDIR%\%CRT%"
+if exist "%WORKDIR%\%KEY%" del /q "%WORKDIR%\%KEY%"
 exit /b
 
 REM ============================================================
