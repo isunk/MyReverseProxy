@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -216,6 +217,25 @@ func TestLoadTable_NormalizesDomainCase(t *testing.T) {
 	}
 	if !table.has("api.example.com") {
 		t.Fatal("domain should be normalized to lowercase")
+	}
+}
+
+func TestLoadTable_TrimsWhitespace(t *testing.T) {
+	path := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: \" api.example.com \"\n    routes:\n      - prefix: \" /v1/ \"\n        upstream: http://up-a\n        host: \" up-a.example.com \"\n")
+	table, err := loadTable(path)
+	if err != nil {
+		t.Fatalf("loadTable: %v", err)
+	}
+	if !table.has("api.example.com") {
+		t.Fatal("domain should be trimmed")
+	}
+	entry, ok := table.pick("api.example.com", "/v1/x")
+	if !ok || entry.prefix != "/v1/" {
+		t.Fatalf("prefix should be trimmed: got %+v ok=%v", entry, ok)
+	}
+	if entry.host != "up-a.example.com" {
+		t.Fatalf("host should be trimmed: got %q", entry.host)
 	}
 }
 
@@ -729,6 +749,57 @@ func TestCertificateAuthority_ClearCache(t *testing.T) {
 	if renewed == cert {
 		t.Fatal("clearCache 后应重新签发证书，而非复用旧缓存")
 	}
+}
+
+func TestCertificateAuthority_ConcurrentSameSNI(t *testing.T) {
+	caCert, caKey := testAuthorityCA(t)
+	authority := newCertificateAuthority(caCert, caKey)
+	hello := &tls.ClientHelloInfo{ServerName: "api.example.com"}
+
+	const n = 8
+	results := make([]*tls.Certificate, n)
+	var start, done sync.WaitGroup
+	start.Add(1)
+	for i := 0; i < n; i++ {
+		done.Add(1)
+		go func(i int) {
+			defer done.Done()
+			start.Wait()
+			cert, err := authority.getCertificate(hello)
+			if err != nil {
+				t.Errorf("getCertificate: %v", err)
+				return
+			}
+			results[i] = cert
+		}(i)
+	}
+	start.Done()
+	done.Wait()
+	for i := 1; i < n; i++ {
+		if results[i] != results[0] {
+			t.Fatal("同域名并发握手应合并为一次签发，复用同一证书")
+		}
+	}
+}
+
+func TestCertificateAuthority_ConcurrentDistinctSNI(t *testing.T) {
+	caCert, caKey := testAuthorityCA(t)
+	authority := newCertificateAuthority(caCert, caKey)
+
+	const n = 16
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			hello := &tls.ClientHelloInfo{ServerName: fmt.Sprintf("host%d.example.com", i)}
+			cert, err := authority.getCertificate(hello)
+			if err != nil || cert == nil {
+				t.Errorf("sign host%d: cert=%v err=%v", i, cert, err)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
 
 func TestWatch_HotReload(t *testing.T) {

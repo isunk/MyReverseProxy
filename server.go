@@ -129,13 +129,15 @@ func serveSingleConn(server *http.Server, conn net.Conn) bool {
 	return hijacked.Load()
 }
 
+var httpErrorLog = log.New(os.Stderr, "", 0)
+
 func newHTTPServer(handler http.Handler) *http.Server {
 	return &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		// 去掉标准 log 的日期前缀，底层错误按各自级别落到 stderr，不与控制台日志格式混用
-		ErrorLog: log.New(os.Stderr, "", 0),
+		ErrorLog: httpErrorLog,
 	}
 }
 
@@ -173,36 +175,66 @@ type cacheEntry struct {
 	expiresAt time.Time
 }
 
+// certCall 承载一次进行中的签发，让同域名并发握手等待同一结果而非重复签发
+type certCall struct {
+	done chan struct{}
+	cert *tls.Certificate
+	err  error
+}
+
 type certificateAuthority struct {
-	cert  *x509.Certificate
-	key   crypto.Signer
-	mu    sync.Mutex
-	cache map[string]cacheEntry
+	cert     *x509.Certificate
+	key      crypto.Signer
+	mu       sync.Mutex
+	cache    map[string]cacheEntry
+	inflight map[string]*certCall
 }
 
 func newCertificateAuthority(cert *x509.Certificate, key crypto.Signer) *certificateAuthority {
-	return &certificateAuthority{cert: cert, key: key, cache: map[string]cacheEntry{}}
+	return &certificateAuthority{
+		cert:     cert,
+		key:      key,
+		cache:    map[string]cacheEntry{},
+		inflight: map[string]*certCall{},
+	}
 }
 
+// getCertificate 查缓存命中即返回；未命中时同域名握手合并为一次签发。
+// ECDSA 密钥生成与签名耗时较长，须在锁外执行，避免串行化所有域名的握手。
 func (ca *certificateAuthority) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	if hello.ServerName == "" {
 		return nil, errors.New("missing SNI, cannot sign certificate for domain")
 	}
 	serverName := strings.ToLower(hello.ServerName)
 	ca.mu.Lock()
-	defer ca.mu.Unlock()
 	if entry, ok := ca.cache[serverName]; ok && time.Now().Before(entry.expiresAt) {
+		ca.mu.Unlock()
 		return entry.cert, nil
 	}
+	if call, ok := ca.inflight[serverName]; ok {
+		ca.mu.Unlock()
+		<-call.done
+		return call.cert, call.err
+	}
+	call := &certCall{done: make(chan struct{})}
+	ca.inflight[serverName] = call
+	ca.mu.Unlock()
+
 	cert, err := ca.sign(serverName)
-	if err != nil {
-		return nil, err
+
+	ca.mu.Lock()
+	delete(ca.inflight, serverName)
+	if err == nil {
+		if len(ca.cache) >= maxCachedCerts {
+			ca.cache = map[string]cacheEntry{}
+		}
+		ca.cache[serverName] = cacheEntry{cert: cert, expiresAt: time.Now().Add(serverCertTTL)}
 	}
-	if len(ca.cache) >= maxCachedCerts {
-		ca.cache = map[string]cacheEntry{}
-	}
-	ca.cache[serverName] = cacheEntry{cert: cert, expiresAt: time.Now().Add(serverCertTTL)}
-	return cert, nil
+	ca.mu.Unlock()
+
+	call.cert, call.err = cert, err
+	close(call.done)
+	return cert, err
 }
 
 // clearCache 清空已签发证书缓存，热加载后调用以丢弃旧状态

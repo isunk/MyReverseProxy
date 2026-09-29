@@ -62,6 +62,11 @@ func newTransport(dialTimeout time.Duration) *http.Transport {
 	transport.Proxy = nil // 禁用环境代理，避免代理流量经上游代理回环到自身
 	transport.DialContext = (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).DialContext
 	transport.ResponseHeaderTimeout = 30 * time.Second
+	// 默认 MaxIdleConnsPerHost=2，代理到同一上游的并发请求会频繁重建连接（TCP+TLS 握手）
+	transport.MaxIdleConns = 256
+	transport.MaxIdleConnsPerHost = 64
+	transport.ReadBufferSize = 32 << 10
+	transport.WriteBufferSize = 32 << 10
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // mrp 位于设备与上游之间，上游证书校验交由设备端完成
 	return transport
 }

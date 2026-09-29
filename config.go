@@ -76,7 +76,7 @@ func loadTable(path string) (*routeTable, error) {
 	}
 	table := &routeTable{byDomain: map[string][]*route{}}
 	for _, server := range config.Servers {
-		domain := strings.ToLower(server.Domain)
+		domain := strings.ToLower(strings.TrimSpace(server.Domain))
 		if domain == "" {
 			return nil, errors.New("domain must not be empty")
 		}
@@ -96,30 +96,31 @@ func buildRoutes(server Server) ([]*route, error) {
 	seen := map[string]bool{}
 	entries := make([]*route, 0, len(server.Routes))
 	for _, routeConfig := range server.Routes {
-		if routeConfig.Prefix == "" || routeConfig.Upstream == "" {
+		prefix := strings.TrimSpace(routeConfig.Prefix)
+		if prefix == "" || routeConfig.Upstream == "" {
 			return nil, fmt.Errorf("domain %q: prefix and upstream are required", server.Domain)
 		}
-		if !strings.HasPrefix(routeConfig.Prefix, "/") {
-			return nil, fmt.Errorf("domain %q: prefix %q must start with /", server.Domain, routeConfig.Prefix)
+		if !strings.HasPrefix(prefix, "/") {
+			return nil, fmt.Errorf("domain %q: prefix %q must start with /", server.Domain, prefix)
 		}
-		if seen[routeConfig.Prefix] {
-			return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, routeConfig.Prefix)
+		if seen[prefix] {
+			return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, prefix)
 		}
-		seen[routeConfig.Prefix] = true
+		seen[prefix] = true
 		entry := &route{
-			prefix:          routeConfig.Prefix,
-			host:            routeConfig.Host,
+			prefix:          prefix,
+			host:            strings.TrimSpace(routeConfig.Host),
 			requestHeaders:  routeConfig.Headers.Request,
 			responseHeaders: routeConfig.Headers.Response,
 		}
 		target, err := url.Parse(routeConfig.Upstream)
 		if err != nil {
-			return nil, fmt.Errorf("domain %q: invalid upstream %q", server.Domain, routeConfig.Upstream)
+			return nil, fmt.Errorf("domain %q: invalid upstream %q: %w", server.Domain, routeConfig.Upstream, err)
 		}
 		switch {
 		case target.Scheme == "http" || target.Scheme == "https":
 			if target.Host == "" {
-				return nil, fmt.Errorf("domain %q: invalid upstream %q", server.Domain, routeConfig.Upstream)
+				return nil, fmt.Errorf("domain %q: upstream %q is missing host", server.Domain, routeConfig.Upstream)
 			}
 			entry.target = target
 		case target.Scheme == "":
