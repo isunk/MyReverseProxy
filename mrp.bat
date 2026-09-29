@@ -1,6 +1,7 @@
 @echo off
 chcp 65001 >nul
 setlocal enabledelayedexpansion
+title mrp 部署
 
 REM ============================================================
 REM  mrp 一键部署脚本
@@ -20,10 +21,11 @@ set "CN=DeviceProxy CA"
 set "DEV_BIN=mrp-linux-arm64"
 set "DEV_CFG=config.yaml"
 
-:: 提权分发：提权实例带一个子程序名参数，执行后退出
+:: 提权分发：提权实例带一个子程序名参数，执行后暂停展示结果再退出
 if not "%~1"=="" (
     call :%~1
-    timeout /t 2 >nul
+    echo.
+    pause
     exit /b
 )
 
@@ -140,7 +142,13 @@ if "!C_STATE!"=="RUN" (echo mrp 已在运行，跳过。) else (start "mrp" /D "
 
 echo [4/4] 设置系统代理
 call :probeProxy
-if "!D_STATE!"=="ON" (echo 系统代理已设置，跳过。) else (call :runElevated doProxySet)
+if "!D_STATE!"=="ON" (
+    echo 系统代理已设置，跳过。
+) else (
+    call :runElevated doProxySet
+    call :probeProxy
+    if "!D_STATE!"=="ON" (echo 系统代理已设置为 127.0.0.1:!PORT!。) else (echo 警告：系统代理设置未生效，可能取消了授权或命令失败。)
+)
 echo Windows 部署完成。
 exit /b
 
@@ -152,6 +160,8 @@ call :probeRun
 if "!C_STATE!"=="RUN" (taskkill /im "%EXE%" /f) else (echo mrp 未运行，跳过。)
 echo 清空系统代理...
 call :runElevated doProxyReset
+call :probeProxy
+if "!D_STATE!"=="ON" echo 警告：系统代理清除未生效。
 echo 已停止。
 exit /b
 
@@ -219,13 +229,13 @@ exit /b
 
 :: 设备状态懒探测：文件 / 进程 / 代理
 :probeDevState
-!DEV_TOOL! shell test -f !DEV_REMOTE!/mrp-linux-arm64 >nul 2>&1
+!DEV_TOOL! shell test -f !DEV_REMOTE!/!DEV_BIN! >nul 2>&1
 if "!errorlevel!"=="0" set "DEV_FILE_DESC=已就位"
-!DEV_TOOL! shell pidof mrp-linux-arm64 >nul 2>&1
+!DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
 if "!errorlevel!"=="0" set "DEV_RUN_DESC=运行中"
 if /i not "!DEV_TOOL!"=="adb" exit /b
 set "PROXY_VALUE="
-for /f "delims=" %%i in ('adb shell settings get global http_proxy 2^>nul') do set "PROXY_VALUE=%%i"
+for /f "delims=" %%i in ('!DEV_TOOL! shell settings get global http_proxy 2^>nul') do set "PROXY_VALUE=%%i"
 if "!PROXY_VALUE!"=="127.0.0.1:!PORT!" set "DEV_PROXY_DESC=已设置"
 exit /b
 
@@ -241,6 +251,7 @@ if "!DEV_BIN_MISSING!"=="1" call :fetchFile %DEV_BIN%
 call :checkDevFiles
 if "!DEV_BIN_MISSING!"=="1" (echo 缺少 %DEV_BIN%，无法继续部署。 & exit /b 1)
 if "!CRT_MISSING!"=="1" (echo 缺少 CA 证书，无法继续部署。 & exit /b 1)
+if "!KEY_MISSING!"=="1" (echo 缺少 CA 私钥，无法继续部署。 & exit /b 1)
 
 echo [2/5] 推送文件到设备
 call :devPush
@@ -253,7 +264,6 @@ call :devRun
 
 echo [5/5] 设置设备全局代理
 call :devProxyCfg on
-echo 设备代理已设置为 127.0.0.1:!PORT!。
 echo 设备部署完成。
 exit /b
 
@@ -261,7 +271,7 @@ exit /b
 :devStop
 echo.
 echo 停止设备 mrp 进程...
-!DEV_TOOL! shell pkill -f mrp-linux-arm64 >nul 2>&1
+!DEV_TOOL! shell pkill -f !DEV_BIN! >nul 2>&1
 echo 清空设备全局代理...
 call :devProxyCfg off
 echo 已停止。
@@ -286,7 +296,8 @@ exit /b
 echo 未找到 %~1。请输入包含它的目录（GitHub Releases 下载后所在目录）：
 set "SRC="
 set /p "SRC=目录: "
-if "!SRC!"=="" exit /b
+if not defined SRC exit /b
+set SRC=!SRC:"=!
 if exist "!SRC!\%~1" (copy /y "!SRC!\%~1" "%WORKDIR%\" >nul & echo 已复制 %~1。) else (echo 该目录下未找到 %~1。)
 exit /b
 
@@ -347,7 +358,7 @@ if /i not "!DEV_TOOL!"=="adb" !DEV_TOOL! shell mkdir -p !DEV_REMOTE!
 if exist "%WORKDIR%\%DEV_CFG%" !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%DEV_CFG%" !DEV_REMOTE!
 !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%CRT%" !DEV_REMOTE!
 !DEV_TOOL! !PUSHCMD! "%WORKDIR%\%KEY%" !DEV_REMOTE!
-!DEV_TOOL! shell chmod +x !DEV_REMOTE!/mrp-linux-arm64
+!DEV_TOOL! shell chmod +x !DEV_REMOTE!/!DEV_BIN!
 echo 文件已推送。
 exit /b
 
@@ -371,13 +382,19 @@ if "!DEV_TOOL!"=="adb" (
     copy /y "%WORKDIR%\%CRT%" "%TEMP%\!HASH!.0" >nul
     !DEV_TOOL! file send "%TEMP%\!HASH!.0" !DEV_CERTS!
 )
-echo 设备 CA 证书安装命令已执行。
+!DEV_TOOL! shell test -f !DEV_CERTS!/!HASH!.0 >nul 2>&1
+if "!errorlevel!"=="0" (echo CA 已安装为 !DEV_CERTS!/!HASH!.0。) else (echo 警告：证书安装可能失败，请确认设备已 Root 或处于开发者模式。)
 exit /b
 
-:: 在设备上启动 mrp（新窗口保留日志）
+:: 在设备上启动 mrp（新窗口保留日志，已在运行则跳过）
 :devRun
+!DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
+if "!errorlevel!"=="0" (
+    echo mrp 已在设备上运行，跳过启动。
+    exit /b
+)
 echo 在设备上启动 mrp...
-start "mrp 设备" cmd /k !DEV_TOOL! shell "cd !DEV_REMOTE!; ./mrp-linux-arm64"
+start "mrp 设备" cmd /k !DEV_TOOL! shell "cd !DEV_REMOTE!; ./!DEV_BIN!"
 echo mrp 已在新窗口启动（Ctrl+C 停止，关闭窗口退出）。
 exit /b
 
@@ -386,7 +403,13 @@ exit /b
 set "V_ADB=127.0.0.1:!PORT!"
 set "V_HDC=127.0.0.1:!PORT!"
 if /i "%~1"=="off" (set "V_ADB=:0" & set "V_HDC=0")
-if /i "!DEV_TOOL!"=="adb" (adb shell settings put global http_proxy !V_ADB!) else (hdc shell network-cfg set http_proxy !V_HDC!)
+if /i "!DEV_TOOL!"=="adb" (
+    !DEV_TOOL! shell settings put global http_proxy !V_ADB!
+) else (
+    !DEV_TOOL! shell network-cfg set http_proxy !V_HDC!
+)
+if not "!errorlevel!"=="0" (echo 警告：设备代理设置失败，请检查设备连接。 & exit /b)
+if /i "%~1"=="off" (echo 设备全局代理已清空。) else (echo 设备全局代理已设置为 127.0.0.1:!PORT!。)
 exit /b
 
 :: ============================================================
@@ -417,10 +440,13 @@ if "!OSSL!"=="" if exist "C:\Program Files\Git\mingw64\bin\openssl.exe" set "OSS
 if "!OSSL!"=="" if exist "C:\Program Files (x86)\Git\usr\bin\openssl.exe" set "OSSL=C:\Program Files (x86)\Git\usr\bin\openssl.exe"
 exit /b
 
-:: 请求管理员提权执行指定子程序（-Wait 阻塞至完成）
+:: 请求管理员提权执行指定子程序（-Wait 阻塞至完成；路径中单引号转义，取消 UAC 时如实报告）
 :elevate
 echo 需要管理员权限，正在请求提权...
-powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs -Wait -ArgumentList '%~1'"
+set "ELEVATE_PATH=%~f0"
+set ELEVATE_PATH=!ELEVATE_PATH:'=''!
+powershell -NoProfile -Command "Start-Process -FilePath '!ELEVATE_PATH!' -Verb RunAs -Wait -ArgumentList '%~1'" >nul 2>&1
+if not "!errorlevel!"=="0" echo 提权被取消或失败，操作未执行。
 exit /b
 
 :: 当前是否管理员（net session 成功即管理员）
