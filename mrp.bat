@@ -448,11 +448,15 @@ for /f "delims=" %%i in ('!DEV_TOOL! shell pidof !DEV_BIN! 2^>nul') do set "PIDS
 exit /b
 
 REM Test if a remote file exists - sets DEV_FILE_FOUND=1 when present. %1 = remote path
+REM adb/hdc merge device stderr into host stdout, so a failing ls leaks its error
+REM message and would always look non-empty. test -f is silent on failure and only
+REM echoes a marker when the file exists; we capture that into a temp file by size.
 :devTestFile
 set "DEV_FILE_FOUND=0"
-set "DEV_FILE_OUT="
-for /f "delims=" %%i in ('!DEV_TOOL! shell ls %1 2^>nul') do set "DEV_FILE_OUT=%%i"
-if defined DEV_FILE_OUT set "DEV_FILE_FOUND=1"
+set "DEV_TEST_TMP=%TEMP%\mrp_devtest.tmp"
+!DEV_TOOL! shell "test -f %1 && echo Y" > "%DEV_TEST_TMP%" 2>nul
+for %%S in ("%DEV_TEST_TMP%") do if %%~zS gtr 0 set "DEV_FILE_FOUND=1"
+if exist "%DEV_TEST_TMP%" del /q "%DEV_TEST_TMP%" >nul 2>&1
 exit /b
 
 REM Start mrp on device - new window keeps logs; skip only if confirmed running
