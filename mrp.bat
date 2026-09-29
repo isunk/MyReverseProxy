@@ -236,8 +236,8 @@ REM Device status lazy probe: file / process / proxy
 :probeDevState
 !DEV_TOOL! shell test -f !DEV_REMOTE!/!DEV_BIN! >nul 2>&1
 if "!errorlevel!"=="0" set "DEV_FILE_DESC=Ready"
-!DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
-if "!errorlevel!"=="0" set "DEV_RUN_DESC=Running"
+call :devPid
+if defined PIDS set "DEV_RUN_DESC=Running"
 if /i not "!DEV_TOOL!"=="adb" exit /b
 set "PROXY_VALUE="
 for /f "delims=" %%i in ('!DEV_TOOL! shell settings get global http_proxy 2^>nul') do set "PROXY_VALUE=%%i"
@@ -398,16 +398,22 @@ if "!DEV_TOOL!"=="adb" (
 if "!errorlevel!"=="0" (echo CA installed as !DEV_CERTS!/!HASH!.0.) else (echo Warning: cert install may have failed; ensure the device is rooted or in developer mode.)
 exit /b
 
+REM Capture device pidof output into PIDS (empty when mrp is not running)
+:devPid
+set "PIDS="
+for /f "delims=" %%i in ('!DEV_TOOL! shell pidof !DEV_BIN! 2^>nul') do set "PIDS=%%i"
+exit /b
+
 REM Start mrp on device - new window keeps logs; skip only if confirmed running
 :devRun
-!DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
-if not "!errorlevel!"=="0" goto :devRunLaunch
-REM Re-check after 1s so the probe command itself is not mistaken for mrp
-timeout /t 1 >nul
-!DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
-if "!errorlevel!"=="0" (
-    echo mrp already running on device, skipping.
-    exit /b
+call :devPid
+if defined PIDS (
+    timeout /t 1 >nul
+    call :devPid
+    if defined PIDS (
+        echo mrp already running on device, skipping.
+        exit /b
+    )
 )
 :devRunLaunch
 echo Starting mrp on device...
@@ -415,8 +421,8 @@ start "mrp device" cmd /k !DEV_TOOL! shell "cd !DEV_REMOTE!; ./!DEV_BIN!"
 set "DEV_RUN_WAIT=0"
 :devRunWait
 timeout /t 1 >nul
-!DEV_TOOL! shell pidof !DEV_BIN! >nul 2>&1
-if "!errorlevel!"=="0" (
+call :devPid
+if defined PIDS (
     echo mrp is now running on device - Ctrl+C in the new window to stop.
     exit /b
 )
