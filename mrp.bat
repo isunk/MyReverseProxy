@@ -21,11 +21,6 @@ set "CA_HASH=d6cd00d8"
 set "DEV_BIN=mrp-linux-arm64"
 set "DEV_CFG=config.yaml"
 
-REM A literal carriage return: some device tools end their output lines with an
-REM extra CR that would otherwise corrupt the captured device state
-set "CR="
-for /f %%a in ('copy /Z "%~f0" nul 2^>nul') do set "CR=%%a"
-
 REM Elevate dispatch: the elevated instance gets a subroutine name argument,
 REM runs it, then pauses to show the result before exiting
 if not "%~1"=="" (
@@ -89,11 +84,10 @@ if /i "!TOOL!"=="adb" (
     )
 ) else (
     REM hdc may print daemon startup lines before the target list; the last line
-    REM is the result: [Empty] means no device, a serial means connected. Strip a
-    REM stray trailing CR first so the markers compare equal
+    REM is the result: [Empty] means no device, a serial means connected. Compare
+    REM only the first 7 chars so a stray trailing CR cannot defeat the markers
     for /f "tokens=1" %%i in ('hdc list targets 2^>nul') do set "TOOL_SERIAL=%%i"
-    if defined TOOL_SERIAL if defined CR set "TOOL_SERIAL=!TOOL_SERIAL:%CR%=!"
-    if defined TOOL_SERIAL if not "!TOOL_SERIAL!"=="[Empty]" if not "!TOOL_SERIAL!"=="Connect" set "TOOL_READY=1"
+    if defined TOOL_SERIAL if not "!TOOL_SERIAL:~0,7!"=="[Empty]" if not "!TOOL_SERIAL:~0,7!"=="Connect" set "TOOL_READY=1"
 )
 if "!TOOL_READY!"=="1" set "TOOL_DESC=!TOOL_SERIAL!"
 exit /b
