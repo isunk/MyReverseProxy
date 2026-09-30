@@ -27,6 +27,19 @@ This file records user instructions, preferences, and teachings for reference in
 
 ## Entries
 
+[User Instruction Summary]
+- Date: 2026-09-30
+- Context: Trimming the new "功能特性" section of README.md after the first draft was too long
+- Instructions:
+  - Keep README feature lists short and user-facing: only what a user picks mrp for. Drop implementation-level items — single-port listening, read-header/idle timeouts, DNS/connection caching, connection-pool sizes, TLS session cache size, log levels and ANSI colors, error-code details, build targets and deployment mechanics (the 使用流程 and mrp.bat sections already cover those).
+  - Cache/TTL behavior belongs only in the config field table and the CLI flag table, where real fields and flags are documented, not in the feature list.
+  - Merge small groups: request/response header rewriting lives under 路由.
+  - The user cares most about the DNS-query feature, so it keeps its own subsection, but with a single line: mrp resolves upstream domains itself using the configured DNS servers instead of the device system DNS. Failover across multiple servers was also removed as too detailed. Everything deeper about `nameservers` belongs in 配置说明, not here.
+  - No boundary or resilience statements belong in the feature list either: things like "mrp does not itself offer a DNS service" and "a failed reload does not affect existing connections" were both removed on request. Negative/boundary claims and failure-mode guarantees are operational caveats, not features.
+  - The README title is `# My Reverse Proxy`. The user rejected the earlier `我的反向代理 (mrp)` as sounding unprofessional.
+  - The 功能特性 section carries only short, plain functional statements: no SNI/CA/ECDSA wording, no flag names, no timeouts, no port counts, no protocol-internal details (UDP/TCP, IPv4/IPv6 ordering), no file-path or error-message text, no 1s polling or SIGHUP. If it can be stated in one plain sentence, state it that way.
+  - Detailed config semantics, pitfalls (the `/etc/resolv.conf` -> `[::1]` refusal), syntax examples and flag defaults live in the 配置说明 field table, the 启动服务 flag table, and the config template comments. Do not repeat them in the feature list.
+
 [Project Knowledge Summary]
 - Date: 2026-09-29
 - Context: Discovered by Agent while restructuring the mrp.bat device menus to show unified status lines for Android (adb) and HarmonyOS (hdc)

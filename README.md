@@ -1,6 +1,31 @@
-# 我的反向代理 (mrp)
+# My Reverse Proxy
 
 Go 实现的本地反向代理。只监听一个端口（`--port`，默认 8000）：HTTP 请求按 Host 头与路径前缀路由转发，HTTPS 经 CONNECT 进入，命中配置的域名时做 MITM 解密后按同样规则路由，未命中的域名直接透传隧道。用于把移动 App 固定访问的域名劫持转发到自有服务器联调。
+
+## 功能特性
+
+### HTTPS 解密
+
+- 按域名实时签发证书，无需预先登记要拦截的域名
+- 未提供 CA 时降级为不解密的代理与隧道透传
+
+### 路由
+
+- 多域名虚拟服务器，按域名、协议、端口匹配
+- 按路径前缀匹配，未命中的域名透传到原目标
+- 可改写 Host 头与请求、响应头
+
+### 上游
+
+- 可指向完整地址或 `host:port` 简写，也可直接指向本地目录托管静态页面
+
+### DNS 查询
+
+- 上游域名由 mrp 代为解析，使用配置的 DNS 服务器，不依赖设备系统 DNS
+
+### 配置热加载
+
+- 修改配置文件自动生效，无需重启
 
 ## 原理
 
@@ -10,19 +35,43 @@ Go 实现的本地反向代理。只监听一个端口（`--port`，默认 8000�
 
 ```mermaid
 sequenceDiagram
-    participant App as App客户端
-    participant mrp as mrp代理
-    participant Up as 上游服务器
+    participant App as App 客户端
+    participant mrp as mrp 代理
+    participant DNS as DNS 服务器
+    participant Up as 配置的上游
+    participant Tgt as 原始目标服务器
 
-    App->>mrp: "TCP连接 + CONNECT api.target-app.com:443"
-    mrp->>App: 200 Connection Established
-    App->>mrp: TLS ClientHello
-    mrp->>App: 服务端证书握手完成
-    App->>mrp: GET /v1/hello 已解密
-    mrp->>mrp: "按域名与路径前缀匹配"
-    mrp->>Up: 重新建立 HTTPS 连接并转发
-    Up-->>mrp: HTTP 响应
-    mrp-->>App: 加密回传响应
+    Note over App,mrp: 设备代理已指向 mrp，CA 已导入设备信任
+
+    App->>mrp: "TCP 连接 + CONNECT api.target-app.com:443"
+    mrp->>mrp: 查配置里是否有该域名
+
+    alt 命中配置域名，走 MITM 解密
+        mrp->>App: "200 Connection Established"
+        App->>mrp: "TLS 握手（SNI: api.target-app.com）"
+        mrp->>mrp: 用自签 CA 现场签发该域名证书
+        mrp-->>App: 握手完成，拿到解密后的明文 HTTP
+        mrp->>mrp: 按域名与路径前缀匹配路由
+        mrp->>DNS: 解析上游域名
+        DNS-->>mrp: 上游地址
+        mrp->>Up: "转发请求（可改写 Host 与消息头）"
+        Up-->>mrp: HTTP 响应
+        mrp-->>App: 加密回传响应
+
+    else 未命中配置域名，字节隧道透传
+        mrp->>App: "200 Connection Established"
+        App->>mrp: 目标域名的加密流量
+        mrp->>Tgt: 原样搬运字节，不解密、不改写
+        Tgt-->>mrp: 字节流回传
+        mrp-->>App: 原样回传，内容不可见
+
+    else 明文 HTTP 请求，域名解析到 mrp 或经代理访问
+        App->>mrp: "GET http://api.target-app.com/v1/hello"
+        mrp->>mrp: 按 Host 头匹配路由
+        mrp->>Up: 转发到配置的上游
+        Up-->>mrp: HTTP 响应
+        mrp-->>App: 原样返回
+    end
 ```
 
 随后按域名与路径前缀匹配路由，转发到真实上游，未匹配的域名透传原目标；上游为 HTTPS 时 mrp 跳过其证书校验，校验交由设备端信任的 CA 链路完成。明文 HTTP 连接（域名解析到 mrp 或经代理的 HTTP 请求）不做 TLS 握手，直接按 Host 头路由；显式代理的 CONNECT 未命中配置域名时同样返回「200 Connection Established」，但只搬运字节不做解密。
