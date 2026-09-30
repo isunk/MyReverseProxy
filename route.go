@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -136,21 +137,27 @@ func (h *staticHandler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	http.ServeContent(writer, request, indexInfo.Name(), indexInfo.ModTime(), index)
 }
 
-// routeTable 按域名索引的路由表。表在加载配置时一次性构建完毕，
-// 运行期只读，热加载以整体替换实现。
-type routeTable struct {
+// portGroup 一个监听端口的分组：协议固定，域名唯一，组内路由按最长前缀匹配。
+type portGroup struct {
+	protocol string // http / https
 	byDomain map[string][]*route
 }
 
-func (t *routeTable) has(domain string) bool {
-	_, ok := t.byDomain[domain]
-	return ok
+// routeTable 按端口分组的路由表。表在加载配置时一次性构建完毕，
+// 运行期只读，热加载以整体替换实现。
+type routeTable struct {
+	byPort map[int]*portGroup
 }
 
-// pick 在该域名的路由中按最长前缀匹配，结果与条目顺序无关。
-func (t *routeTable) pick(domain, path string) (*route, bool) {
+// pick 在该端口的分组内按域名与最长前缀匹配，结果与条目顺序无关；
+// 端口间互不可见，未声明的端口一律未命中。
+func (t *routeTable) pick(port int, domain, path string) (*route, bool) {
+	group := t.byPort[port]
+	if group == nil {
+		return nil, false
+	}
 	var best *route
-	for _, entry := range t.byDomain[domain] {
+	for _, entry := range group.byDomain[domain] {
 		if pathHasPrefix(path, entry.prefix) && (best == nil || len(entry.prefix) > len(best.prefix)) {
 			best = entry
 		}
@@ -158,25 +165,61 @@ func (t *routeTable) pick(domain, path string) (*route, bool) {
 	return best, best != nil
 }
 
+// has 判断该端口分组内是否存在该域名的路由，供 CONNECT 隧道区分 MITM 与透传
+func (t *routeTable) has(port int, domain string) bool {
+	group := t.byPort[port]
+	if group == nil {
+		return false
+	}
+	_, ok := group.byDomain[domain]
+	return ok
+}
+
+// listenerSpecs 汇总全部监听端口规格，供监听集增量对账
+func (t *routeTable) listenerSpecs() []listenerSpec {
+	ports := slices.Sorted(maps.Keys(t.byPort))
+	specs := make([]listenerSpec, 0, len(ports))
+	for _, port := range ports {
+		specs = append(specs, listenerSpec{port: port, protocol: t.byPort[port].protocol})
+	}
+	return specs
+}
+
+// hasHTTPSPort 判断是否存在 https 端口，加载配置后据此校验 CA 是否就绪
+func (t *routeTable) hasHTTPSPort() bool {
+	for _, group := range t.byPort {
+		if group.protocol == protocolHTTPS {
+			return true
+		}
+	}
+	return false
+}
+
 // installHandlers 为每条路由构建处理器，构建完成后路由表内容不再变化。
 func (t *routeTable) installHandlers(transport *http.Transport) {
-	for _, entries := range t.byDomain {
-		for _, entry := range entries {
-			entry.handler = entry.buildHandler(transport)
+	for _, group := range t.byPort {
+		for _, entries := range group.byDomain {
+			for _, entry := range entries {
+				entry.handler = entry.buildHandler(transport)
+			}
 		}
 	}
 }
 
 // fingerprint 生成路由表的稳定指纹，用于判断热加载后的配置是否真正变化：
-// 无变化时跳过重建处理器与拆掉存量连接。
+// 无变化时跳过重建处理器与拆掉存量连接。端口与协议纳入指纹，
+// 使端口/协议调整同样触发重建与监听对账。
 func (t *routeTable) fingerprint() string {
-	domains := slices.Sorted(maps.Keys(t.byDomain))
 	var buffer strings.Builder
-	for _, domain := range domains {
-		buffer.WriteString(domain)
-		buffer.WriteByte('\x00')
-		for _, entry := range t.byDomain[domain] {
-			buffer.WriteString(entry.fingerprint())
+	for _, port := range slices.Sorted(maps.Keys(t.byPort)) {
+		group := t.byPort[port]
+		fmt.Fprintf(&buffer, "%d\x00%s\x00", port, group.protocol)
+		for _, domain := range slices.Sorted(maps.Keys(group.byDomain)) {
+			buffer.WriteString(domain)
+			buffer.WriteByte('\x00')
+			for _, entry := range group.byDomain[domain] {
+				buffer.WriteString(entry.fingerprint())
+			}
 		}
 	}
 	return buffer.String()

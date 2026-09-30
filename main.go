@@ -20,7 +20,6 @@ import (
 // startupOptions 命令行解析结果，构建代理实例所需的全部启动参数。
 type startupOptions struct {
 	configPath      string
-	port            int
 	certPath        string
 	keyPath         string
 	logLevel        logLevel
@@ -36,7 +35,6 @@ func parseStartupOptions() (startupOptions, error) {
 	var opts startupOptions
 	levelName := ""
 	flag.StringVar(&opts.configPath, "config", "config.yaml", "routing config file, created automatically when missing")
-	flag.IntVar(&opts.port, "port", 4000, "listen port, HTTP and TLS detected per connection")
 	flag.StringVar(&opts.certPath, "cert", "ca.crt", "CA certificate file for MITM signing")
 	flag.StringVar(&opts.keyPath, "key", "ca.key", "CA private key file")
 	flag.StringVar(&levelName, "log", "info", "log level: debug, info, warn or error")
@@ -100,7 +98,7 @@ func main() {
 	if err != nil {
 		fatalf("startup failed: %v", err)
 	}
-	run(proxy, fmt.Sprintf(":%d", opts.port))
+	run(proxy)
 }
 
 const (
@@ -189,27 +187,19 @@ func ensureConfig(path string) error {
 	return nil
 }
 
-func run(p *proxy, listenAddr string) {
-	listener, err := net.Listen("tcp", listenAddr)
-	if err != nil {
-		fatalf("listen failed: %v", err)
-	}
-	logInfof("listening addr=%s", listenAddr)
-	go func() {
-		if err := serve(listener, p.tlsConfig, p); err != nil && !errors.Is(err, net.ErrClosed) {
-			fatalf("server exited: %v", err)
-		}
-	}()
+// run 监听由 reload 内的 listenerSet 管理：newProxy 启动期已建立首批监听，
+// 此后仅轮询配置热加载并等待信号。退出信号回收监听集后返回。
+func run(p *proxy) {
 	go p.watchFile(time.Second, nil)
-	serveSignals(p, listener)
+	serveSignals(p)
 }
 
-func serveSignals(p *proxy, listener net.Listener) {
+func serveSignals(p *proxy) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	for sig := range sigCh {
 		if sig != syscall.SIGHUP {
-			listener.Close()
+			p.listeners.closeAll()
 			return
 		}
 		if err := p.reload(); err != nil {

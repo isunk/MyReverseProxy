@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -21,7 +22,7 @@ const (
 	tunnelDialTimeout  = 10 * time.Second
 )
 
-// proxy 持有当前生效的路由表与 DNS 解析器，路由表整体替换以支持热加载。
+// proxy 持有当前生效的路由表、DNS 解析器与监听集，路由表与监听整体替换以支持热加载。
 type proxy struct {
 	configPath  string
 	table       atomic.Pointer[routeTable]
@@ -30,6 +31,7 @@ type proxy struct {
 	authority   *certificateAuthority
 	passthrough *httputil.ReverseProxy
 	nameservers *nameserverSet
+	listeners   *listenerSet
 }
 
 func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *certificateAuthority, nameservers *nameserverSet) (*proxy, error) {
@@ -40,6 +42,7 @@ func newProxy(configPath string, transport *http.Transport, tlsConfig *tls.Confi
 		authority:   authority,
 		nameservers: nameservers,
 		passthrough: newPassthroughProxy(transport),
+		listeners:   newListenerSet(),
 	}
 	if err := p.reload(); err != nil {
 		return nil, err
@@ -66,6 +69,12 @@ func newPassthroughProxy(transport *http.Transport) *httputil.ReverseProxy {
 func (p *proxy) reload() error {
 	table, nameservers, err := loadTable(p.configPath)
 	if err != nil {
+		return err
+	}
+	if table.hasHTTPSPort() && p.tlsConfig == nil {
+		return errors.New("config has https servers but no certificate configured")
+	}
+	if err := p.listeners.reconcile(table.listenerSpecs(), p.tlsConfig, p.portHandler); err != nil {
 		return err
 	}
 	current := p.table.Load()
@@ -97,15 +106,83 @@ func (p *proxy) resetCaches() {
 }
 
 // routeHandler 选出本次请求的处理器：命中路由走该路由，否则透传原始目标。
-func (p *proxy) routeHandler(request *http.Request) (http.Handler, string) {
+func (p *proxy) routeHandler(request *http.Request, port int) (http.Handler, string) {
 	domain := domainOf(request)
-	route, matched := p.table.Load().pick(domain, request.URL.Path)
+	route, matched := p.table.Load().pick(port, domain, request.URL.Path)
 	if !matched {
-		logDebugf("no route matched, passing through to original target domain=%s", domain)
+		logDebugf("no route matched, passing through to original target domain=%s port=%d", domain, port)
 		return p.passthrough, domain
 	}
-	logDebugf("route matched domain=%s prefix=%s upstream=%s", domain, route.prefix, route.target.summary)
+	logDebugf("route matched domain=%s port=%d prefix=%s upstream=%s", domain, port, route.prefix, route.target.summary)
 	return route.handler, domain
+}
+
+// portHandler 为监听端口构建处理器：捕获端口号供路由按端口分组匹配
+func (p *proxy) portHandler(spec listenerSpec) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		p.serveRequest(writer, request, spec.port)
+	})
+}
+
+// serveRequest 是单条入站请求的入口：CONNECT 走隧道，其余按端口路由或透传
+func (p *proxy) serveRequest(writer http.ResponseWriter, request *http.Request, port int) {
+	if request.Method == http.MethodConnect {
+		p.handleConnect(writer, request, port)
+		return
+	}
+	start := time.Now()
+	recorder := &statusRecorder{ResponseWriter: writer, status: http.StatusOK}
+	handler, domain := p.routeHandler(request, port)
+	defer func() {
+		logInfof("request domain=%s port=%d path=%s status=%d elapsed=%s", domain, port, request.URL.Path, recorder.status, time.Since(start))
+	}()
+	handler.ServeHTTP(recorder, request)
+}
+
+func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request, port int) {
+	client, ok := hijackConn(writer)
+	if !ok {
+		return
+	}
+	// serveConnect 返回 false 表示连接仍在手里（隧道结束、502 或握手失败），由这里收尾
+	if !p.serveConnect(client, request, port) {
+		client.Close()
+	}
+}
+
+func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
+	hijacker, ok := writer.(http.Hijacker)
+	if !ok {
+		http.Error(writer, "hijack unsupported", http.StatusInternalServerError)
+		return nil, false
+	}
+	client, bufioRW, err := hijacker.Hijack()
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return nil, false
+	}
+	// 保留 http.Server 内部 bufio.Reader 预读的数据（客户端紧跟 CONNECT 发送的字节）
+	return &bufferedConn{Conn: client, reader: bufioRW.Reader}, true
+}
+
+// serveConnect 按 CONNECT 目标域名分发：命中本端口路由走 MITM，否则透传隧道；
+// 返回 true 表示连接已移交内层 HTTP 服务（hijack 链），调用方不得再关闭
+func (p *proxy) serveConnect(client net.Conn, request *http.Request, port int) bool {
+	domain := hostOnly(request.Host)
+	if !p.table.Load().has(port, domain) {
+		logInfof("connect target=%s mode=tunnel", request.Host)
+		p.tunnel(client, request.Host)
+		return false
+	}
+	if p.tlsConfig == nil {
+		_, _ = client.Write([]byte(connectBadGateway))
+		return false
+	}
+	logInfof("connect domain=%s port=%d mode=mitm", domain, port)
+	if _, err := client.Write([]byte(connectEstablished)); err != nil {
+		return false
+	}
+	return serveSingleConn(newHTTPServer(p.portHandler(listenerSpec{port: port})), tls.Server(client, p.tlsConfig))
 }
 
 func (p *proxy) watchFile(interval time.Duration, stop <-chan struct{}) {
@@ -136,66 +213,6 @@ func (p *proxy) watchFile(interval time.Duration, stop <-chan struct{}) {
 			logInfof("config changed, hot reloaded")
 		}
 	}
-}
-
-func (p *proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	if request.Method == http.MethodConnect {
-		p.handleConnect(writer, request)
-		return
-	}
-	start := time.Now()
-	recorder := &statusRecorder{ResponseWriter: writer, status: http.StatusOK}
-	handler, domain := p.routeHandler(request)
-	defer func() {
-		logInfof("request domain=%s path=%s status=%d elapsed=%s", domain, request.URL.Path, recorder.status, time.Since(start))
-	}()
-	handler.ServeHTTP(recorder, request)
-}
-
-func (p *proxy) handleConnect(writer http.ResponseWriter, request *http.Request) {
-	client, ok := hijackConn(writer)
-	if !ok {
-		return
-	}
-	// serveConnect 返回 false 表示连接仍在手里（隧道结束、502 或握手失败），由这里收尾
-	if !p.serveConnect(client, request) {
-		client.Close()
-	}
-}
-
-func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
-	hijacker, ok := writer.(http.Hijacker)
-	if !ok {
-		http.Error(writer, "hijack unsupported", http.StatusInternalServerError)
-		return nil, false
-	}
-	client, bufioRW, err := hijacker.Hijack()
-	if err != nil {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
-		return nil, false
-	}
-	// 保留 http.Server 内部 bufio.Reader 预读的数据（客户端紧跟 CONNECT 发送的字节）
-	return &bufferedConn{Conn: client, reader: bufioRW.Reader}, true
-}
-
-// serveConnect 按 CONNECT 目标域名分发：命中路由走 MITM，否则透传隧道；
-// 返回 true 表示连接已移交内层 HTTP 服务（hijack 链），调用方不得再关闭
-func (p *proxy) serveConnect(client net.Conn, request *http.Request) bool {
-	domain := hostOnly(request.Host)
-	if !p.table.Load().has(domain) {
-		logInfof("connect target=%s mode=tunnel", request.Host)
-		p.tunnel(client, request.Host)
-		return false
-	}
-	if p.tlsConfig == nil {
-		_, _ = client.Write([]byte(connectBadGateway))
-		return false
-	}
-	logInfof("connect domain=%s mode=mitm", domain)
-	if _, err := client.Write([]byte(connectEstablished)); err != nil {
-		return false
-	}
-	return serveSingleConn(newHTTPServer(p), tls.Server(client, p.tlsConfig))
 }
 
 func (p *proxy) tunnel(client net.Conn, target string) {

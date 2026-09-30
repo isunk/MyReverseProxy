@@ -81,20 +81,57 @@ func startProxy(t *testing.T, configPath string, tlsConfig *tls.Config) (string,
 	return startProxyWithNameservers(t, configPath, tlsConfig, testNameservers(t))
 }
 
+// withProxyPort 在每条 server 条目的 domain 行后插入 port 字段，
+// 供测试把随机可绑定端口写进配置，让 listenerSet.reconcile 能在测试环境监听。
+func withProxyPort(content string, port int) string {
+	var builder strings.Builder
+	for _, line := range strings.SplitAfter(content, "\n") {
+		builder.WriteString(line)
+		if strings.HasPrefix(line, "  - domain:") {
+			fmt.Fprintf(&builder, "    port: %d\n", port)
+		}
+	}
+	return builder.String()
+}
+
+// testPort 分配一个当前空闲的 TCP 端口供测试配置使用
+func testPort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.Close()
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// startProxyWithNameservers 注入随机端口到配置后构建代理：newProxy 的 reload 会
+// 经 listenerSet.reconcile 监听该端口，调用方拿到可直接访问的代理地址。
 func startProxyWithNameservers(t *testing.T, configPath string, tlsConfig *tls.Config, servers *nameserverSet) (string, *proxy) {
 	t.Helper()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := testPort(t)
+	if err := os.WriteFile(configPath, []byte(withProxyPort(string(data), port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	transport := newTransport(servers.DialContext)
 	p, err := newProxy(configPath, transport, tlsConfig, nil, servers)
 	if err != nil {
 		t.Fatalf("newProxy: %v", err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { listener.Close() })
-	go func() { _ = serve(listener, tlsConfig, p) }()
-	return "http://" + listener.Addr().String(), p
+	t.Cleanup(func() { p.listeners.closeAll() })
+	return fmt.Sprintf("http://127.0.0.1:%d", port), p
 }
 
 func testNameservers(t *testing.T, entries ...string) *nameserverSet {
@@ -169,14 +206,14 @@ servers:
 	if err != nil {
 		t.Fatalf("loadTable: %v", err)
 	}
-	if len(table.byDomain) != 2 {
-		t.Fatalf("want 2 domains, got %d", len(table.byDomain))
+	if len(table.byPort) != 1 {
+		t.Fatalf("want 1 port group, got %d", len(table.byPort))
 	}
-	entry, ok := table.pick("a.example.com", "/v1/x")
+	entry, ok := table.pick(80, "a.example.com", "/v1/x")
 	if !ok || entry.prefix != "/v1/" {
 		t.Fatalf("pick /v1/: got %+v ok=%v", entry, ok)
 	}
-	if _, ok := table.pick("b.example.com", "/"); !ok {
+	if _, ok := table.pick(80, "b.example.com", "/"); !ok {
 		t.Fatalf("pick b.example.com: not found")
 	}
 }
@@ -217,7 +254,7 @@ func TestLoadTable_LocalPathUpstream(t *testing.T) {
 			if err != nil {
 				t.Fatalf("loadTable upstream=%q: unexpected error: %v", up, err)
 			}
-			entry, ok := table.pick("a.example.com", "/")
+			entry, ok := table.pick(80, "a.example.com", "/")
 			if !ok {
 				t.Fatalf("route not found for upstream %q", up)
 			}
@@ -232,13 +269,15 @@ func TestLoadTable_LocalPathUpstream(t *testing.T) {
 }
 
 func TestPick_LongestPrefix(t *testing.T) {
-	table := &routeTable{byDomain: map[string][]*route{
-		"a": {
-			{prefix: "/"},
-			{prefix: "/v1/"},
-			{prefix: "/v1/users/"},
-			{prefix: "/api"},
-		},
+	table := &routeTable{byPort: map[int]*portGroup{
+		80: {protocol: protocolHTTP, byDomain: map[string][]*route{
+			"a": {
+				{prefix: "/"},
+				{prefix: "/v1/"},
+				{prefix: "/v1/users/"},
+				{prefix: "/api"},
+			},
+		}},
 	}}
 	cases := map[string]string{
 		"/v1/users/1": "/v1/users/",
@@ -249,12 +288,12 @@ func TestPick_LongestPrefix(t *testing.T) {
 		"/api-v2":     "/",
 	}
 	for path, want := range cases {
-		entry, ok := table.pick("a", path)
+		entry, ok := table.pick(80, "a", path)
 		if !ok || entry.prefix != want {
 			t.Fatalf("pick %s: want %s got %+v ok=%v", path, want, entry, ok)
 		}
 	}
-	if _, ok := table.pick("other", "/"); ok {
+	if _, ok := table.pick(80, "other", "/"); ok {
 		t.Fatal("unknown domain should not match")
 	}
 }
@@ -287,7 +326,7 @@ func TestLoadTable_NormalizesDomainCase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadTable: %v", err)
 	}
-	if !table.has("api.example.com") {
+	if !table.has(80, "api.example.com") {
 		t.Fatal("domain should be normalized to lowercase")
 	}
 }
@@ -299,10 +338,10 @@ func TestLoadTable_TrimsWhitespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadTable: %v", err)
 	}
-	if !table.has("api.example.com") {
+	if !table.has(80, "api.example.com") {
 		t.Fatal("domain should be trimmed")
 	}
-	entry, ok := table.pick("api.example.com", "/v1/x")
+	entry, ok := table.pick(80, "api.example.com", "/v1/x")
 	if !ok || entry.prefix != "/v1/" {
 		t.Fatalf("prefix should be trimmed: got %+v ok=%v", entry, ok)
 	}
@@ -350,7 +389,7 @@ func TestRouteTable_InstallHandlers(t *testing.T) {
 	}
 	table.installHandlers(newTransport(nil))
 
-	remote, ok := table.pick("api.example.com", "/v1")
+	remote, ok := table.pick(80, "api.example.com", "/v1")
 	if !ok || remote.handler == nil {
 		t.Fatalf("remote route must get a handler: %+v ok=%v", remote, ok)
 	}
@@ -359,14 +398,14 @@ func TestRouteTable_InstallHandlers(t *testing.T) {
 	} else if handler.ModifyResponse != nil {
 		t.Fatal("route without response headers must not mount a modify hook")
 	}
-	hooked, ok := table.pick("api.example.com", "/api/x")
+	hooked, ok := table.pick(80, "api.example.com", "/api/x")
 	if !ok {
 		t.Fatal("/api/ prefix should match")
 	}
 	if handler, ok := hooked.handler.(*httputil.ReverseProxy); !ok || handler.ModifyResponse == nil {
 		t.Fatalf("route with response headers must mount a modify hook: %T", hooked.handler)
 	}
-	files, ok := table.pick("api.example.com", "/files/a")
+	files, ok := table.pick(80, "api.example.com", "/files/a")
 	if !ok {
 		t.Fatal("/files/ prefix should match")
 	}
@@ -634,6 +673,7 @@ func TestServe_DirectTLS(t *testing.T) {
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"http/1.1"}, MinVersion: tls.VersionTLS12}
 	content := "servers:\n" +
 		"  - domain: api.example.com\n" +
+		"    protocol: https\n" +
 		"    routes:\n" +
 		"      - prefix: /\n" +
 		"        upstream: " + up.URL + "\n"
@@ -658,7 +698,8 @@ func TestServe_DirectTLS(t *testing.T) {
 func TestConnect_TunnelBadGateway(t *testing.T) {
 	closed := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {}))
 	closed.Close()
-	cfg := writeConfigFile(t, "r.yaml", "servers: []\n")
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: placeholder.example.com\n    routes:\n      - prefix: /\n        upstream: http://127.0.0.1:1\n")
 	proxyURL, _ := startProxy(t, cfg, nil)
 
 	conn, err := net.Dial("tcp", strings.TrimPrefix(proxyURL, "http://"))
@@ -713,6 +754,7 @@ func TestServe_DirectTLS_RoutesBySNI(t *testing.T) {
 	}
 	content := "servers:\n" +
 		"  - domain: api.example.com\n" +
+		"    protocol: https\n" +
 		"    routes:\n" +
 		"      - prefix: /\n" +
 		"        upstream: " + up.URL + "\n"
@@ -739,16 +781,22 @@ func TestServe_DirectTLS_RoutesBySNI(t *testing.T) {
 func TestReload_SwitchesRoute(t *testing.T) {
 	upA := recordingServer(t, "A")
 	upB := recordingServer(t, "B")
-	cfg := writeConfigFile(t, "r.yaml",
-		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upA.URL+"\n")
-	proxyURL, p := startProxy(t, cfg, nil)
-	client := proxyClient(proxyURL)
+	port := testPort(t)
+	cfg := writeConfigFile(t, "r.yaml", withProxyPort(
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upA.URL+"\n", port))
+	servers := testNameservers(t)
+	p, err := newProxy(cfg, newTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("newProxy: %v", err)
+	}
+	t.Cleanup(func() { p.listeners.closeAll() })
+	client := proxyClient(fmt.Sprintf("http://127.0.0.1:%d", port))
 
 	if got := requestBody(t, client, "http://api.example.com/x"); !strings.HasPrefix(got, "A:/x") {
 		t.Fatalf("before reload: %q", got)
 	}
-	_ = os.WriteFile(cfg, []byte(
-		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upB.URL+"\n"), 0o644)
+	_ = os.WriteFile(cfg, []byte(withProxyPort(
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upB.URL+"\n", port)), 0o644)
 	if err := p.reload(); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
@@ -761,7 +809,8 @@ func TestReload_UnchangedConfigKeepsIdleConnections(t *testing.T) {
 	upA := recordingServer(t, "A")
 	upB := recordingServer(t, "B")
 	config := "servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: " + upA.URL + "\n"
-	path := writeConfigFile(t, "r.yaml", config)
+	port := testPort(t)
+	path := writeConfigFile(t, "r.yaml", withProxyPort(config, port))
 
 	var dials int32
 	servers := testNameservers(t)
@@ -776,13 +825,8 @@ func TestReload_UnchangedConfigKeepsIdleConnections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newProxy: %v", err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
-	go func() { _ = serve(listener, nil, p) }()
-	client := proxyClient("http://" + listener.Addr().String())
+	t.Cleanup(func() { p.listeners.closeAll() })
+	client := proxyClient(fmt.Sprintf("http://127.0.0.1:%d", port))
 
 	getOnce(t, client, "http://api.example.com/one", "A:/one")
 	if got := atomic.LoadInt32(&dials); got != 1 {
@@ -796,7 +840,7 @@ func TestReload_UnchangedConfigKeepsIdleConnections(t *testing.T) {
 		t.Fatalf("dials after unchanged reload = %d, want 1 (idle upstream connection was torn down)", got)
 	}
 	// 真正变更仍需重建路由并拆掉指向旧目标的连接
-	if err := os.WriteFile(path, []byte(strings.Replace(config, upA.URL, upB.URL, 1)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(withProxyPort(strings.Replace(config, upA.URL, upB.URL, 1), port)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.reload(); err != nil {
@@ -820,19 +864,15 @@ func TestReload_ClearsDNSCache(t *testing.T) {
 		"        upstream: http://api.mrp.local:" + port + "\n" +
 		"nameservers:\n" +
 		"  - \"" + stub.address() + "\"\n"
+	proxyPort := testPort(t)
 	servers := testNameservers(t)
-	path := writeConfigFile(t, "r.yaml", config)
+	path := writeConfigFile(t, "r.yaml", withProxyPort(config, proxyPort))
 	p, err := newProxy(path, newTransport(servers.DialContext), nil, nil, servers)
 	if err != nil {
 		t.Fatalf("newProxy: %v", err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
-	go func() { _ = serve(listener, nil, p) }()
-	client := proxyClient("http://" + listener.Addr().String())
+	t.Cleanup(func() { p.listeners.closeAll() })
+	client := proxyClient(fmt.Sprintf("http://127.0.0.1:%d", proxyPort))
 
 	getOnce(t, client, "http://api.example.com/one", "upstream:/one")
 	if got := servers.cache.size(); got != 1 {
@@ -842,7 +882,7 @@ func TestReload_ClearsDNSCache(t *testing.T) {
 		t.Fatalf("queries after first request = %d, want 2", got)
 	}
 	// 仅改注释：不重建路由，也不清解析缓存
-	if err := os.WriteFile(path, []byte("# comment only\n"+config), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(withProxyPort("# comment only\n"+config, proxyPort)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.reload(); err != nil {
@@ -852,7 +892,7 @@ func TestReload_ClearsDNSCache(t *testing.T) {
 		t.Fatalf("cached entries after comment-only reload = %d, want 1", got)
 	}
 	// 改上游地址：必须丢弃旧解析结果
-	if err := os.WriteFile(path, []byte(strings.Replace(config, "api.mrp.local", "api2.mrp.local", 1)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(withProxyPort(strings.Replace(config, "api.mrp.local", "api2.mrp.local", 1), proxyPort)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.reload(); err != nil {
@@ -1089,10 +1129,16 @@ func TestCertificateAuthority_ConcurrentDistinctSNI(t *testing.T) {
 func TestWatch_HotReload(t *testing.T) {
 	upA := recordingServer(t, "A")
 	upB := recordingServer(t, "B")
-	cfg := writeConfigFile(t, "r.yaml",
-		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upA.URL+"\n")
-	proxyURL, p := startProxy(t, cfg, nil)
-	client := proxyClient(proxyURL)
+	port := testPort(t)
+	cfg := writeConfigFile(t, "r.yaml", withProxyPort(
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upA.URL+"\n", port))
+	servers := testNameservers(t)
+	p, err := newProxy(cfg, newTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("newProxy: %v", err)
+	}
+	t.Cleanup(func() { p.listeners.closeAll() })
+	client := proxyClient(fmt.Sprintf("http://127.0.0.1:%d", port))
 
 	stop := make(chan struct{})
 	go p.watchFile(20*time.Millisecond, stop)
@@ -1101,8 +1147,8 @@ func TestWatch_HotReload(t *testing.T) {
 	if got := requestBody(t, client, "http://api.example.com/x"); !strings.HasPrefix(got, "A:/x") {
 		t.Fatalf("before hot reload: %q", got)
 	}
-	_ = os.WriteFile(cfg, []byte(
-		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upB.URL+"\n"), 0o644)
+	_ = os.WriteFile(cfg, []byte(withProxyPort(
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upB.URL+"\n", port)), 0o644)
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -1167,7 +1213,7 @@ func TestServe_DirectTLS_NestedConnectTunnel(t *testing.T) {
 		MinVersion:     tls.VersionTLS12,
 	}
 	cfg := writeConfigFile(t, "r.yaml",
-		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: http://unused\n")
+		"servers:\n  - domain: api.example.com\n    protocol: https\n    routes:\n      - prefix: /\n        upstream: http://unused\n")
 	proxyURL, _ := startProxy(t, cfg, tlsConfig)
 	addr := strings.TrimPrefix(proxyURL, "http://")
 
@@ -1192,7 +1238,8 @@ func TestServe_DirectTLS_NestedConnectTunnel(t *testing.T) {
 
 func TestConnect_PipelinedDataPreserved(t *testing.T) {
 	echo := echoServer(t)
-	cfg := writeConfigFile(t, "r.yaml", "servers: []\n")
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: placeholder.example.com\n    routes:\n      - prefix: /\n        upstream: http://127.0.0.1:1\n")
 	proxyURL, _ := startProxy(t, cfg, nil)
 	addr := strings.TrimPrefix(proxyURL, "http://")
 
@@ -1367,7 +1414,7 @@ func TestDefaultConfig_Parses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadTable(defaultConfig): %v", err)
 	}
-	if len(table.byDomain) != 0 {
+	if len(table.byPort) != 0 {
 		t.Fatalf("default table = %v", table)
 	}
 	if len(nameservers) != 0 {
@@ -1579,16 +1626,18 @@ func TestProxy_ReloadNameservers(t *testing.T) {
 	config := "servers:\n" +
 		"  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: http://unused\n" +
 		"nameservers:\n  - \"" + refused + "\"\n"
+	port := testPort(t)
 	servers := testNameservers(t)
-	path := writeConfigFile(t, "r.yaml", config)
+	path := writeConfigFile(t, "r.yaml", withProxyPort(config, port))
 	p, err := newProxy(path, newTransport(servers.DialContext), nil, nil, servers)
 	if err != nil {
 		t.Fatalf("newProxy: %v", err)
 	}
+	t.Cleanup(func() { p.listeners.closeAll() })
 	if got := servers.serverAddresses(); !slices.Equal(got, []string{refused}) {
 		t.Fatalf("initial nameservers = %v, want %v", got, []string{refused})
 	}
-	if err := os.WriteFile(path, []byte(strings.Replace(config, refused, stub.address(), 1)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(withProxyPort(strings.Replace(config, refused, stub.address(), 1), port)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.reload(); err != nil {
@@ -1819,15 +1868,15 @@ func TestE2E_ConfigNameserversTakeEffect(t *testing.T) {
 		t.Fatal(err)
 	}
 	stub := startDNSStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
-	configPath := writeConfigFile(t, "e2e.yaml",
-		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: http://api.mrp.local:"+upPort+"\n"+
-			"nameservers:\n  - \"127.0.0.1:"+closedUDPPort(t)+"\"\n  - \""+stub.address()+"\"\n")
 	listenPort := freePort(t)
+	configPath := writeConfigFile(t, "e2e.yaml",
+		"servers:\n  - domain: api.example.com\n    port: "+listenPort+"\n    routes:\n      - prefix: /\n        upstream: http://api.mrp.local:"+upPort+"\n"+
+			"nameservers:\n  - \"127.0.0.1:"+closedUDPPort(t)+"\"\n  - \""+stub.address()+"\"\n")
 	caCert, caKey := testAuthorityCA(t)
 	certPath, keyPath := writeCertFiles(t, caCert, caKey)
 
 	var logs syncBuffer
-	cmd := exec.Command(binary, "--config", configPath, "--port", listenPort, "--cert", certPath, "--key", keyPath, "--log", "debug")
+	cmd := exec.Command(binary, "--config", configPath, "--cert", certPath, "--key", keyPath, "--log", "debug")
 	cmd.Stdout = &logs
 	cmd.Stderr = &logs
 	if err := cmd.Start(); err != nil {

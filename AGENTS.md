@@ -20,11 +20,12 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 | 文件 | 职责 | 不应包含 |
 |------|------|----------|
-| `main.go` | flags 解析（`parseStartupOptions`）、`buildProxy`、信号循环、`run`、`fatalf` | 路由/转发逻辑 |
-| `config.go` | YAML 配置结构、`loadTable`、`parseConfig`、`buildTable`、`buildRoutes`、`parseUpstream` | 任何运行期依赖 |
-| `route.go` | `route`、`target`、`headerRewrite`、`routeTable`、`pick`、`installHandlers`、`fingerprint`、`staticHandler`、`joinPath` | I/O、日志 |
-| `proxy.go` | `proxy` 结构、`ServeHTTP`、`handleConnect`/`hijackConn`/`serveConnect`、`tunnel`、`reload`、`watchFile` 热加载 | 连接级 TLS 服务细节 |
-| `server.go` | 单端口监听、TLS/HTTP 协议识别（`handleConn`/`sniffTLS`）、`oneConnListener`、`certificateAuthority` 现场签发、`statusRecorder` | 路由决策逻辑 |
+| `main.go` | flags 解析（`parseStartupOptions`）、`buildProxy`、信号循环、`run`、`fatalf` | 路由/转发逻辑、监听细节 |
+| `config.go` | YAML 配置结构、`loadTable`、`parseConfig`、`buildTable`、`buildRoutes`、`parseUpstream`、`parseUpstreamHost`、`resolveEntry`/`defaultPort`/`validPort` | 任何运行期依赖 |
+| `route.go` | `route`、`target`、`headerRewrite`、`routeTable`（含 `portGroup`/`byPort`）、`pick`、`has`、`listenerSpecs`、`installHandlers`、`fingerprint`、`staticHandler`、`joinPath` | I/O、日志 |
+| `proxy.go` | `proxy` 结构、`reload` 编排、`routeHandler`/`portHandler`/`serveRequest`、`handleConnect`/`hijackConn`/`serveConnect`、`tunnel`、`watchFile` 热加载 | 连接级 TLS 服务细节 |
+| `server.go` | 单连接的 `serve`/`handleConn`（按端口协议 http/https 分派）、`oneConnListener`、`certificateAuthority` 现场签发、`statusRecorder` | 路由决策逻辑 |
+| `listener.go` | 端口监听集 `listenerSpec`/`listenerSet`、`reconcile` 增量对账、`closeAll`、协议常量 | 路由决策逻辑 |
 | `resolver.go` | 上游 DNS 解析与故障切换、`nameserverSet`、解析结果缓存 | 路由决策逻辑 |
 | `cache.go` | 通用 `expiringCache` 并发缓存 | 具体业务逻辑 |
 | `logging.go` | console 日志（`logXxxf` 模板字符串、级别过滤、按级别整行着色、TTY 检测） | 路由/转发逻辑 |
@@ -45,8 +46,9 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 ## 并发与热加载
 
 - 路由表通过 `atomic.Pointer[routeTable]` 持有，`reload` 整体替换，禁止对存量 `routeTable` 做原地修改。
+- 监听端口由 `listenerSet` 按 `table.listenerSpecs()` 增量对账（先建新、失败回滚、后关旧），端口/协议变更随路由表一起在 `reload` 内生效。
 - 处理器在 `loadTable` 内由 `installHandlers` 构建完毕，此后路由表内容只读；运行期只做前缀匹配，不区分远程上游与本地目录。
-- `reload` 失败时保留旧路由表，仅记录错误，不影响存量连接。
+- `reload` 失败时保留旧路由表与旧监听，仅记录错误，不影响存量连接。
 - TLS 配置在启动时加载一次；路由配置文件修改后自动热加载（轮询变更），`SIGHUP` 手动触发仍可用，均只重载路由、不重载证书。
 
 ## 测试要求

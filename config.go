@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -15,8 +17,14 @@ const defaultConfig = `# mrp 反向代理路由配置
 # 修改后自动热加载，无需重启。
 #
 # domain:     按域名精确匹配，HTTPS 用 SNI、HTTP 用 Host 头
+# protocol:   可选，入口协议 http 或 https，省略按 http
+# port:       可选，监听端口，省略按协议取默认端口（http 为 80、https 为 443）
+#             多个 server 可共用一个端口（协议须一致），端口内按域名区分
 # prefix:     路径前缀，按最长前缀匹配转发到 upstream
-# upstream:   上游服务地址，路径前缀自动映射；也支持本地目录路径（相对/绝对，含 Windows 盘符如 C:\，目录命中回退 index.html）
+# upstream:   上游服务地址，路径前缀自动映射；写法：
+#               http://host[:port][/path]  https://host[:port][/path]  完整 URL
+#               host[:port]                简写，按 http 转发（如 192.168.1.50:8080）
+#               含 / 或 \ 的路径            本地目录（相对/绝对，含 Windows 盘符如 C:\，目录命中回退 index.html）
 # host:       可选，改写转发时的 Host 头
 # headers:    可选，改写消息头（Set 语义，覆盖同名已有值）
 #   request:  发往上游的请求头
@@ -29,6 +37,8 @@ const defaultConfig = `# mrp 反向代理路由配置
 # 示例：
 # servers:
 #   - domain: api.target-app.com
+#     port: 8443
+#     protocol: https
 #     routes:
 #       - prefix: /v1/
 #         upstream: https://api.our-server.com/v1/
@@ -41,8 +51,10 @@ const defaultConfig = `# mrp 反向代理路由配置
 #             Access-Control-Allow-Methods: "GET, POST, OPTIONS"
 #       - prefix: /assets/
 #         upstream: ./dist
+#   - domain: api.target-app.com
+#     routes:
 #       - prefix: /
-#         upstream: http://192.168.1.50:8080
+#         upstream: 192.168.1.50:8080
 # nameservers:
 #   - "114.114.114.114"
 #   - "223.5.5.5"
@@ -59,10 +71,12 @@ type Config struct {
 	Nameservers []string `yaml:"nameservers"`
 }
 
-// Domain 一个入口域名及其路由条目；HTTPS 按 SNI 匹配，HTTP 按 Host 头匹配。
+// Domain 一个入口域名及其路由条目；protocol 省略按 http，port 省略按协议取默认端口。
 type Domain struct {
-	Name   string  `yaml:"domain"`
-	Routes []Route `yaml:"routes"`
+	Name     string  `yaml:"domain"`
+	Port     int     `yaml:"port"`
+	Protocol string  `yaml:"protocol"`
+	Routes   []Route `yaml:"routes"`
 }
 
 type Route struct {
@@ -107,24 +121,74 @@ func parseConfig(data []byte) (*Config, error) {
 	return &config, nil
 }
 
-// buildTable 把配置构建为按域名索引的路由表；域名唯一，域名内前缀唯一。
+// buildTable 把配置构建为按端口分组的路由表：端口协议唯一，端口内域名唯一，
+// 同一域名可分别声明 http 与 https 端口条目。
 func buildTable(config *Config) (*routeTable, error) {
-	table := &routeTable{byDomain: map[string][]*route{}}
+	table := &routeTable{byPort: map[int]*portGroup{}}
 	for _, domain := range config.Domains {
-		name := strings.ToLower(strings.TrimSpace(domain.Name))
-		if name == "" {
-			return nil, errors.New("domain must not be empty")
-		}
-		if _, exists := table.byDomain[name]; exists {
-			return nil, fmt.Errorf("duplicate domain %q", domain.Name)
-		}
-		entries, err := buildRoutes(domain)
-		if err != nil {
+		if err := table.add(domain); err != nil {
 			return nil, err
 		}
-		table.byDomain[name] = entries
 	}
 	return table, nil
+}
+
+// add 归一单条 server 的协议与端口后挂入对应端口分组，并做冲突校验。
+func (t *routeTable) add(domain Domain) error {
+	name := strings.ToLower(strings.TrimSpace(domain.Name))
+	if name == "" {
+		return errors.New("domain must not be empty")
+	}
+	protocol, port, err := resolveEntry(domain)
+	if err != nil {
+		return err
+	}
+	group, ok := t.byPort[port]
+	if !ok {
+		group = &portGroup{protocol: protocol, byDomain: map[string][]*route{}}
+		t.byPort[port] = group
+	}
+	if group.protocol != protocol {
+		return fmt.Errorf("port %d: protocol conflict between %s and %s servers", port, group.protocol, protocol)
+	}
+	if _, exists := group.byDomain[name]; exists {
+		return fmt.Errorf("port %d: duplicate domain %q", port, domain.Name)
+	}
+	entries, err := buildRoutes(domain)
+	if err != nil {
+		return err
+	}
+	group.byDomain[name] = entries
+	return nil
+}
+
+// resolveEntry 归一 server 条目的协议与端口：protocol 省略按 http，
+// port 为 0 视为省略并按协议取默认端口（http 80 / https 443）。
+func resolveEntry(domain Domain) (string, int, error) {
+	protocol := strings.ToLower(strings.TrimSpace(domain.Protocol))
+	switch protocol {
+	case "":
+		protocol = protocolHTTP
+	case protocolHTTP, protocolHTTPS:
+	default:
+		return "", 0, fmt.Errorf("domain %q: unsupported protocol %q", domain.Name, domain.Protocol)
+	}
+	port := domain.Port
+	if port == 0 {
+		port = defaultPort(protocol)
+	}
+	if port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("domain %q: invalid port %d", domain.Name, domain.Port)
+	}
+	return protocol, port, nil
+}
+
+// defaultPort 协议对应的默认监听端口
+func defaultPort(protocol string) int {
+	if protocol == protocolHTTPS {
+		return 443
+	}
+	return 80
 }
 
 // buildRoutes 构建单个域名的路由条目：前缀必填且以 / 开头，域名内不可重复。
@@ -160,39 +224,57 @@ func buildRoutes(domain Domain) ([]*route, error) {
 	return entries, nil
 }
 
-// parseUpstream 解析上游：http(s) URI 走远程转发，本地目录路径走静态托管。
+// parseUpstream 解析上游：带 scheme 前缀的按 URL（仅 http/https）远程转发，
+// 含路径分隔符的按本地静态目录托管，其余按 host[:port] 简写以 http 转发。
 func parseUpstream(upstream string) (target, error) {
-	parsed, err := url.Parse(upstream)
-	if err != nil {
-		return target{}, fmt.Errorf("invalid upstream %q: %w", upstream, err)
-	}
-	switch {
-	case parsed.Scheme == "http" || parsed.Scheme == "https":
+	if strings.Contains(upstream, "://") {
+		parsed, err := url.Parse(upstream)
+		if err != nil {
+			return target{}, fmt.Errorf("invalid upstream %q: %w", upstream, err)
+		}
+		if parsed.Scheme != protocolHTTP && parsed.Scheme != protocolHTTPS {
+			return target{}, fmt.Errorf("unsupported upstream scheme %q", upstream)
+		}
 		if parsed.Host == "" {
 			return target{}, fmt.Errorf("upstream %q is missing host", upstream)
 		}
 		return target{url: parsed, summary: parsed.String()}, nil
-	case isLocalPath(upstream):
-		return target{root: upstream, summary: upstream}, nil
-	default:
-		return target{}, fmt.Errorf("unsupported upstream scheme %q", upstream)
 	}
+	if isLocalPath(upstream) {
+		return target{root: upstream, summary: upstream}, nil
+	}
+	return parseUpstreamHost(upstream)
 }
 
-// isLocalPath 判断 upstream 是否为本地目录路径：无 scheme 的相对/绝对路径，
-// 以及 Windows 盘符绝对路径（如 C:\ 或 D:/）。url.Parse 会把 "D:\web" 误判为
-// scheme "d"，故在此显式识别盘符与无冒号路径，交给 http.Dir 托管。
-func isLocalPath(upstream string) bool {
-	if !strings.Contains(upstream, ":") {
-		return true
-	}
-	if len(upstream) >= 3 {
-		c := upstream[0]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
-			if upstream[1] == ':' && (upstream[2] == '\\' || upstream[2] == '/') {
-				return true
-			}
+// parseUpstreamHost 解析省略 scheme 的 host[:port] 简写，统一按 http 转发。
+// 支持 host、host:port、[IPv6]:port 写法；裸 IPv6 须用括号并显式端口。
+func parseUpstreamHost(upstream string) (target, error) {
+	remote := url.URL{Scheme: protocolHTTP}
+	if host, port, err := net.SplitHostPort(upstream); err == nil {
+		if host == "" {
+			return target{}, fmt.Errorf("upstream %q is missing host", upstream)
 		}
+		if !validPort(port) {
+			return target{}, fmt.Errorf("invalid upstream %q: port must be 1-65535", upstream)
+		}
+		remote.Host = upstream
+	} else if strings.Contains(upstream, ":") {
+		return target{}, fmt.Errorf("invalid upstream %q: use host or [host]:port", upstream)
+	} else {
+		remote.Host = upstream
 	}
-	return false
+	return target{url: &remote, summary: remote.String()}, nil
+}
+
+// validPort 校验端口为 1-65535 的纯十进制
+func validPort(port string) bool {
+	number, err := strconv.Atoi(port)
+	return err == nil && strconv.Itoa(number) == port && number >= 1 && number <= 65535
+}
+
+// isLocalPath 判断 upstream 是否为本地目录路径：含路径分隔符（/ 或 \），
+// 覆盖 ./dist、/var/www、\\server\share 与 Windows 盘符路径 C:\web。
+// 不含分隔符的裸词（如 example.com 或 192.168.1.50）按远程上游解析。
+func isLocalPath(upstream string) bool {
+	return strings.ContainsAny(upstream, "/\\")
 }
