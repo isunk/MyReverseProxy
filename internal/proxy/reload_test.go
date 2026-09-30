@@ -147,6 +147,7 @@ func TestWatch_HotReload(t *testing.T) {
 	stop := make(chan struct{})
 	go proxy.WatchFile(20*time.Millisecond, stop)
 	t.Cleanup(func() { close(stop) })
+	time.Sleep(50 * time.Millisecond) // 等基线快照落定，且让后续写入错开 mtime 的毫秒级粒度
 
 	if got := requestBody(t, client, "http://api.example.com/x"); !strings.HasPrefix(got, "A:/x") {
 		t.Fatalf("before hot reload: %q", got)
@@ -163,4 +164,44 @@ func TestWatch_HotReload(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// 等长改动：轮询靠 size 与 mtime 判断变化，字节数相同也必须靠 mtime 命中
+func TestWatch_SameSizeEditReloads(t *testing.T) {
+	up := recordingServer(t, "upstream")
+	base := "servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: " + up.URL + "\n        host: "
+	configA := base + "h-one\n"
+	configB := base + "h-two\n"
+	if len(configA) != len(configB) {
+		t.Fatalf("测试前提：两份配置须等长，%d vs %d", len(configA), len(configB))
+	}
+
+	configPath := testutil.ConfigFile(t, "r.yaml", configA)
+	servers := testNameservers(t)
+	proxy, err := New(configPath, NewTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	client := proxyClient(startListener(t, proxy))
+
+	stop := make(chan struct{})
+	go proxy.WatchFile(20*time.Millisecond, stop)
+	t.Cleanup(func() { close(stop) })
+	time.Sleep(50 * time.Millisecond) // 等基线快照落定，且让后续写入错开 mtime 的毫秒级粒度
+
+	waitBody := func(want string) {
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			if got := requestBody(t, client, "http://api.example.com/x"); strings.Contains(got, want) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("等待响应包含 %q 超时", want)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	waitBody("|host=h-one")
+	_ = os.WriteFile(configPath, []byte(configB), 0o644)
+	waitBody("|host=h-two")
 }

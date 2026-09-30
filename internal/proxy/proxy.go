@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"net"
@@ -204,11 +203,14 @@ func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) 
 	handler.ServeHTTP(recorder, request)
 }
 
-// WatchFile 轮询配置文件内容，变化即触发重载，失败保留旧配置。stop 为 nil 时常驻运行。
+// WatchFile 轮询配置文件元数据，size 与 mtime 都未变化时跳过整份读取，
+// 内容变化才触发重载，失败保留旧配置。stop 为 nil 时常驻运行。
 func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
-	var previous []byte
-	if data, err := os.ReadFile(p.configPath); err == nil {
-		previous = data
+	var previousSize int64
+	var previousModTime time.Time
+	previousKnown := false
+	if info, err := os.Stat(p.configPath); err == nil {
+		previousSize, previousModTime, previousKnown = info.Size(), info.ModTime(), true
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -217,15 +219,16 @@ func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-ticker.C:
-			data, err := os.ReadFile(p.configPath)
+			info, err := os.Stat(p.configPath)
 			if err != nil {
-				logging.Warnf("failed to read routing config: %v", err)
+				logging.Warnf("failed to stat routing config: %v", err)
 				continue
 			}
-			if bytes.Equal(data, previous) {
+			// 比 size 与 mtime 而非读全文；mtime 为毫秒级粒度，间隔极短的连续保存可能只触发一次重载
+			if previousKnown && info.Size() == previousSize && info.ModTime().Equal(previousModTime) {
 				continue
 			}
-			previous = data
+			previousSize, previousModTime, previousKnown = info.Size(), info.ModTime(), true
 			if err := p.reload(); err != nil {
 				logging.Errorf("config reload failed, keeping previous config: %v", err)
 				continue
