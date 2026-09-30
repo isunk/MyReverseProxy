@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -78,15 +77,8 @@ func newPassthroughProxy(transport *http.Transport) *httputil.ReverseProxy {
 			request.Out.Host = request.In.Host
 		},
 		Transport:    transport,
-		ErrorHandler: upstreamErrorHandler,
+		ErrorHandler: route.UpstreamErrorHandler,
 	}
-}
-
-// upstreamErrorHandler 上游不可达时回 502，不向客户端透出传输层错误细节。
-func upstreamErrorHandler(writer http.ResponseWriter, request *http.Request, err error) {
-	logging.Errorf("upstream request failed host=%s path=%s: %v", request.Host, request.URL.Path, err)
-	writer.WriteHeader(http.StatusBadGateway)
-	_, _ = io.WriteString(writer, "502 Bad Gateway")
 }
 
 // reload 重载配置：路由与 DNS 服务器无变化时保留现状，任一项变化则替换并清理派生状态。
@@ -212,7 +204,7 @@ func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) 
 	handler.ServeHTTP(recorder, request)
 }
 
-// WatchFile 轮询配置文件内容，变化即触发重载，失败保留旧配置。
+// WatchFile 轮询配置文件内容，变化即触发重载，失败保留旧配置。stop 为 nil 时常驻运行。
 func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 	var previous []byte
 	if data, err := os.ReadFile(p.configPath); err == nil {

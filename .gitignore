@@ -10,9 +10,9 @@ vendor/
 *.key
 *.crt
 
-# 本地运行产物
-mrp
-mrp-*
+# 本地运行产物（仅忽略仓库根目录下的二进制，避免误伤 cmd/mrp 源码目录）
+/mrp
+/mrp-*
 certs/
 
 # IDE 与编辑器

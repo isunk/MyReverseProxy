@@ -112,6 +112,8 @@ func (a *Authority) ClearCache() {
 	a.cache.Clear()
 }
 
+// sign 现场签发单个域名的证书：每次生成独立密钥不复用，NotBefore 回拨一小时容忍时钟偏移，
+// 证书链带上 CA 根证书使客户端无需额外安装即可信任。
 func (a *Authority) sign(serverName string) (*tls.Certificate, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

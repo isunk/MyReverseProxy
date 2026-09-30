@@ -68,8 +68,13 @@ func TestLogf_LevelFilter(t *testing.T) {
 
 	Infof("hidden")
 	Warnf("shown")
-	if out.String() != formatLogLine(time.Now(), Warn, "shown", false) {
-		t.Fatalf("filter mismatch: %q", out.String())
+	text := out.String()
+	// 只断言级别过滤结果，不重算时间戳：期望值用 time.Now() 会跨毫秒而与实际日志不一致
+	if strings.Contains(text, "hidden") {
+		t.Fatalf("info message leaked above the warn floor: %q", text)
+	}
+	if !strings.Contains(text, "\tWARN\tshown") {
+		t.Fatalf("warn message was dropped by the warn floor: %q", text)
 	}
 }
 

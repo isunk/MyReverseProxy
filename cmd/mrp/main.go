@@ -119,6 +119,7 @@ func main() {
 // 此后仅轮询配置热加载并等待信号。退出信号关闭监听后返回。
 func run(listener net.Listener, proxyInstance *proxy.Proxy) {
 	go server.Serve(listener, proxyInstance.Handler())
+	// stop 传 nil 表示热加载常驻到进程退出，由上面的退出信号关闭监听来结束
 	go proxyInstance.WatchFile(time.Second, nil)
 	serveSignals(listener, proxyInstance)
 }

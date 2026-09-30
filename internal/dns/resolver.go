@@ -147,6 +147,7 @@ func (r *Resolver) dropCached(host, port string) {
 }
 
 // resolve 按配置顺序尝试 DNS 服务器，单次尝试超时后切换下一台。
+// LookupIPAddr 在无应答时会返回 no such host 错误，故 len(ips)==0 必然伴随非 nil 错误。
 func (r *Resolver) resolve(ctx context.Context, host, port string) ([]string, error) {
 	var lastError error
 	for _, resolver := range r.current.Load().resolvers {
