@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/isunk/MyReverseProxy/internal/logging"
-	"github.com/isunk/MyReverseProxy/internal/testutil"
+	"mrp/internal/logging"
+	"mrp/internal/testutil"
 )
 
 func init() {

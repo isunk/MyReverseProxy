@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/isunk/MyReverseProxy/internal/ca"
-	"github.com/isunk/MyReverseProxy/internal/config"
-	"github.com/isunk/MyReverseProxy/internal/dns"
-	"github.com/isunk/MyReverseProxy/internal/logging"
-	"github.com/isunk/MyReverseProxy/internal/proxy"
-	"github.com/isunk/MyReverseProxy/internal/server"
+	"mrp/internal/ca"
+	"mrp/internal/config"
+	"mrp/internal/dns"
+	"mrp/internal/logging"
+	"mrp/internal/proxy"
+	"mrp/internal/server"
 )
 
 const defaultListenPort = 8000

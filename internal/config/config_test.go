@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/isunk/MyReverseProxy/internal/logging"
-	"github.com/isunk/MyReverseProxy/internal/route"
-	"github.com/isunk/MyReverseProxy/internal/testutil"
+	"mrp/internal/logging"
+	"mrp/internal/route"
+	"mrp/internal/testutil"
 )
 
 func init() {

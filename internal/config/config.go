@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/isunk/MyReverseProxy/internal/logging"
-	"github.com/isunk/MyReverseProxy/internal/route"
 	"gopkg.in/yaml.v3"
+	"mrp/internal/logging"
+	"mrp/internal/route"
 )
 
 const defaultConfig = `# mrp 反向代理路由配置

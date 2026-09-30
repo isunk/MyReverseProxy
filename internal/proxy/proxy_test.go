@@ -19,12 +19,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/isunk/MyReverseProxy/internal/ca"
-	"github.com/isunk/MyReverseProxy/internal/config"
-	"github.com/isunk/MyReverseProxy/internal/dns"
-	"github.com/isunk/MyReverseProxy/internal/logging"
-	"github.com/isunk/MyReverseProxy/internal/server"
-	"github.com/isunk/MyReverseProxy/internal/testutil"
+	"mrp/internal/ca"
+	"mrp/internal/config"
+	"mrp/internal/dns"
+	"mrp/internal/logging"
+	"mrp/internal/server"
+	"mrp/internal/testutil"
 )
 
 func init() {

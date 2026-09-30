@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/isunk/MyReverseProxy/internal/testutil"
+	"mrp/internal/testutil"
 )
 
 func TestReload_SwitchesRoute(t *testing.T) {

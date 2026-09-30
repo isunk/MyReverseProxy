@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/isunk/MyReverseProxy/internal/logging"
-	"github.com/isunk/MyReverseProxy/internal/server"
+	"mrp/internal/logging"
+	"mrp/internal/server"
 )
 
 const (

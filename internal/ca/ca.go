@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/isunk/MyReverseProxy/internal/cache"
-	"github.com/isunk/MyReverseProxy/internal/logging"
+	"mrp/internal/cache"
+	"mrp/internal/logging"
 )
 
 const (

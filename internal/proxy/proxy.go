@@ -15,12 +15,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/isunk/MyReverseProxy/internal/ca"
-	"github.com/isunk/MyReverseProxy/internal/config"
-	"github.com/isunk/MyReverseProxy/internal/dns"
-	"github.com/isunk/MyReverseProxy/internal/logging"
-	"github.com/isunk/MyReverseProxy/internal/route"
-	"github.com/isunk/MyReverseProxy/internal/server"
+	"mrp/internal/ca"
+	"mrp/internal/config"
+	"mrp/internal/dns"
+	"mrp/internal/logging"
+	"mrp/internal/route"
+	"mrp/internal/server"
 )
 
 // 请求协议取值与省略端口时补齐的默认端口

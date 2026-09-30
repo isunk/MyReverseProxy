@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/isunk/MyReverseProxy/internal/ca"
-	"github.com/isunk/MyReverseProxy/internal/testutil"
+	"mrp/internal/ca"
+	"mrp/internal/testutil"
 )
 
 func readConnectResponse(t *testing.T, reader *bufio.Reader) int {
