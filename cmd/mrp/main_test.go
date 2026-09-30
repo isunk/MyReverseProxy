@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/isunk/MyReverseProxy/internal/dns"
-	"github.com/isunk/MyReverseProxy/internal/logging"
-	"github.com/isunk/MyReverseProxy/internal/testutil"
+	"mrp/internal/dns"
+	"mrp/internal/logging"
+	"mrp/internal/testutil"
 )
 
 func init() {
@@ -161,7 +161,12 @@ func buildBinary(t *testing.T) string {
 	if testing.Short() {
 		t.Skip("skip e2e build in -short mode")
 	}
-	binary := filepath.Join(t.TempDir(), "mrp")
+	name := "mrp"
+	// Windows 拒绝执行没有 .exe 后缀的文件，直接启动会报 executable file not found in %PATH%
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(t.TempDir(), name)
 	cmd := exec.Command("go", "build", "-o", binary, "./cmd/mrp")
 	cmd.Dir = repoRoot()
 	if output, err := cmd.CombinedOutput(); err != nil {
