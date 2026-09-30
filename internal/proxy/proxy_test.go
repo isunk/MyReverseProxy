@@ -159,6 +159,26 @@ func TestRouteTable_InstallHandlers(t *testing.T) {
 	}
 }
 
+// upstream 写成 "." 与 "./" 必须都按本地目录托管，不得被当作远程主机代理
+func TestRouteTable_DotUpstreamIsLocal(t *testing.T) {
+	for _, upstream := range []string{".", "./"} {
+		table, _, err := config.Load(testutil.ConfigFile(t, "dot.yaml",
+			"servers:\n  - domain: site.example.com\n    routes:\n"+
+				"      - prefix: /\n        upstream: "+upstream+"\n"))
+		if err != nil {
+			t.Fatalf("config.Load upstream=%q: %v", upstream, err)
+		}
+		table.InstallHandlers(NewTransport(nil))
+		matched, ok := table.Pick("http", 0, "site.example.com", "/")
+		if !ok {
+			t.Fatalf("upstream %q: / should match", upstream)
+		}
+		if _, ok := matched.Handler().(*httputil.ReverseProxy); ok {
+			t.Fatalf("upstream %q must be a local directory, got %T", upstream, matched.Handler())
+		}
+	}
+}
+
 func TestHostOnly_Lowercase(t *testing.T) {
 	if got := hostOnly("API.Example.COM:443"); got != "api.example.com" {
 		t.Fatalf("hostOnly: got %q", got)

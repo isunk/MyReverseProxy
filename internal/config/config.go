@@ -25,7 +25,7 @@ const defaultConfig = `# mrp 反向代理路由配置
 # upstream:   上游服务地址，路径前缀自动映射；写法：
 #               http://host[:port][/path]  https://host[:port][/path]  完整 URL
 #               host[:port]                简写，按 http 转发（如 192.168.1.50:8080）
-#               含 / 或 \ 的路径            本地目录（相对/绝对，含 Windows 盘符如 C:\，目录命中回退 index.html）
+#               目录路径或 "."、".."        本地目录（相对/绝对，含 Windows 盘符 C:\；"." 与 "./" 等价；目录命中回退 index.html）
 # host:       可选，改写转发时的 Host 头
 # headers:    可选，改写消息头（Set 语义，覆盖同名已有值）
 #   request:  发往上游的请求头

@@ -98,11 +98,13 @@ func validPort(port string) bool {
 	return err == nil && strconv.Itoa(number) == port && number >= 1 && number <= 65535
 }
 
-// isLocalPath 判断 upstream 是否为本地目录路径：含路径分隔符（/ 或 \），
-// 覆盖 ./dist、/var/www、\\server\share 与 Windows 盘符路径 C:\web。
-// 不含分隔符的裸词（如 example.com 或 192.168.1.50）按远程上游解析。
+// isLocalPath 判断 upstream 是否为本地目录路径：含路径分隔符（/ 或 \）即视为目录，
+// 覆盖 ./dist、/var/www、\\server\share 与 Windows 盘符路径 C:\web；
+// "." 与 ".." 不含分隔符但同指当前/父目录，也按本地目录处理，
+// 否则会被当作主机名远程代理。
+// 其余裸词（如 example.com 或 192.168.1.50）按远程上游解析。
 func isLocalPath(upstream string) bool {
-	return strings.ContainsAny(upstream, "/\\")
+	return upstream == "." || upstream == ".." || strings.ContainsAny(upstream, "/\\")
 }
 
 // Route 一条路径前缀到转发目标的映射。handler 在加载配置时构建完毕，

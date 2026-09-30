@@ -69,6 +69,10 @@ func TestParseTarget(t *testing.T) {
 		"up-a":             {scheme: "http", host: "up-a"},
 		"up-a:8080":        {scheme: "http", host: "up-a:8080"},
 		"[::1]:8080":       {scheme: "http", host: "[::1]:8080"},
+		".":                {root: "."},
+		"..":               {root: ".."},
+		"./":               {root: "./"},
+		"../":              {root: "../"},
 		"./dist":           {root: "./dist"},
 		"/var/www":         {root: "/var/www"},
 		`C:\Users\me\dist`: {root: `C:\Users\me\dist`},
@@ -105,6 +109,7 @@ func TestTarget_SummaryPrecomputed(t *testing.T) {
 		"http://up-a:8080": "http://up-a:8080",
 		"up-a:8080":        "http://up-a:8080",
 		"./dist":           "./dist",
+		".":                ".",
 	} {
 		target, err := ParseTarget(upstream)
 		if err != nil {
@@ -155,5 +160,33 @@ func TestStaticHandler_ResponseHeaders(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
 		t.Fatalf("response header not applied: got %q", got)
+	}
+}
+
+// "." 与 "./" 指向同一目录，必须都按本地目录托管并服务出同样的文件
+func TestStaticHandler_DotRootEquivalent(t *testing.T) {
+	work := t.TempDir()
+	if err := os.WriteFile(filepath.Join(work, "index.html"), []byte("home"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(original) })
+
+	for _, root := range []string{".", "./"} {
+		handler := newStaticHandler(root, "/", nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("root %q: code=%d, want %d", root, recorder.Code, http.StatusOK)
+		}
+		if body := recorder.Body.String(); body != "home" {
+			t.Fatalf("root %q: body=%q, want %q", root, body, "home")
+		}
 	}
 }
