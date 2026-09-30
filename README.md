@@ -1,12 +1,12 @@
 # 我的反向代理 (mrp)
 
-Go 实现的本地反向代理。每个 `server` 声明一个入口监听端口，协议可显式指定（`http` 明文 / `https` 直接终结 TLS），省略则自适应（按连接首字节识别 http/https）；依据 YAML 路由配置按域名（SNI / Host）与路径前缀转发，并支持 CONNECT 隧道透传或 MITM。用于把移动 App 固定访问的域名劫持转发到自有服务器联调。
+Go 实现的本地反向代理。只监听一个端口（`--port`，默认 8000）：HTTP 请求按 Host 头与路径前缀路由转发，HTTPS 经 CONNECT 进入，命中配置的域名时做 MITM 解密后按同样规则路由，未命中的域名直接透传隧道。用于把移动 App 固定访问的域名劫持转发到自有服务器联调。
 
 ## 原理
 
-目标 App 通过 HTTPS 访问固定域名（如 `api.target-app.com`）。mrp 持有一张自签 CA，在 TLS 握手时按客户端 SNI 实时签发对应域名的服务端证书，把 CA 导入设备信任后，将设备流量引导到 mrp——hosts / DNS 重定向让 App 直连 mrp，或把设备代理指向 mrp 的 CONNECT。
+目标 App 通过 HTTPS 访问固定域名（如 `api.target-app.com`）。mrp 持有一张自签 CA，在 TLS 握手时按客户端 SNI 实时签发对应域名的服务端证书，把 CA 导入设备信任后，将设备代理指向 mrp——HTTPS 走 CONNECT 隧道，mrp 在其中完成 MITM；也可以把域名解析重定向到 mrp，直接以明文 HTTP 形式到达。
 
-核心是 MITM：App 发来带 SNI 的 TLS ClientHello，mrp 用 CA 即时签发一张 SAN 为该 SNI 的服务端证书，代替目标域名完成握手；客户端因信任本地 CA 而验证通过，mrp 由此获得解密后的明文 HTTP：
+核心是 MITM：客户端经 CONNECT 建立隧道后发来带 SNI 的 TLS ClientHello，mrp 用 CA 即时签发一张 SAN 为该 SNI 的服务端证书，代替目标域名完成握手；客户端因信任本地 CA 而验证通过，mrp 由此获得解密后的明文 HTTP：
 
 ```mermaid
 sequenceDiagram
@@ -14,16 +14,18 @@ sequenceDiagram
     participant mrp as mrp代理
     participant Up as 上游服务器
 
-    App->>mrp: TCP连接 + TLS ClientHello
+    App->>mrp: "TCP连接 + CONNECT api.target-app.com:443"
+    mrp->>App: 200 Connection Established
+    App->>mrp: TLS ClientHello
     mrp->>App: 服务端证书握手完成
     App->>mrp: GET /v1/hello 已解密
-    mrp->>mrp: "按 SNI(api.target-app.com) 与路径前缀匹配"
+    mrp->>mrp: "按域名与路径前缀匹配"
     mrp->>Up: 重新建立 HTTPS 连接并转发
     Up-->>mrp: HTTP 响应
     mrp-->>App: 加密回传响应
 ```
 
-随后按 SNI / Host 与路径前缀匹配路由，转发到真实上游，未匹配的域名透传原目标；上游为 HTTPS 时 mrp 跳过其证书校验，校验交由设备端信任的 CA 链路完成。纯 HTTP 连接（同一端口按首字节识别）不经 TLS 握手，直接按 Host 头路由；显式代理的 CONNECT 则先返回「200 Connection Established」建立隧道，命中域名再走上述 MITM 流程。
+随后按域名与路径前缀匹配路由，转发到真实上游，未匹配的域名透传原目标；上游为 HTTPS 时 mrp 跳过其证书校验，校验交由设备端信任的 CA 链路完成。明文 HTTP 连接（域名解析到 mrp 或经代理的 HTTP 请求）不做 TLS 握手，直接按 Host 头路由；显式代理的 CONNECT 未命中配置域名时同样返回「200 Connection Established」，但只搬运字节不做解密。
 
 ## 使用流程
 
@@ -98,11 +100,11 @@ mrp 首次运行会自动在当前目录创建 `config.yaml`（含注释模板�
 nameservers:
   - "114.114.114.114"
   - "8.8.8.8"
-# 每条 server 声明一个入口监听：protocol 省略则自适应（按连接首字节识别 http/https），
-# port 省略按协议取默认端口（https 443 / 其余 80）；多个 server 共用同一端口（协议须一致），端口内按域名区分
+# 每条 server 是一个虚拟服务器：mrp 只监听一个端口（--port），protocol 与 port
+# 只用于决定哪个请求归属该 server，不参与监听。protocol 省略匹配任意协议，
+# port 省略匹配任意端口；同一域名可声明多个 server 分别匹配不同协议与端口
 servers:
   - domain: api.target-app.com
-    port: 8080
     routes:
       - prefix: /v1/
         upstream: https://api.our-server.com/v1/
@@ -118,8 +120,6 @@ servers:
       - prefix: /
         upstream: http://192.168.1.50:8080
   - domain: admin.target-app.com
-    port: 8443
-    protocol: https
     routes:
       - prefix: /
         upstream: http://127.0.0.1:9000
@@ -129,9 +129,9 @@ servers:
 
 | 字段 | 说明 |
 |------|------|
-| `servers[].domain` | 按域名匹配（大小写不敏感），HTTPS 用 SNI、HTTP 用 Host 头 |
-| `servers[].protocol` | 可选，入口协议 `http` 或 `https`，省略则自适应（按连接首字节识别）；同一端口协议须一致 |
-| `servers[].port` | 可选，监听端口，省略按协议取默认端口（https 443 / 其余 80）；多个 server 可共用一个端口，端口内按域名区分 |
+| `servers[].domain` | 按域名匹配（大小写不敏感），HTTPS 用 CONNECT 目标主机、HTTP 用 Host 头 |
+| `servers[].protocol` | 可选，请求协议 `http` 或 `https`，省略匹配任意协议；不参与监听，mrp 始终在 `--port` 上监听明文连接 |
+| `servers[].port` | 可选，请求目标端口，省略匹配任意端口；不参与监听，mrp 始终在 `--port` 上监听 |
 | `routes[].prefix` | 最长路径前缀匹配，必须以 `/` 开头 |
 | `routes[].upstream` | 上游地址，路径前缀自动映射；也支持本地目录路径（相对进程工作目录，托起静态文件，目录命中回退 `index.html`） |
 | `routes[].host` | 可选，改写转发时的 Host 头 |
@@ -158,7 +158,7 @@ curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp-wi
 curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp.bat
 ```
 
-首次运行自动创建 `config.yaml`，按配置中的 `servers` 端口监听（协议省略自适应、端口省略按默认端口 https 443 / 其余 80），加载 `ca.crt` / `ca.key`：
+在 `--port` 指定的端口（默认 8000）监听，加载 `ca.crt` / `ca.key`：
 
 ```bash
 # Linux / HarmonyOS / Android 设备本机
@@ -172,8 +172,9 @@ Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.bat` 
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
+| `--port` | `8000` | 唯一监听端口，1-65535；须与设备代理端口一致；默认值在 1024 以上，无需管理员或 root 权限 |
 | `--config` | `config.yaml` | 路由配置文件路径；未指定时缺失则自动创建 |
-| `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书/私钥，成对提供；mrp 按客户端 SNI 动态签发服务端证书；缺省时仅支持 HTTP 与 CONNECT 隧道 |
+| `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书/私钥，成对提供；mrp 按客户端 SNI 动态签发服务端证书；缺省时无法 MITM，命中配置的 CONNECT 目标返回 502，其余域名仍走透传隧道 |
 | `--log` | `info` | debug / info / warn / error |
 | `--dns-timeout` | `1s` | 单个 DNS 服务器的解析尝试超时，超时后切到下一个 `nameservers` |
 | `--dns-ttl` | `30s` | 上游 `host:port` 解析结果的缓存时长，`0` 关闭缓存改为每次连接都解析 |
@@ -181,17 +182,16 @@ Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.bat` 
 ### 5. 测试验证
 
 ```bash
-# 直连 https 入口（域名解析到本机，mrp 终结 TLS 后按 SNI 路由转发）
-curl --cacert ca.crt --resolve admin.target-app.com:8443:127.0.0.1 \
-  https://admin.target-app.com:8443/hello
-
-# 直连 http 入口（端口由配置声明，此处 8080）
-curl --resolve api.target-app.com:8080:127.0.0.1 \
-  http://api.target-app.com:8080/v1/hello
-
-# 显式代理（CONNECT，指向任一 http 监听端口，命中该端口路由则 MITM，否则透传隧道）
-curl -x http://127.0.0.1:8080 --cacert ca.crt \
+# 显式代理：CONNECT 命中配置域名则 MITM 后路由转发
+curl -x http://127.0.0.1:8000 --cacert ca.crt \
   https://api.target-app.com/v1/hello
+
+# 显式代理：CONNECT 未命中配置域名则透传隧道（无需 cacert）
+curl -x http://127.0.0.1:8000 https://www.example.com/
+
+# 直连：域名解析到 mrp 监听端口，按 Host 头路由转发
+curl --resolve api.target-app.com:8000:127.0.0.1 \
+  http://api.target-app.com:8000/v1/hello
 ```
 
 观察 mrp 日志（`domain` / `path` / `upstream` / `status` / `elapsed`）确认路由命中与转发结果；上游不可达时返回 502。
@@ -206,7 +206,7 @@ curl -x http://127.0.0.1:8080 --cacert ca.crt \
 
 ### 6. 各平台设备对接代理
 
-mrp 可跑在设备本机（代理地址填 `127.0.0.1`，免局域网依赖），也可跑在 PC 上（代理地址填 PC 的局域网 IP）。端口由 `config.yaml` 中 `servers[].port` 声明（省略按默认端口 https 443 / 其余 80）。
+mrp 可跑在设备本机（代理地址填 `127.0.0.1`，免局域网依赖），也可跑在 PC 上（代理地址填 PC 的局域网 IP）。监听端口由 `--port` 指定（默认 8000），须与代理地址端口一致。
 
 #### Android
 
@@ -223,7 +223,7 @@ adb shell chmod +x /data/local/mrp/mrp-linux-arm64
 adb shell "cd /data/local/mrp && ./mrp-linux-arm64"
 
 # 全局代理指向本机
-adb shell settings put global http_proxy 127.0.0.1:8080
+adb shell settings put global http_proxy 127.0.0.1:8000
 
 # 取消代理
 adb shell settings put global http_proxy :0
@@ -233,7 +233,7 @@ adb shell settings put global http_proxy :0
 
 ```bash
 # 设置全局 HTTP 代理（IP 换成 mrp 所在机器的局域网地址）
-adb shell settings put global http_proxy 192.168.1.100:8080
+adb shell settings put global http_proxy 192.168.1.100:8000
 
 # 取消代理
 adb shell settings put global http_proxy :0
@@ -258,7 +258,7 @@ hdc shell "chmod +x /data/local/mrp/mrp-linux-arm64"
 hdc shell "cd /data/local/mrp && ./mrp-linux-arm64"
 
 # 全局代理指向本机
-hdc shell network-cfg set http_proxy 127.0.0.1:8080
+hdc shell network-cfg set http_proxy 127.0.0.1:8000
 
 # 取消代理
 hdc shell network-cfg set http_proxy 0
@@ -268,25 +268,25 @@ hdc shell network-cfg set http_proxy 0
 
 ```bash
 # 设置 WinHTTP 系统代理（服务与部分命令行工具生效）
-netsh winhttp set proxy 192.168.1.100:8080
+netsh winhttp set proxy 192.168.1.100:8000
 
 # 取消代理
 netsh winhttp reset proxy
 ```
 
-浏览器与多数桌面应用走 WinINET（GUI）：设置 → 网络和 Internet → 代理 → 手动设置代理，填入 `192.168.1.100:8080`（端口取配置声明的 http 监听端口），关闭时切回「自动检测」。
+浏览器与多数桌面应用走 WinINET（GUI）：设置 → 网络和 Internet → 代理 → 手动设置代理，填入 `192.168.1.100:8000`（端口取 `--port`，默认 8000），关闭时切回「自动检测」。
 
 也可以只让单个 Chrome 实例走代理（不影响系统设置，关闭窗口即结束）：
 
 ```bash
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --proxy-server="http://127.0.0.1:8080" "https://api.target-app.com/v1/"
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --proxy-server="http://127.0.0.1:8000" "https://api.target-app.com/v1/"
 ```
 
 #### Linux
 
 ```bash
 # 设置会话级代理（curl 等命令行工具生效）
-export http_proxy=http://192.168.1.100:8080 https_proxy=http://192.168.1.100:8080
+export http_proxy=http://192.168.1.100:8000 https_proxy=http://192.168.1.100:8000
 
 # 取消代理
 unset http_proxy https_proxy

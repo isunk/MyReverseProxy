@@ -5,73 +5,69 @@ Updated: 2026-09-30
 
 ## Introduction
 
-将 mrp 的接入模型改为 nginx 风格的多端口入口：每个 server（域名分组）声明接入协议 `protocol: http|https`，省略则自适应（按连接首字节识别 http/https），端口 `port` 可选，省略时按协议取默认端口（https 为 443、其余为 80）。监听端口完全由配置决定，`--port` 全局端口参数移除；协议嗅探仅保留在省略 `protocol` 的端口。同时修正 `upstream` 解析的两处易错点：省略 scheme 的 `host` / `host:port` 简写按 http 转发；本地目录识别改为分隔符规则，消除裸域名（如 `example.com`）被静默当成静态目录的问题。
+mrp 收敛为单端口代理模型：只监听一个端口（`--port`，默认 8000），配置里的 `protocol` 与 `port` 不再决定监听，只作为虚拟服务器的匹配条件——决定哪个请求归属哪个 server。协议与端口从请求内容推导：明文连接取 Host 头与 URL，CONNECT 按目标主机与端口（视为 https）。未命中路由的域名透传原目标，未配置的 CONNECT 目标走透传隧道。同时保留 `upstream` 简写与本地目录识别规则。
 
 ## Glossary
 
-- **server**: 配置中一个域名分组（domain + 可选 port/protocol + routes），是路由与监听的基本单位
-- **入口端口**: server 实际绑定的 TCP 端口，取显式 `port`，省略时按协议取默认端口
-- **默认端口**: 协议对应的约定端口，https 为 443、其余（http 与省略）为 80
-- **协议 (protocol)**: 端口的接入协议，取值 `http` / `https`，省略则自适应（按连接首字节识别）
+- **虚拟服务器 (server)**: 配置中一个域名分组（domain + 可选 protocol/port + routes），是路由匹配的基本单位
+- **匹配协议 (protocol)**: server 声明的请求协议 `http` / `https`，省略匹配任意协议
+- **匹配端口 (port)**: server 声明的请求目标端口，省略匹配任意端口
+- **请求协议**: 由请求内容推导的协议——明文连接按 URL scheme 或连接是否 TLS，CONNECT 视为 https
 - **上游 (upstream)**: 路由转发目标，远程地址（完整 URL 或 `host[:port]` 简写）或本地静态目录
-- **透传**: 域名与端口均未命中路由时按原始目标直接转发的现有行为
-- **CONNECT 隧道**: 客户端以 CONNECT 方法建立的代理隧道，mrp 在隧道内按 SNI 现场签发证书并继续路由（现有 MITM 行为）
+- **透传**: 域名与协议/端口均未命中路由时按原始目标直接转发的现有行为
+- **CONNECT 隧道**: 客户端以 CONNECT 方法建立的代理隧道；命中配置的域名时 mrp 在隧道内现场签发证书并解密路由，未命中时只搬运字节
 - **热加载**: 修改 `config.yaml` 后无需重启即生效的现有机制
 
 ## Requirements
 
-### Requirement 1: server 端口与协议解析
+### Requirement 1: 虚拟服务器匹配条件解析
 
-**User Story:** 作为联调人员，我希望每个 server 用 protocol 声明接入协议并可选指定端口，省略端口时按协议走 80/443，以便用 nginx 风味的配置表达入口。
-
-#### Acceptance Criteria
-
-1. THE 代理服务 SHALL 为每个 server 解析出唯一接入协议：`protocol` 配置为 `http` 或 `https`，省略时按连接首字节自适应识别 http/https
-2. WHEN server 配置了 `port`，THE 代理服务 SHALL 将该 server 绑定到该端口（整数 1-65535）
-3. WHEN server 未配置 `port`，THE 代理服务 SHALL 按协议取默认端口：https 为 443、其余（http 与省略）为 80
-4. IF `protocol` 取值不是 `http` 或 `https`，或 `port` 超出 1-65535，THE 代理服务 SHALL 拒绝加载配置并保留当前生效配置
-5. IF 同一端口上多个 server 的协议不一致，THE 代理服务 SHALL 拒绝加载配置
-6. THE 代理服务 SHALL 允许同一域名分别声明 http 与 https 两个端口条目
-7. IF 同一端口上出现重复域名，THE 代理服务 SHALL 拒绝加载配置
-
-### Requirement 2: 监听管理
-
-**User Story:** 作为联调人员，我希望监听端口完全由配置决定并随热加载自动增减，以便无需重启即可调整入口。
+**User Story:** 作为联调人员，我希望用 protocol 与 port 表达"哪类请求走哪组路由"，以便同一域名可以区分明文与加密流量而不新增端口。
 
 #### Acceptance Criteria
 
-1. THE 代理服务 SHALL 为配置中出现的每个不同端口建立一条监听，端口内按域名区分路由
-2. WHEN 配置未包含任何 server，THE 代理服务 SHALL 保持无监听并输出提示日志，热加载新增 server 后自动开始监听
-3. WHEN 热加载后的配置新增端口，THE 代理服务 SHALL 自动开始监听该端口
-4. WHEN 热加载后的配置不再引用某端口，THE 代理服务 SHALL 关闭该端口监听并停止接受新连接，存量连接按自身生命周期自然结束
-5. IF 配置解析或监听建立失败，THE 代理服务 SHALL 保留当前全部监听与路由表
-6. WHEN 端口被占用或无权限绑定（如 Linux 非特权用户绑定 80），THE 代理服务 SHALL 拒绝本次加载并输出包含端口与原因的错误日志
-7. WHEN 配置存在 https 端口但未提供 CA 证书，THE 代理服务 SHALL 在加载配置时报错并提示需要证书
-8. THE 代理服务 SHALL 在 http 端口仅接受明文 HTTP（含 CONNECT 隧道请求），在 https 端口仅接受 TLS 连接并按 SNI 匹配域名、用 CA 现场签发证书；在省略 `protocol` 的自适应端口按连接首字节分别服务 HTTP 明文与 TLS 直连
+1. THE 代理服务 SHALL 为每个 server 解析出匹配协议与匹配端口：`protocol` 取 `http` / `https`，省略匹配任意协议；`port` 取整数 1-65535，省略匹配任意端口
+2. IF `protocol` 取值不是 `http` 或 `https`，或显式 `port` 超出 1-65535，THE 代理服务 SHALL 拒绝加载配置并保留当前生效配置
+3. IF 同一 `(domain, protocol, port)` 组合重复声明，THE 代理服务 SHALL 拒绝加载配置
+4. THE 代理服务 SHALL 允许同一域名声明多个 server 分别匹配不同协议或端口
+5. THE 代理服务 SHALL 保持旧配置文件可解析：无 `protocol` / `port` 字段的 server 匹配任意协议与端口
 
-### Requirement 3: 端口绑定的域名匹配
+### Requirement 2: 单端口监听
 
-**User Story:** 作为联调人员，我希望域名匹配与到达端口绑定，以便同一域名可同时提供 http 与 https 服务且行为可预期。
+**User Story:** 作为联调人员，我希望代理端口只由一处参数决定，以便部署时与设备代理设置一一对应。
 
 #### Acceptance Criteria
 
-1. WHEN 请求到达某端口，THE 代理服务 SHALL 仅在该端口分组的 server 集合内按域名与最长路径前缀匹配路由
-2. WHEN 请求的域名在该端口无匹配 server，THE 代理服务 SHALL 透传原目标
-3. THE 代理服务 SHALL 按 CONNECT 隧道建立所在端口分组匹配隧道内解密后的请求（现有隧道 MITM 行为保持）
-4. THE 代理服务 SHALL 保持域名匹配大小写不敏感（SNI 与 Host 头），路由前缀按路径段边界最长匹配
-5. WHEN 端口或协议配置变化，THE 代理服务 SHALL 判定配置指纹变化并重建处理器与监听分组
+1. THE 代理服务 SHALL 仅在 `--port` 指定的端口建立一条监听，默认值为 80，取值须在 1-65535
+2. IF `--port` 超出 1-65535 或无法绑定（端口被占用、无权限），THE 代理服务 SHALL 终止启动并输出包含端口与原因的错误日志
+3. THE 代理服务 SHALL 在该端口始终接受明文 TCP 连接，HTTP 请求与 CONNECT 隧道按请求内容区分
+4. THE 代理服务 SHALL 不在热加载时增减监听；配置热加载只替换路由表
+5. THE mrp.bat SHALL 使用 80 作为代理端口常量，与该默认值一致
 
-### Requirement 4: 启动参数与部署脚本
+### Requirement 3: 协议与端口绑定的域名匹配
 
-**User Story:** 作为联调人员，我希望端口模型收敛到配置一处，部署脚本与文档同步，以免残留失效的 --port 概念。
+**User Story:** 作为联调人员，我希望请求按协议与目标端口筛选虚拟服务器，以便同一域名下明文与加密流量走不同路由。
 
 #### Acceptance Criteria
 
-1. THE 代理服务 SHALL 移除 `--port` 启动参数，监听端口完全由配置决定
-2. THE mrp.bat SHALL 将代理端口常量默认值改为 80，并注明其取值须与配置中某个监听端口一致
-3. THE 默认配置模板 SHALL 说明 `port` 与 `protocol` 字段、默认端口规则及 upstream 简写
-4. THE README SHALL 同步 servers 字段说明、示例、启动参数表，并标注升级行为变化（旧配置 server 无 port/protocol 时由全局端口变为自适应:80）
-5. THE 代理服务 SHALL 保持旧配置文件可解析：无 `port`/`protocol` 字段的 server 按自适应:80 生效
+1. WHEN 收到非 CONNECT 请求，THE 代理服务 SHALL 取 URL scheme 与目标端口作为请求协议与端口；省略端口时按协议补默认端口（https 443、其余 80）
+2. WHEN 请求经 CONNECT 进入隧道内部，THE 代理服务 SHALL 按 https 与该域名匹配路由
+3. WHEN 请求到达某域名，THE 代理服务 SHALL 仅在该域名下协议与端口均匹配的 server 集合内按最长路径前缀匹配路由
+4. WHEN 请求的域名或协议端口无匹配 server，THE 代理服务 SHALL 透传原目标
+5. THE 代理服务 SHALL 保持域名匹配大小写不敏感，路由前缀按路径段边界最长匹配
+6. WHEN 协议或端口配置变化，THE 代理服务 SHALL 判定配置指纹变化并重建处理器
+
+### Requirement 4: CONNECT 隧道与 MITM 分派
+
+**User Story:** 作为联调人员，我希望命中配置的域名被解密路由、其余域名保持可用，以便在未覆盖的流量上不产生故障。
+
+#### Acceptance Criteria
+
+1. WHEN CONNECT 目标的域名在该协议端口下有匹配路由，THE 代理服务 SHALL 返回 200 并在隧道内按 SNI 现场签发证书完成 MITM，解密后的请求按域名与路径前缀路由
+2. WHEN CONNECT 目标的域名无匹配路由，THE 代理服务 SHALL 返回 200 并只搬运字节透传到原目标
+3. IF CONNECT 目标有匹配路由但未配置 CA 证书，THE 代理服务 SHALL 返回 502 并输出警告日志，不得透传解密流量
+4. IF 上游不可达，THE 代理服务 SHALL 返回 502，不向客户端透出传输层错误细节
+5. THE 代理服务 SHALL 在 CONNECT 与后续数据同批到达时保留已读到的字节，避免丢失
 
 ### Requirement 5: upstream 简写与目录识别
 

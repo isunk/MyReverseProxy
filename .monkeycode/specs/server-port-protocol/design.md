@@ -1,92 +1,95 @@
-# Server 入口端口与协议
+# 单端口代理与虚拟服务器匹配
 
 Feature Name: server-port-protocol
 Updated: 2026-09-30
 
 ## Description
 
-将接入模型改为 nginx 风格：每个 server 声明 `protocol: http|https`，省略则自适应（按连接首字节识别 http/https），`port` 可选（省略按协议取默认端口 https:443 / 其余:80），监听端口完全由配置决定。`--port` 全局端口参数移除；协议嗅探仅保留在省略 `protocol` 的端口；`serveConnect` 的隧道 MITM 行为保持，按建立隧道的端口分组匹配。
+mrp 收敛为单端口代理模型：只监听一个端口（`--port`，默认 8000），配置里的 `protocol` 与 `port` 从监听规格降级为虚拟服务器匹配条件——决定哪个请求归属哪个 server，两者均不参与监听。协议与端口从请求内容推导：非 CONNECT 请求取 URL scheme 与目标端口（省略端口按协议补默认 80/443），CONNECT 视为 https 并按目标主机端口；隧道解密后的请求按 https + Host 匹配。CONNECT 命中配置的域名走 MITM，未命中走透传隧道。
 
 已确认的设计决策：
 
-1. **无全局端口**：`--port` 参数移除，监听端口完全由配置决定；配置无 server 时不监听任何端口并输出提示，热加载可后续新增。
-2. **协议决定默认端口**：`protocol` 省略留空表示自适应（按连接首字节识别 http/https）；`port` 省略按协议取默认端口（https:443 / 其余:80）；显式 `http`/`https` 的监听协议固定，自适应端口才启用嗅探（`sniffConn`）。
-3. **域名绑定端口**：`(port, domain)` 唯一；同一域名可分别声明 http 与 https 条目；自适应端口内同一域名可同时接受 http 与 https 连接。
-4. **upstream 简写**：省略 scheme 按 http（80/自定义端口）；本地目录识别改为"含 `/` 或 `\` 分隔符"规则；带其他 scheme 前缀显式报错。
+1. **单端口监听**：`--port` 恢复为唯一监听端口参数（默认 8000，校验 1-65535），监听在 `main` 内一次性建立，`reload` 不再增减监听，配置热加载只替换路由表。
+2. **protocol 保留并按请求 scheme 匹配**：`protocol` 省略匹配任意协议，显式 `http`/`https` 只接对应协议请求；不参与监听，mrp 恒在 `--port` 上监听明文连接。
+3. **port 匹配请求目标端口**：`port` 省略匹配任意端口，显式取值只接该目标端口的请求；`(domain, protocol, port)` 组合唯一。
+4. **去掉自适应嗅探**：监听恒为明文，不存在按首字节识别协议的端口，`sniffConn` 及其 TLS 记录握手判定整体删除。
+5. **去掉加载期 CA 校验**：无 CA 时 CONNECT 直接透传隧道，mrp 无 CA 也能提供 HTTP 路由与隧道能力；命中域名但无 CA 时返回 502 并输出警告。
+6. **upstream 简写**：省略 scheme 按 http（80/自定义端口）；本地目录识别为"含 `/` 或 `\` 分隔符"规则；带其他 scheme 前缀显式报错。
 
 ## Architecture
 
 ```mermaid
 graph TD
-    A["config.yaml servers protocol port"] --> B["buildTable 校验并按端口分组"]
-    B --> C["listenerSet.reconcile 按端口规格增删监听"]
-    C --> D["每端口 handler 捕获端口号"]
-    D --> E["http 明文 或 tls.Server 握手 或嗅探自适应"]
-    E --> F["pick 端口加域名加路径匹配"]
-    F --> G["命中走 route 转发 未命中透传"]
-    D --> H["CONNECT 隧道按所在端口分组 MITM"]
+    A["main 解析 --port 并 net.Listen"] --> B["run 常驻服务该唯一端口"]
+    B --> C["serveRequest 按请求推导 protocol port domain"]
+    C --> D["routeHandler 在 byDomain 内按 serverEntry 筛选后最长前缀匹配"]
+    D --> E["命中走 route 转发 未命中 passthrough"]
+    C --> F["CONNECT 目标按 https 与目标端口匹配"]
+    F --> G["has 命中走 MITM 现场签发 否则透传隧道"]
+    G --> H["隧道内层回到 serveRequest"]
 ```
 
-数据流：`reload` 先解析并校验配置构建新表，随后 `listenerSet.reconcile` 对比新旧端口规格（先建新、失败回滚、后关旧），监听就绪后才原子替换路由表。每条监听绑定捕获了自身端口的 handler；http 端口直接明文服务（CONNECT 隧道照常处理），https 端口直接包 `tls.Server` 按 SNI 现场签发，省略协议时 `sniffConn` 按首字节分辨 http/https。
+数据流：`reload` 解析并校验配置构建新表，比对指纹后 `installHandlers` 构建处理器并原子替换路由表，随后清空上游连接池、DNS 缓存与已签发证书缓存；监听不动，存量连接继续由旧表服务至自然结束。
 
 ## Components and Interfaces
 
 | 文件 | 改动 |
 |------|------|
-| `config.go` | `Domain` 增加 `Port int \`yaml:"port"\``、`Protocol string \`yaml:"protocol"\``；`buildTable` 解析协议/端口（省略留空自适应）并按端口分组校验；`parseUpstream` 重写支持简写；`loadTable(path)` 签名不变 |
-| `route.go` | `routeTable.byPort map[int]*portGroup`；`pick(port, domain, path)`、`has(port, domain)`；`listenerSpecs()` 汇总端口规格；`fingerprint` 纳入 port/protocol |
-| `listener.go`（新增） | `listenerSpec{port, protocol}`、`listenerSet`：`reconcile(specs, tlsConfig, handlerFactory)` 增删监听、`closeAll`；单条监听一个 goroutine 跑 `serve` |
-| `server.go` | `serve`/`handleConn` 增加 protocol 参数：`http` 明文直服、`https` 直接包 `tls.Server`、留空用 `sniffConn` 首字节嗅探（`tlsRecordHandshake`/`protoDetectWait`/`bufferedConn` 保留） |
-| `proxy.go` | 持有 `listenerSet`；`reload` 编排"先监听后换表"，https 端口无 CA 时先报错；`routeHandler(request, port)`；`serveConnect`/隧道内层服务按端口透传 |
-| `main.go` | 移除 `-port` flag；`run` 不再自建监听（reconcile 在 reload 内完成），启动失败走 `fatalf` |
-| `AGENTS.md` | 文件职责表新增 `listener.go` 行，更新 server.go/main.go 职责描述 |
-| `mrp.bat` | `PORT` 常量 4000 → 80，注明须与配置监听端口一致（保持 CRLF/纯 ASCII） |
+| `config.go` | `Domain` 保留 `Port int`、`Protocol string` 字段但语义改为匹配条件；`resolveEntry` 返回 `*serverEntry`（省略留空/0）；`routeTable.add` 按 `(domain, protocol, port)` 校验重复；新增 `protocolLabel`；`defaultPort`/`validPort` 中默认端口推导删除；`defaultConfig` 模板注释同步 |
+| `route.go` | `portGroup`/`byPort` 改为 `serverEntry{protocol, port, routes}` 与 `routeTable.byDomain map[string][]*serverEntry`；新增 `serverEntry.matches(protocol, port)`；`pick(protocol, port, domain, path)`、`has(protocol, port, domain)`；`listenerSpecs`/`hasHTTPSPort` 删除；`fingerprint` 纳入 protocol 与 port |
+| `server.go` | `serve(listener, handler)` 始终明文服务；`handleConn`/`sniffConn`/`tlsRecordHandshake`/`protoDetectWait` 删除；`bufferedConn` 保留供 hijack 预读 |
+| `proxy.go` | 删除 `listenerSpec`/`listenerEntry`/`listenerSet`/`reconcile`/`closeAll`/`portHandler` 与 `listeners` 字段；新增 `handler()`（供 `serve` 与隧道内层共用）、`targetOf`、`hostAndPort`、`effectivePort`、`defaultPort`；`serveConnect` 按 `(protocol, port, domain)` 分派 MITM 与隧道；`reload` 删除 CA 校验与 reconcile |
+| `main.go` | 恢复 `--port` flag（默认 `defaultListenPort` = 8000，校验 1-65535）；`main` 先 `net.Listen` 后 `buildProxy`；`run(listener, proxy)`、`serveSignals(listener, proxy)` |
+| `main_test.go` | 监听集与自适应用例删除，改为 `startListener(t, p)` 起单端口监听；`pick`/`has` 带协议与端口；新增协议匹配与无 CA 502 断言 |
+| `AGENTS.md` | 文件职责表更新 route.go/proxy.go/server.go/main.go 行，删除监听集描述，补 `--port` 单端口模型 |
+| `README.md` | 原理图与接入方式改为 CONNECT + MITM；字段表说明 protocol/port 仅参与匹配；flags 表补 `--port`；示例端口统一 8000 |
 
 ## Data Models
 
 ```yaml
 servers:
   - domain: api.target-app.com
-    port: 8443          # 可选，省略按协议取默认端口
-    protocol: https     # 可选：http | https，省略则自适应
+    protocol: https      # 可选，匹配请求协议；省略匹配任意协议，不参与监听
+    port: 443            # 可选，匹配请求目标端口；省略匹配任意端口，不参与监听
     routes:
       - prefix: /
         upstream: 192.168.1.50:8080   # 简写：http + 自定义端口
-  - domain: api.target-app.com
-    routes:                           # 同域名 http:80 条目
+  - domain: api.target-app.com        # 同域名另一条：任意协议任意端口
+    routes:
       - prefix: /
         upstream: ./dist
 ```
 
 ```go
-type Domain struct {
-    Name     string  `yaml:"domain"`
-    Port     int     `yaml:"port"`     // 0 = 省略，按协议取默认端口
-    Protocol string  `yaml:"protocol"` // "" / "http" / "https"，省略留空自适应
-    Routes   []Route `yaml:"routes"`
-}
-
-// portGroup 一个监听端口的分组：协议与端口绑定，域名唯一
-type portGroup struct {
-    protocol string // "" 自适应 / "http" / "https"
-    byDomain map[string][]*route
+// serverEntry 一个虚拟服务器：按 protocol 与 port 筛选请求，命中条目内按最长前缀匹配
+type serverEntry struct {
+    protocol string // "" 匹配任意 / "http" / "https"
+    port     int    // 0 匹配任意 / 1-65535
+    routes   []*route
 }
 
 type routeTable struct {
-    byPort map[int]*portGroup
+    byDomain map[string][]*serverEntry
 }
 
-type listenerSpec struct {
-    port     int
-    protocol string
-}
+func (s *serverEntry) matches(protocol string, port int) bool
+func (t *routeTable) pick(protocol string, port int, domain, path string) (*route, bool)
+func (t *routeTable) has(protocol string, port int, domain string) bool
 ```
 
-解析规则（`buildTable`）：
+匹配规则（`matches`）：`protocol` 为空或等于请求协议，且 `port` 为 0 或等于请求端口。
 
-1. `protocol` 空串留空表示自适应（按连接首字节识别），其余仅接受 `http`/`https`。
-2. `port` 为 0 视为省略，按协议取默认端口（https 443 / 其余 80）；显式取值须在 1-65535。
-3. 同端口协议必须一致；`(port, domain)` 重复报错；同域名跨端口允许。
+解析规则（`resolveEntry`）：
+
+1. `protocol` 仅接受空串、`http`、`https`，其余报不支持的协议。
+2. `port` 为 0 视为省略匹配任意端口；显式取值须在 1-65535。
+3. `(domain, protocol, port)` 重复报错，域名可跨条目重复。
+
+请求协议与端口推导（`targetOf`）：
+
+1. CONNECT：协议 https，端口取 `Host` 中的端口，省略或非法取 443。
+2. URL 含 scheme（代理绝对形式）：取 `URL.Scheme` 与 `URL` 端口，省略按协议补 80/443。
+3. URL 无 scheme（隧道内层的源形式请求）：按连接是否 TLS 取协议，`Host` 头取域名，端口省略按协议补 80/443。
 
 upstream 简写解析规则（`parseUpstream`）：
 
@@ -96,48 +99,48 @@ upstream 简写解析规则（`parseUpstream`）：
 
 ## Correctness Properties
 
-1. 每个端口的协议唯一且 ∈ {"", http, https}；`(port, domain)` 全局唯一。
-2. `pick(port, ...)` / `has(port, ...)` 只查 `byPort[port]` 分组，端口间互不可见。
-3. reload 任一环节失败（解析、校验、CA 缺失、监听建立）时，旧监听与旧路由表保持原样；监听建立采用"先建新、失败回滚新增、后关旧"的顺序保证这一点。
-4. 路由表指纹覆盖 port 与 protocol，配置未变时跳过重建与 reconcile，存量连接不中断。
-5. 关闭监听仅停止 Accept，已接受连接由各自 goroutine 自然结束。
-6. CONNECT 隧道内层服务使用建立隧道时的端口分组，隧道外域名未命中仍透传隧道。
+1. 每个域名下的虚拟服务器条目 `(protocol, port)` 互不相同；`protocol` 为空表示匹配任意协议，`port` 为 0 表示匹配任意端口。
+2. `pick(protocol, port, domain, path)` / `has(protocol, port, domain)` 只查 `byDomain[domain]`，域名间互不可见。
+3. 监听不在 `reload` 内变更；`reload` 任一环节失败（解析、校验、安装处理器）时旧路由表与监听保持原样。
+4. 路由表指纹覆盖 protocol 与 port，配置未变时跳过重建与缓存清空，存量连接不中断。
+5. CONNECT 命中判定与隧道内层路由使用同一匹配条件，隧道内域名的匹配与明文请求一致。
+6. 隧道外未命中域名只搬运字节，不读取或改写载荷。
 
 ## Error Handling
 
 | 场景 | 处理 |
 |------|------|
-| YAML 解析错误 / 未知字段 | 拒绝加载，保留旧表（现有行为） |
-| `protocol` 非法、`port` 越界、同端口协议冲突、`(port, domain)` 重复 | `buildTable` 报错，拒绝加载 |
-| https 端口存在但未配置 CA | reload 报错提示需要证书，保留旧监听旧表 |
-| 端口被占用 / 无权限（Linux 非特权绑 80） | `reconcile` 回滚本次新增监听，报含端口与原因的错误日志；启动期则 `fatalf` |
-| http 端口收到 TLS 握手字节 | 交由 http.Server 以 400 拒绝，连接关闭 |
-| 自适应端口收到 TLS 连接但无 CA 证书 | 记录警告并关闭连接；reload 校验以显式 https 端口为准 |
-| https 端口无 SNI | 现有 `getCertificate` 报错，握手失败 |
-| 域名/端口未命中 | 透传原目标（现有 passthrough） |
-| 配置无 server | 不监听任何端口，输出提示日志，等待热加载 |
+| YAML 解析错误 / 未知字段 | 拒绝加载，保留旧表 |
+| `protocol` 非法、`port` 越界、`(domain, protocol, port)` 重复 | `buildTable` 报错，拒绝加载 |
+| `--port` 越界 / 绑定失败（占用、无权限） | 启动期 `fatalf` 终止 |
+| CONNECT 命中域名但无 CA 证书 | 返回 502，输出警告日志 |
+| CONNECT 未命中域名 | 透传隧道到原目标 |
+| 上游不可达 | 502，不透出传输层错误细节 |
+| 域名或协议端口未命中 | 透传原目标（现有 passthrough） |
+| 隧道内层 TLS 握手缺少 SNI | `getCertificate` 报错，握手失败 |
 
 ## Test Strategy
 
 - **parseUpstream 表驱动**：`host`、`host:port`、`[::1]:8080`、完整 URL（含路径映射）、`./dist`、`/var/www`、`C:\web`、`ftp://x` 报错、`host:` 与越界端口报错、裸域名按远程解析。
-- **buildTable 校验**：协议/端口推导（省略 protocol 留空自适应、https → 443、其余 → 80）、port 越界、protocol 非法、同端口协议冲突、`(port, domain)` 重复、同域名跨端口允许、旧配置（无新字段）按自适应:80 解析。
-- **pick/has 端口绑定**：自定义端口命中、跨端口透传、`has(port, domain)` 隧道分发。
-- **集成（httptest + 随机端口）**：双 server 双端口转发；空配置无监听、热加载新增端口后开始监听；删除端口后停止；reload 失败保留旧监听；https 端口用 `selfSignedCert` 走真实 TLS 请求；http 端口发送 TLS 握手字节被拒绝；自适应端口同一端口既服务 HTTP 明文又服务 TLS 直连；CONNECT 隧道 MITM 按端口分组。
+- **buildTable 校验**：协议与端口省略留空、protocol 非法、port 越界、`(domain, protocol, port)` 重复、同域名多条不同条件允许、旧配置（无新字段）按任意协议任意端口解析。
+- **pick/has 匹配**：协议命中与未命中、端口 0 匹配任意、最长前缀、`has(protocol, port, domain)` 隧道分发、跨域名隔离。
+- **集成（httptest + 随机端口）**：明文转发与 CONNECT 隧道透传；CONNECT 命中域名走 MITM 并以 CA 信任根校验证书链；`protocol: https` 条目只接 CONNECT、明文 GET 不命中；未配 CA 时 CONNECT 回 502；嵌套 CONNECT；CONNECT 与数据同批到达的字节保留；热加载切换路由与清缓存。
 - 提交前 `gofmt -w *.go`、`go vet ./...`、`go build -o mrp .`、`go test ./...` 全绿。
 
 ## 实施顺序
 
-1. `config.go`：字段、协议/端口推导与校验、`parseUpstream` 重写（含配套单测）。
-2. `route.go`：`byPort` 分组、`pick`/`has` 带端口、`listenerSpecs`、指纹扩展（含单测）。
-3. `server.go`：`handleConn` 协议分派，保留嗅探供自适应端口使用。
-4. `listener.go`：`listenerSet` 与 reconcile。
-5. `proxy.go` + `main.go`：reload 编排、隧道端口穿线、移除 `-port` flag（含集成测试）。
-6. 文档与脚本：`defaultConfig` 模板注释、README（含升级变化标注）、AGENTS.md 文件表、mrp.bat `PORT=80`。
+1. `route.go`：`serverEntry`/`byDomain`、`matches`/`pick`/`has`、指纹扩展（含单测）。
+2. `config.go`：`resolveEntry`/`add`/`protocolLabel`、默认端口推导删除、`defaultConfig` 模板注释。
+3. `server.go`：`serve` 简化，删除自适应嗅探。
+4. `proxy.go`：删除监听集与 reconcile，新增 `handler`/`targetOf` 推导，`serveConnect` 按条件分派。
+5. `main.go`：恢复 `--port`，监听在 `main` 内建立。
+6. 测试与文档：`main_test.go` 用例调整、README、AGENTS.md、本 spec 同步。
 
 ## References
 
-[^1]: (Filename#L62) - config.go Domain 定义
-[^2]: (Filename#L139) - route.go routeTable 与 pick
-[^3]: (Filename#L68) - server.go serve/handleConn
-[^4]: (Filename#L155) - proxy.go serveConnect 隧道分发
-[^5]: (Filename#L192) - main.go run 监听启动
+[^1]: (Filename#L73) - config.go Domain 定义
+[^2]: (Filename#L148) - route.go serverEntry.matches 与 routeTable
+[^3]: (Filename#L65) - server.go serve
+[^4]: (Filename#L219) - proxy.go serveConnect 隧道分发
+[^5]: (Filename#L119) - proxy.go targetOf 请求协议与端口推导
+[^6]: (Filename#L202) - main.go run 唯一端口常驻服务

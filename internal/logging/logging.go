@@ -1,4 +1,4 @@
-package main
+package logging
 
 import (
 	"fmt"
@@ -9,13 +9,13 @@ import (
 	"time"
 )
 
-type logLevel int
+type Level int
 
 const (
-	logDebug logLevel = iota
-	logInfo
-	logWarn
-	logError
+	Debug Level = iota
+	Info
+	Warn
+	Error
 )
 
 const logTimeLayout = "01-02 15:04:05.000"
@@ -30,22 +30,28 @@ const (
 
 var (
 	logOut   io.Writer = os.Stdout
-	logFloor logLevel  = logInfo
+	logFloor Level     = Info
 	logColor bool
 	logMu    sync.Mutex
 )
 
-func initLogging(level logLevel) {
+// Init 设定级别过滤与着色策略，着色仅在 stdout 为终端时启用。
+func Init(level Level) {
 	logFloor = level
 	logColor = isTerminal(os.Stdout)
 }
 
-func logDebugf(format string, args ...any) { logf(logDebug, format, args...) }
-func logInfof(format string, args ...any)  { logf(logInfo, format, args...) }
-func logWarnf(format string, args ...any)  { logf(logWarn, format, args...) }
-func logErrorf(format string, args ...any) { logf(logError, format, args...) }
+// SetOutput 替换日志输出目标，测试用于丢弃输出或捕获内容。
+func SetOutput(writer io.Writer) {
+	logOut = writer
+}
 
-func logf(level logLevel, format string, args ...any) {
+func Debugf(format string, args ...any) { logf(Debug, format, args...) }
+func Infof(format string, args ...any)  { logf(Info, format, args...) }
+func Warnf(format string, args ...any)  { logf(Warn, format, args...) }
+func Errorf(format string, args ...any) { logf(Error, format, args...) }
+
+func logf(level Level, format string, args ...any) {
 	if level < logFloor {
 		return
 	}
@@ -55,7 +61,7 @@ func logf(level logLevel, format string, args ...any) {
 	_, _ = io.WriteString(logOut, line)
 }
 
-func formatLogLine(now time.Time, level logLevel, message string, color bool) string {
+func formatLogLine(now time.Time, level Level, message string, color bool) string {
 	line := now.Format(logTimeLayout) + "\t" + level.String() + "\t" + message
 	if color {
 		if code := levelColor(level); code != "" {
@@ -65,27 +71,27 @@ func formatLogLine(now time.Time, level logLevel, message string, color bool) st
 	return line + "\n"
 }
 
-func (l logLevel) String() string {
+func (l Level) String() string {
 	switch l {
-	case logDebug:
+	case Debug:
 		return "DEBUG"
-	case logInfo:
+	case Info:
 		return "INFO"
-	case logWarn:
+	case Warn:
 		return "WARN"
-	case logError:
+	case Error:
 		return "ERROR"
 	}
 	return "UNKNOWN"
 }
 
-func levelColor(level logLevel) string {
+func levelColor(level Level) string {
 	switch level {
-	case logDebug:
+	case Debug:
 		return colorDebug
-	case logWarn:
+	case Warn:
 		return colorWarn
-	case logError:
+	case Error:
 		return colorError
 	default:
 		return ""
@@ -97,11 +103,12 @@ func isTerminal(file *os.File) bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-func parseLogLevel(text string) (logLevel, error) {
-	for level := logDebug; level <= logError; level++ {
+// ParseLevel 解析命令行给出的级别名，大小写不敏感，失败时报错。
+func ParseLevel(text string) (Level, error) {
+	for level := Debug; level <= Error; level++ {
 		if strings.EqualFold(text, level.String()) {
 			return level, nil
 		}
 	}
-	return logInfo, fmt.Errorf("unknown log level %q", text)
+	return Info, fmt.Errorf("unknown log level %q", text)
 }

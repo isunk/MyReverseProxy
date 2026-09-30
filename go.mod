@@ -1,4 +1,4 @@
-module mrp
+module github.com/isunk/MyReverseProxy
 
 go 1.25.5
 
