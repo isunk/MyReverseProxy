@@ -68,24 +68,27 @@ exit /b
 
 REM ============================================================
 REM Device tool probe: is !TOOL! installed and is a device connected
-REM   Outputs TOOL_READY (0/1) and TOOL_DESC (install/connection status)
+REM   Outputs TOOL_READY (0/1) and TOOL_DESC (device serial / status text)
 REM ============================================================
 :probeDevReady
 set "TOOL_READY=0"
+set "TOOL_SERIAL="
 set "TOOL_DESC=Not installed"
 where !TOOL! >nul 2>&1
 if not "!errorlevel!"=="0" exit /b
-set "TOOL_DESC=Installed, no device connected"
+set "TOOL_DESC=No device connected"
 if /i "!TOOL!"=="adb" (
-    for /f "skip=1 tokens=2" %%i in ('adb devices 2^>nul') do if "!TOOL_READY!"=="0" if "%%i"=="device" set "TOOL_READY=1"
+    for /f "skip=1 tokens=1,2" %%i in ('adb devices 2^>nul') do if "!TOOL_READY!"=="0" if "%%j"=="device" (
+        set "TOOL_READY=1"
+        set "TOOL_SERIAL=%%i"
+    )
 ) else (
     REM hdc may print daemon startup lines before the target list; the last line
-    REM is the result: [Empty] means no device, anything else is a target ID
-    set "HDC_TARGET="
-    for /f "tokens=1" %%i in ('hdc list targets 2^>nul') do set "HDC_TARGET=%%i"
-    if defined HDC_TARGET if not "!HDC_TARGET!"=="[Empty]" if not "!HDC_TARGET!"=="Connect" set "TOOL_READY=1"
+    REM is the result: [Empty] means no device, a serial means connected
+    for /f "tokens=1" %%i in ('hdc list targets 2^>nul') do set "TOOL_SERIAL=%%i"
+    if defined TOOL_SERIAL if not "!TOOL_SERIAL!"=="[Empty]" if not "!TOOL_SERIAL!"=="Connect" set "TOOL_READY=1"
 )
-if "!TOOL_READY!"=="1" set "TOOL_DESC=Device connected"
+if "!TOOL_READY!"=="1" set "TOOL_DESC=!TOOL_SERIAL!"
 exit /b
 
 REM ============================================================
