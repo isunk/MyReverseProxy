@@ -79,8 +79,11 @@ set "TOOL_DESC=Installed, no device connected"
 if /i "!TOOL!"=="adb" (
     for /f "skip=1 tokens=2" %%i in ('adb devices 2^>nul') do if "!TOOL_READY!"=="0" if "%%i"=="device" set "TOOL_READY=1"
 ) else (
-    REM hdc device IDs are single tokens; reject multi-word daemon/server messages
-    for /f "tokens=1,2" %%i in ('hdc list targets 2^>nul') do if "!TOOL_READY!"=="0" if "%%j"=="" if not "%%i"=="[Empty]" if not "%%i"=="Connect" set "TOOL_READY=1"
+    REM hdc may print daemon startup lines before the target list; the last line
+    REM is the result: [Empty] means no device, anything else is a target ID
+    set "HDC_TARGET="
+    for /f "tokens=1" %%i in ('hdc list targets 2^>nul') do set "HDC_TARGET=%%i"
+    if defined HDC_TARGET if not "!HDC_TARGET!"=="[Empty]" if not "!HDC_TARGET!"=="Connect" set "TOOL_READY=1"
 )
 if "!TOOL_READY!"=="1" set "TOOL_DESC=Device connected"
 exit /b
