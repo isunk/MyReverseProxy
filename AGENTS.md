@@ -24,7 +24,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 | `config.go` | YAML 配置结构、`loadTable`、`parseConfig`、`buildTable`、`buildRoutes`、`parseUpstream`、`parseUpstreamHost`、`resolveEntry`/`defaultPort`/`validPort` | 任何运行期依赖 |
 | `route.go` | `route`、`target`、`headerRewrite`、`routeTable`（含 `portGroup`/`byPort`）、`pick`、`has`、`listenerSpecs`、`installHandlers`、`fingerprint`、`staticHandler`、`joinPath` | I/O、日志 |
 | `proxy.go` | `proxy` 结构、`reload` 编排、`routeHandler`/`portHandler`/`serveRequest`、`handleConnect`/`hijackConn`/`serveConnect`、`tunnel`、`watchFile` 热加载 | 连接级 TLS 服务细节 |
-| `server.go` | 单连接的 `serve`/`handleConn`（按端口协议 http/https 分派）、`oneConnListener`、`certificateAuthority` 现场签发、`statusRecorder` | 路由决策逻辑 |
+| `server.go` | 单连接的 `serve`/`handleConn`（按端口协议 http/https 分派，省略时按首字节自适应嗅探）、`oneConnListener`、`certificateAuthority` 现场签发、`statusRecorder` | 路由决策逻辑 |
 | `listener.go` | 端口监听集 `listenerSpec`/`listenerSet`、`reconcile` 增量对账、`closeAll`、协议常量 | 路由决策逻辑 |
 | `resolver.go` | 上游 DNS 解析与故障切换、`nameserverSet`、解析结果缓存 | 路由决策逻辑 |
 | `cache.go` | 通用 `expiringCache` 并发缓存 | 具体业务逻辑 |

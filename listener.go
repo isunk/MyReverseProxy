@@ -8,13 +8,13 @@ import (
 	"sync"
 )
 
-// 监听协议常量：server.protocol 的合法取值，省略按 http
+// 监听协议常量：server.protocol 的合法取值；留空表示自适应（按连接首字节识别）
 const (
 	protocolHTTP  = "http"
 	protocolHTTPS = "https"
 )
 
-// listenerSpec 一个监听端口的规格：端口与固定协议
+// listenerSpec 一个监听端口的规格：端口与协议，协议留空表示自适应
 type listenerSpec struct {
 	port     int
 	protocol string
@@ -73,13 +73,21 @@ func (s *listenerSet) reconcile(specs []listenerSpec, tlsConfig *tls.Config, han
 		s.entries[spec.port] = entry
 		added[spec.port] = entry
 		go serve(ln, tlsConfig, handler(spec), spec.protocol)
-		logInfof("listening addr=:%d protocol=%s", spec.port, spec.protocol)
+		logInfof("listening addr=:%d protocol=%s", spec.port, protocolLabel(spec.protocol))
 	}
 
 	if len(specs) == 0 {
 		logWarnf("config has no servers, no ports to listen")
 	}
 	return nil
+}
+
+// protocolLabel 日志展示用协议名，留空显示为 auto
+func protocolLabel(protocol string) string {
+	if protocol == "" {
+		return "auto"
+	}
+	return protocol
 }
 
 // closeAll 关闭全部监听，供测试与关停路径回收

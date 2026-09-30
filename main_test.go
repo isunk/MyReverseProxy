@@ -778,6 +778,38 @@ func TestServe_DirectTLS_RoutesBySNI(t *testing.T) {
 	}
 }
 
+// protocol 省略时端口自适应：同一端口按连接首字节分别服务 HTTP 明文与 HTTPS 直连
+func TestServe_AutoProtocolAdapts(t *testing.T) {
+	up := recordingServer(t, "AUTO")
+	caCert, caKey := testAuthorityCA(t)
+	tlsConfig := &tls.Config{
+		GetCertificate: newCertificateAuthority(caCert, caKey).getCertificate,
+		NextProtos:     []string{"http/1.1"},
+		MinVersion:     tls.VersionTLS12,
+	}
+	cfg := writeConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+up.URL+"\n")
+	proxyURL, _ := startProxy(t, cfg, tlsConfig)
+
+	if got := requestBody(t, proxyClient(proxyURL), "http://api.example.com/x"); !strings.HasPrefix(got, "AUTO:/x") {
+		t.Fatalf("http: got %q", got)
+	}
+
+	addr := strings.TrimPrefix(proxyURL, "http://")
+	conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, ServerName: "api.example.com"})
+	if err != nil {
+		t.Fatalf("tls dial: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("GET /v1/data HTTP/1.1\r\nHost: api.example.com\r\nConnection: close\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(conn)
+	if !strings.Contains(string(body), "AUTO:/v1/data") {
+		t.Fatalf("https: got %q", body)
+	}
+}
+
 func TestReload_SwitchesRoute(t *testing.T) {
 	upA := recordingServer(t, "A")
 	upB := recordingServer(t, "B")

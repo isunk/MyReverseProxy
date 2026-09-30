@@ -1,6 +1,6 @@
 # 我的反向代理 (mrp)
 
-Go 实现的本地反向代理。每个 `server` 声明一个入口监听端口与固定协议（`http` 明文 / `https` 直接终结 TLS），依据 YAML 路由配置按域名（SNI / Host）与路径前缀转发；对未声明协议的端口仍支持 CONNECT 隧道透传或 MITM。用于把移动 App 固定访问的域名劫持转发到自有服务器联调。
+Go 实现的本地反向代理。每个 `server` 声明一个入口监听端口，协议可显式指定（`http` 明文 / `https` 直接终结 TLS），省略则自适应（按连接首字节识别 http/https）；依据 YAML 路由配置按域名（SNI / Host）与路径前缀转发，并支持 CONNECT 隧道透传或 MITM。用于把移动 App 固定访问的域名劫持转发到自有服务器联调。
 
 ## 原理
 
@@ -98,8 +98,8 @@ mrp 首次运行会自动在当前目录创建 `config.yaml`（含注释模板�
 nameservers:
   - "114.114.114.114"
   - "8.8.8.8"
-# 每条 server 声明一个入口监听：protocol 省略按 http，port 省略按协议取默认端口（http 80 / https 443）
-# 多个 server 共用同一端口（协议须一致），端口内按域名区分
+# 每条 server 声明一个入口监听：protocol 省略则自适应（按连接首字节识别 http/https），
+# port 省略按协议取默认端口（https 443 / 其余 80）；多个 server 共用同一端口（协议须一致），端口内按域名区分
 servers:
   - domain: api.target-app.com
     port: 8080
@@ -130,8 +130,8 @@ servers:
 | 字段 | 说明 |
 |------|------|
 | `servers[].domain` | 按域名匹配（大小写不敏感），HTTPS 用 SNI、HTTP 用 Host 头 |
-| `servers[].protocol` | 可选，入口协议 `http` 或 `https`，省略按 `http`；同一端口协议须一致 |
-| `servers[].port` | 可选，监听端口，省略按协议取默认端口（http 80 / https 443）；多个 server 可共用一个端口，端口内按域名区分 |
+| `servers[].protocol` | 可选，入口协议 `http` 或 `https`，省略则自适应（按连接首字节识别）；同一端口协议须一致 |
+| `servers[].port` | 可选，监听端口，省略按协议取默认端口（https 443 / 其余 80）；多个 server 可共用一个端口，端口内按域名区分 |
 | `routes[].prefix` | 最长路径前缀匹配，必须以 `/` 开头 |
 | `routes[].upstream` | 上游地址，路径前缀自动映射；也支持本地目录路径（相对进程工作目录，托起静态文件，目录命中回退 `index.html`） |
 | `routes[].host` | 可选，改写转发时的 Host 头 |
@@ -158,7 +158,7 @@ curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp-wi
 curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp.bat
 ```
 
-首次运行自动创建 `config.yaml`，按配置中的 `servers` 端口监听（协议省略按 http、端口省略按 http 80 / https 443 的默认端口），加载 `ca.crt` / `ca.key`：
+首次运行自动创建 `config.yaml`，按配置中的 `servers` 端口监听（协议省略自适应、端口省略按默认端口 https 443 / 其余 80），加载 `ca.crt` / `ca.key`：
 
 ```bash
 # Linux / HarmonyOS / Android 设备本机
@@ -206,7 +206,7 @@ curl -x http://127.0.0.1:8080 --cacert ca.crt \
 
 ### 6. 各平台设备对接代理
 
-mrp 可跑在设备本机（代理地址填 `127.0.0.1`，免局域网依赖），也可跑在 PC 上（代理地址填 PC 的局域网 IP）。端口由 `config.yaml` 中 `servers[].port` 声明（省略按协议默认端口 http 80 / https 443）。
+mrp 可跑在设备本机（代理地址填 `127.0.0.1`，免局域网依赖），也可跑在 PC 上（代理地址填 PC 的局域网 IP）。端口由 `config.yaml` 中 `servers[].port` 声明（省略按默认端口 https 443 / 其余 80）。
 
 #### Android
 

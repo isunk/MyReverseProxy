@@ -21,9 +21,13 @@ import (
 	"time"
 )
 
+// TLS 记录层首字节 0x16 表示 handshake，即 ClientHello 报文
+const tlsRecordHandshake = 0x16
+
 const (
 	serverCertTTL     = 24 * time.Hour
 	maxCachedCerts    = 512
+	protoDetectWait   = 10 * time.Second
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 60 * time.Second
 )
@@ -71,22 +75,53 @@ func serve(listener net.Listener, tlsConfig *tls.Config, handler http.Handler, p
 	}
 }
 
-// handleConn 按端口固定的协议分派：http 直接明文服务（含 CONNECT 隧道），
-// https 直接进入 TLS 握手按 SNI 现场签发。serveSingleConn 返回 false
-// （未发生 hijack）时由本函数收尾关闭连接。
+// handleConn 按端口协议分派：http 直接明文服务（含 CONNECT 隧道），
+// https 直接进入 TLS 握手按 SNI 现场签发；protocol 留空则按连接首字节
+// 自适应识别。serveSingleConn 返回 false（未发生 hijack）时收尾关闭连接。
 func handleConn(conn net.Conn, tlsConfig *tls.Config, handler http.Handler, protocol string) {
-	var stream net.Conn = conn
-	if protocol == protocolHTTPS {
+	var stream net.Conn
+	switch protocol {
+	case protocolHTTPS:
 		if tlsConfig == nil {
 			logWarnf("https port requires a certificate, closing remote=%s", conn.RemoteAddr())
 			conn.Close()
 			return
 		}
 		stream = tls.Server(conn, tlsConfig)
+	case protocolHTTP:
+		stream = conn
+	default:
+		sniffed, ok := sniffConn(conn, tlsConfig)
+		if !ok {
+			return
+		}
+		stream = sniffed
 	}
 	if !serveSingleConn(newHTTPServer(handler), stream) {
 		conn.Close()
 	}
+}
+
+// sniffConn 探测连接首字节是否为 TLS 握手：是则包一层 tls.Server（SNI 现场签发），
+// 否则原样返回带预读缓冲的明文连接。探测失败或 TLS 而无证书时关闭连接并返回 false。
+func sniffConn(conn net.Conn, tlsConfig *tls.Config) (net.Conn, bool) {
+	buffered := &bufferedConn{Conn: conn, reader: bufio.NewReader(conn)}
+	buffered.SetReadDeadline(time.Now().Add(protoDetectWait))
+	first, err := buffered.reader.Peek(1)
+	buffered.SetReadDeadline(time.Time{})
+	if err != nil {
+		conn.Close()
+		return nil, false
+	}
+	if first[0] != tlsRecordHandshake {
+		return buffered, true
+	}
+	if tlsConfig == nil {
+		logWarnf("received TLS connection but no certificate configured, closing remote=%s", conn.RemoteAddr())
+		conn.Close()
+		return nil, false
+	}
+	return tls.Server(buffered, tlsConfig), true
 }
 
 // serveSingleConn 在单条连接上跑一次 http.Server.Serve，返回是否发生过 hijack

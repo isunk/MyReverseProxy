@@ -17,8 +17,8 @@ const defaultConfig = `# mrp 反向代理路由配置
 # 修改后自动热加载，无需重启。
 #
 # domain:     按域名精确匹配，HTTPS 用 SNI、HTTP 用 Host 头
-# protocol:   可选，入口协议 http 或 https，省略按 http
-# port:       可选，监听端口，省略按协议取默认端口（http 为 80、https 为 443）
+# protocol:   可选，入口协议 http 或 https，省略则自适应（按连接首字节识别 http/https）
+# port:       可选，监听端口，省略按协议取默认端口（https 为 443、其余为 80）
 #             多个 server 可共用一个端口（协议须一致），端口内按域名区分
 # prefix:     路径前缀，按最长前缀匹配转发到 upstream
 # upstream:   上游服务地址，路径前缀自动映射；写法：
@@ -71,7 +71,7 @@ type Config struct {
 	Nameservers []string `yaml:"nameservers"`
 }
 
-// Domain 一个入口域名及其路由条目；protocol 省略按 http，port 省略按协议取默认端口。
+// Domain 一个入口域名及其路由条目；protocol 省略留空表示自适应，port 省略按协议取默认端口。
 type Domain struct {
 	Name     string  `yaml:"domain"`
 	Port     int     `yaml:"port"`
@@ -149,7 +149,7 @@ func (t *routeTable) add(domain Domain) error {
 		t.byPort[port] = group
 	}
 	if group.protocol != protocol {
-		return fmt.Errorf("port %d: protocol conflict between %s and %s servers", port, group.protocol, protocol)
+		return fmt.Errorf("port %d: protocol conflict between %s and %s servers", port, protocolLabel(group.protocol), protocolLabel(protocol))
 	}
 	if _, exists := group.byDomain[name]; exists {
 		return fmt.Errorf("port %d: duplicate domain %q", port, domain.Name)
@@ -162,14 +162,13 @@ func (t *routeTable) add(domain Domain) error {
 	return nil
 }
 
-// resolveEntry 归一 server 条目的协议与端口：protocol 省略按 http，
-// port 为 0 视为省略并按协议取默认端口（http 80 / https 443）。
+// resolveEntry 归一 server 条目的协议与端口：protocol 省略留空表示自适应
+// （按连接首字节识别 http/https），port 为 0 视为省略并按协议取默认端口
+// （https 443 / 其余 80）。
 func resolveEntry(domain Domain) (string, int, error) {
 	protocol := strings.ToLower(strings.TrimSpace(domain.Protocol))
 	switch protocol {
-	case "":
-		protocol = protocolHTTP
-	case protocolHTTP, protocolHTTPS:
+	case "", protocolHTTP, protocolHTTPS:
 	default:
 		return "", 0, fmt.Errorf("domain %q: unsupported protocol %q", domain.Name, domain.Protocol)
 	}
@@ -183,7 +182,7 @@ func resolveEntry(domain Domain) (string, int, error) {
 	return protocol, port, nil
 }
 
-// defaultPort 协议对应的默认监听端口
+// defaultPort 协议对应的默认监听端口：https 取 443，其余（http 与省略）取 80
 func defaultPort(protocol string) int {
 	if protocol == protocolHTTPS {
 		return 443
