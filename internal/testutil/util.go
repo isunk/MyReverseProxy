@@ -10,7 +10,7 @@ import (
 )
 
 // ConfigFile 在临时目录写入文件，返回绝对路径，随测试结束自动清理。
-func ConfigFile(t *testing.T, name, content string) string {
+func ConfigFile(t testing.TB, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -20,7 +20,7 @@ func ConfigFile(t *testing.T, name, content string) string {
 }
 
 // FreePort 返回一个当前可用的 TCP 端口。
-func FreePort(t *testing.T) string {
+func FreePort(t testing.TB) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -37,7 +37,7 @@ func FreePort(t *testing.T) string {
 }
 
 // EchoServer 启动原样回显的 TCP 服务，返回监听地址。
-func EchoServer(t *testing.T) string {
+func EchoServer(t testing.TB) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

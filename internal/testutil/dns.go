@@ -20,13 +20,13 @@ type Stub struct {
 }
 
 // NewStub 启动应答预设记录的 DNS 服务器，TTL 为零。
-func NewStub(t *testing.T, records map[uint16][]net.IP) *Stub {
+func NewStub(t testing.TB, records map[uint16][]net.IP) *Stub {
 	t.Helper()
 	return NewStubWithTTL(t, records, 0)
 }
 
 // NewStubWithTTL 启动应答预设记录的 DNS 服务器，TTL 可控以验证缓存过期。
-func NewStubWithTTL(t *testing.T, records map[uint16][]net.IP, ttl uint16) *Stub {
+func NewStubWithTTL(t testing.TB, records map[uint16][]net.IP, ttl uint16) *Stub {
 	t.Helper()
 	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -148,7 +148,7 @@ func dnsAnswer(qtype uint16, address net.IP, ttl uint16) []byte {
 }
 
 // ClosedUDPPort 返回一个立即不可用的 UDP 端口，用于模拟已被拒绝的 DNS 服务器。
-func ClosedUDPPort(t *testing.T) string {
+func ClosedUDPPort(t testing.TB) string {
 	t.Helper()
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -160,7 +160,7 @@ func ClosedUDPPort(t *testing.T) string {
 }
 
 // SilentUDPPort 返回一个只收包、永不回复的 UDP 端口，用于模拟超时的 DNS 服务器。
-func SilentUDPPort(t *testing.T) string {
+func SilentUDPPort(t testing.TB) string {
 	t.Helper()
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {

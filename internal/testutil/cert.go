@@ -15,7 +15,7 @@ import (
 )
 
 // SelfSignedCert 生成单张自签服务器证书，域名写入 SAN，本机回环地址恒在其中。
-func SelfSignedCert(t *testing.T, domains []string) tls.Certificate {
+func SelfSignedCert(t testing.TB, domains []string) tls.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -39,7 +39,7 @@ func SelfSignedCert(t *testing.T, domains []string) tls.Certificate {
 }
 
 // AuthorityCA 生成自签 CA 对，供 MITM 签发与客户端信任根校验使用。
-func AuthorityCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
+func AuthorityCA(t testing.TB) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -66,7 +66,7 @@ func AuthorityCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
 }
 
 // WriteCertFiles 把 CA 对写成 PEM 文件，返回证书与私钥路径。
-func WriteCertFiles(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) (string, string) {
+func WriteCertFiles(t testing.TB, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) (string, string) {
 	t.Helper()
 	certPath := ConfigFile(t, "ca.crt", string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})))
 	key, err := x509.MarshalECPrivateKey(caKey)

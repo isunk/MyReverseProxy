@@ -31,12 +31,12 @@ func init() {
 	logging.SetOutput(io.Discard)
 }
 
-func testNameservers(t *testing.T, entries ...string) *dns.Resolver {
+func testNameservers(t testing.TB, entries ...string) *dns.Resolver {
 	t.Helper()
 	return testNameserversWithTimeout(t, dns.AttemptTimeout, dns.TTL, entries)
 }
 
-func testNameserversWithTimeout(t *testing.T, attemptTimeout, dnsTTL time.Duration, entries []string) *dns.Resolver {
+func testNameserversWithTimeout(t testing.TB, attemptTimeout, dnsTTL time.Duration, entries []string) *dns.Resolver {
 	t.Helper()
 	servers, err := dns.New(attemptTimeout, dnsTTL, entries)
 	if err != nil {
@@ -54,13 +54,13 @@ func recordingServer(t *testing.T, tag string) *httptest.Server {
 	return server
 }
 
-func startProxy(t *testing.T, configPath string, tlsConfig *tls.Config) (string, *Proxy) {
+func startProxy(t testing.TB, configPath string, tlsConfig *tls.Config) (string, *Proxy) {
 	t.Helper()
 	return startProxyWithNameservers(t, configPath, tlsConfig, testNameservers(t))
 }
 
 // startProxyWithNameservers 用指定的解析器构建代理，并把路由处理器预挂到随机端口
-func startProxyWithNameservers(t *testing.T, configPath string, tlsConfig *tls.Config, servers *dns.Resolver) (string, *Proxy) {
+func startProxyWithNameservers(t testing.TB, configPath string, tlsConfig *tls.Config, servers *dns.Resolver) (string, *Proxy) {
 	t.Helper()
 	proxy, err := New(configPath, NewTransport(servers.DialContext), tlsConfig, nil, servers)
 	if err != nil {
@@ -70,7 +70,7 @@ func startProxyWithNameservers(t *testing.T, configPath string, tlsConfig *tls.C
 }
 
 // startListener 绑定随机空闲端口并开始服务，返回可直接访问的代理地址
-func startListener(t *testing.T, proxy *Proxy) string {
+func startListener(t testing.TB, proxy *Proxy) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
