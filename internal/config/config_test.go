@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"mrp/internal/logging"
+	"mrp/internal/log"
 	"mrp/internal/route"
 	"mrp/internal/testutil"
 )
 
 func init() {
-	logging.SetOutput(io.Discard)
+	log.SetOutput(io.Discard)
 }
 
 func TestLoadTable_Valid(t *testing.T) {

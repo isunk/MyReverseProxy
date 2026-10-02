@@ -22,13 +22,13 @@ import (
 	"mrp/internal/ca"
 	"mrp/internal/config"
 	"mrp/internal/dns"
-	"mrp/internal/logging"
+	"mrp/internal/log"
 	"mrp/internal/server"
 	"mrp/internal/testutil"
 )
 
 func init() {
-	logging.SetOutput(io.Discard)
+	log.SetOutput(io.Discard)
 }
 
 func testNameservers(t testing.TB, entries ...string) *dns.Resolver {

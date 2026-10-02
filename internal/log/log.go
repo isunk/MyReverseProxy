@@ -1,4 +1,4 @@
-package logging
+package log
 
 import (
 	"fmt"
@@ -12,25 +12,17 @@ import (
 type Level int
 
 const (
-	Debug Level = iota
-	Info
-	Warn
-	Error
+	DebugLevel Level = iota
+	InfoLevel
+	WarnLevel
+	ErrorLevel
 )
 
 const logTimeLayout = "01-02 15:04:05.000"
 
-// 级别 ANSI 色：DEBUG 灰、INFO 普通色、WARN 黄、ERROR 红
-const (
-	colorDebug = "\x1b[90m"
-	colorWarn  = "\x1b[33m"
-	colorError = "\x1b[31m"
-	colorReset = "\x1b[0m"
-)
-
 var (
 	logOut   io.Writer = os.Stdout
-	logFloor Level     = Info
+	logFloor Level     = InfoLevel
 	logColor bool
 	logMu    sync.Mutex
 )
@@ -46,10 +38,16 @@ func SetOutput(writer io.Writer) {
 	logOut = writer
 }
 
-func Debugf(format string, args ...any) { logf(Debug, format, args...) }
-func Infof(format string, args ...any)  { logf(Info, format, args...) }
-func Warnf(format string, args ...any)  { logf(Warn, format, args...) }
-func Errorf(format string, args ...any) { logf(Error, format, args...) }
+func Debug(format string, args ...any) { logf(DebugLevel, format, args...) }
+func Info(format string, args ...any)  { logf(InfoLevel, format, args...) }
+func Warn(format string, args ...any)  { logf(WarnLevel, format, args...) }
+func Error(format string, args ...any) { logf(ErrorLevel, format, args...) }
+
+// Fatal 输出 ERROR 日志后终止进程，仅供启动期不可恢复失败使用，请求热路径禁止调用。
+func Fatal(format string, args ...any) {
+	logf(ErrorLevel, format, args...)
+	os.Exit(1)
+}
 
 func logf(level Level, format string, args ...any) {
 	if level < logFloor {
@@ -65,7 +63,7 @@ func formatLogLine(now time.Time, level Level, message string, color bool) strin
 	line := now.Format(logTimeLayout) + "\t" + level.String() + "\t" + message
 	if color {
 		if code := levelColor(level); code != "" {
-			line = code + line + colorReset
+			line = code + line + "\x1b[0m"
 		}
 	}
 	return line + "\n"
@@ -73,26 +71,27 @@ func formatLogLine(now time.Time, level Level, message string, color bool) strin
 
 func (l Level) String() string {
 	switch l {
-	case Debug:
+	case DebugLevel:
 		return "DEBUG"
-	case Info:
+	case InfoLevel:
 		return "INFO"
-	case Warn:
+	case WarnLevel:
 		return "WARN"
-	case Error:
+	case ErrorLevel:
 		return "ERROR"
 	}
 	return "UNKNOWN"
 }
 
 func levelColor(level Level) string {
+	// 级别 ANSI 色：DEBUG 灰、INFO 普通色、WARN 黄、ERROR 红
 	switch level {
-	case Debug:
-		return colorDebug
-	case Warn:
-		return colorWarn
-	case Error:
-		return colorError
+	case DebugLevel:
+		return "\x1b[90m"
+	case WarnLevel:
+		return "\x1b[33m"
+	case ErrorLevel:
+		return "\x1b[31m"
 	default:
 		return ""
 	}
@@ -105,10 +104,10 @@ func isTerminal(file *os.File) bool {
 
 // ParseLevel 解析命令行给出的级别名，大小写不敏感，失败时报错。
 func ParseLevel(text string) (Level, error) {
-	for level := Debug; level <= Error; level++ {
+	for level := DebugLevel; level <= ErrorLevel; level++ {
 		if strings.EqualFold(text, level.String()) {
 			return level, nil
 		}
 	}
-	return Info, fmt.Errorf("unknown log level %q", text)
+	return InfoLevel, fmt.Errorf("unknown log level %q", text)
 }

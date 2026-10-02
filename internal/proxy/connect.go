@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"mrp/internal/logging"
+	"mrp/internal/log"
 	"mrp/internal/server"
 )
 
@@ -49,16 +49,16 @@ func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
 // 返回 true 表示连接已移交内层 HTTP 服务（hijack 链），调用方不得再关闭
 func (p *Proxy) serveConnect(client net.Conn, request *http.Request, protocol string, port int, domain string) bool {
 	if !p.table.Load().Has(protocol, port, domain) {
-		logging.Infof("connect target=%s mode=tunnel", request.Host)
+		log.Info("connect target=%s mode=tunnel", request.Host)
 		p.tunnel(client, request.Host)
 		return false
 	}
 	if p.tlsConfig == nil {
-		logging.Warnf("connect domain=%s matched but no ca certificate configured, cannot mitm", domain)
+		log.Warn("connect domain=%s matched but no ca certificate configured, cannot mitm", domain)
 		_, _ = client.Write([]byte(connectBadGateway))
 		return false
 	}
-	logging.Infof("connect domain=%s port=%d mode=mitm", domain, port)
+	log.Info("connect domain=%s port=%d mode=mitm", domain, port)
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return false
 	}
@@ -71,7 +71,7 @@ func (p *Proxy) tunnel(client net.Conn, target string) {
 	defer cancel()
 	upstream, err := p.nameservers.DialContext(ctx, "tcp", target)
 	if err != nil {
-		logging.Errorf("tunnel target connection failed target=%s: %v", target, err)
+		log.Error("tunnel target connection failed target=%s: %v", target, err)
 		_, _ = client.Write([]byte(connectBadGateway))
 		return
 	}

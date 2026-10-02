@@ -17,7 +17,7 @@ import (
 	"mrp/internal/ca"
 	"mrp/internal/config"
 	"mrp/internal/dns"
-	"mrp/internal/logging"
+	"mrp/internal/log"
 	"mrp/internal/route"
 	"mrp/internal/server"
 )
@@ -94,7 +94,7 @@ func (p *Proxy) reload() error {
 	}
 	nameserversChanged := !slices.Equal(previous, p.nameservers.Addresses())
 	if !routesChanged && !nameserversChanged {
-		logging.Debugf("config parsed but routes and nameservers unchanged, keeping current pool")
+		log.Debug("config parsed but routes and nameservers unchanged, keeping current pool")
 		return nil
 	}
 	if routesChanged {
@@ -180,10 +180,10 @@ func effectivePort(targetURL *url.URL) int {
 func (p *Proxy) routeHandler(request *http.Request, protocol string, port int, domain string) http.Handler {
 	targetRoute, matched := p.table.Load().Pick(protocol, port, domain, request.URL.Path)
 	if !matched {
-		logging.Debugf("no route matched, passing through to original target domain=%s protocol=%s port=%d", domain, protocol, port)
+		log.Debug("no route matched, passing through to original target domain=%s protocol=%s port=%d", domain, protocol, port)
 		return p.passthrough
 	}
-	logging.Debugf("route matched domain=%s protocol=%s port=%d prefix=%s upstream=%s", domain, protocol, port, targetRoute.Prefix, targetRoute.Target.Summary)
+	log.Debug("route matched domain=%s protocol=%s port=%d prefix=%s upstream=%s", domain, protocol, port, targetRoute.Prefix, targetRoute.Target.Summary)
 	return targetRoute.Handler()
 }
 
@@ -198,7 +198,7 @@ func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) 
 	recorder := &server.StatusRecorder{ResponseWriter: writer, Status: http.StatusOK}
 	handler := p.routeHandler(request, protocol, port, domain)
 	defer func() {
-		logging.Infof("request domain=%s protocol=%s port=%d path=%s status=%d elapsed=%s", domain, protocol, port, request.URL.Path, recorder.Status, time.Since(start))
+		log.Info("request domain=%s protocol=%s port=%d path=%s status=%d elapsed=%s", domain, protocol, port, request.URL.Path, recorder.Status, time.Since(start))
 	}()
 	handler.ServeHTTP(recorder, request)
 }
@@ -221,7 +221,7 @@ func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 		case <-ticker.C:
 			info, err := os.Stat(p.configPath)
 			if err != nil {
-				logging.Warnf("failed to stat routing config: %v", err)
+				log.Warn("failed to stat routing config: %v", err)
 				continue
 			}
 			// 比 size 与 mtime 而非读全文；mtime 为毫秒级粒度，间隔极短的连续保存可能只触发一次重载
@@ -230,10 +230,10 @@ func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 			}
 			previousSize, previousModTime, previousKnown = info.Size(), info.ModTime(), true
 			if err := p.reload(); err != nil {
-				logging.Errorf("config reload failed, keeping previous config: %v", err)
+				log.Error("config reload failed, keeping previous config: %v", err)
 				continue
 			}
-			logging.Infof("config changed, hot reloaded")
+			log.Info("config changed, hot reloaded")
 		}
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	"mrp/internal/logging"
+	"mrp/internal/log"
 	"mrp/internal/route"
 )
 
@@ -203,6 +203,6 @@ func Ensure(path string) error {
 	if err := os.WriteFile(path, []byte(defaultConfig), 0o644); err != nil {
 		return err
 	}
-	logging.Infof("created default config file path=%s", path)
+	log.Info("created default config file path=%s", path)
 	return nil
 }

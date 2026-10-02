@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"mrp/internal/logging"
+	"mrp/internal/log"
 	"mrp/internal/testutil"
 )
 
 func init() {
-	logging.SetOutput(io.Discard)
+	log.SetOutput(io.Discard)
 }
 
 func testNameservers(t *testing.T, entries ...string) *Resolver {

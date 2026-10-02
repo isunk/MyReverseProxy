@@ -12,12 +12,12 @@ import (
 	"sync"
 	"testing"
 
-	"mrp/internal/logging"
+	"mrp/internal/log"
 	"mrp/internal/testutil"
 )
 
 func init() {
-	logging.SetOutput(io.Discard)
+	log.SetOutput(io.Discard)
 }
 
 func TestAuthority_SignsForSNI(t *testing.T) {

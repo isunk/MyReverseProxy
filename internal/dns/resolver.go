@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"mrp/internal/cache"
-	"mrp/internal/logging"
+	"mrp/internal/log"
 )
 
 const (
@@ -70,7 +70,7 @@ func (r *Resolver) Update(entries []string) error {
 	}
 	r.current.Store(&state{addresses: addresses, resolvers: r.buildResolvers(addresses)})
 	r.cache.Clear()
-	logging.Infof("dns nameservers=%s", strings.Join(addresses, ","))
+	log.Info("dns nameservers=%s", strings.Join(addresses, ","))
 	return nil
 }
 

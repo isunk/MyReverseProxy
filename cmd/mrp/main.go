@@ -14,7 +14,7 @@ import (
 	"mrp/internal/ca"
 	"mrp/internal/config"
 	"mrp/internal/dns"
-	"mrp/internal/logging"
+	"mrp/internal/log"
 	"mrp/internal/proxy"
 	"mrp/internal/server"
 )
@@ -27,7 +27,7 @@ type startupOptions struct {
 	port            int
 	certPath        string
 	keyPath         string
-	logLevel        logging.Level
+	logLevel        log.Level
 	dnsTimeout      time.Duration
 	dnsTTL          time.Duration
 	configSpecified bool
@@ -57,7 +57,7 @@ func parseStartupOptions() (startupOptions, error) {
 			opts.keySpecified = true
 		}
 	})
-	level, err := logging.ParseLevel(levelName)
+	level, err := log.ParseLevel(levelName)
 	if err != nil {
 		return opts, err
 	}
@@ -88,7 +88,7 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize dns nameservers: %w", err)
 	}
-	logging.Infof("dns nameservers=%s dns-ttl=%s", strings.Join(nameservers.Addresses(), ","), opts.dnsTTL)
+	log.Info("dns nameservers=%s dns-ttl=%s", strings.Join(nameservers.Addresses(), ","), opts.dnsTTL)
 	transport := proxy.NewTransport(nameservers.DialContext)
 	tlsConfig, authority, err := ca.Load(opts.certPath, opts.keyPath, opts.certSpecified)
 	if err != nil {
@@ -100,17 +100,17 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 func main() {
 	opts, err := parseStartupOptions()
 	if err != nil {
-		fatalf("invalid flags: %v", err)
+		log.Fatal("invalid flags: %v", err)
 	}
-	logging.Init(opts.logLevel)
+	log.Init(opts.logLevel)
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", opts.port))
 	if err != nil {
-		fatalf("listen addr=:%d failed: %v", opts.port, err)
+		log.Fatal("listen addr=:%d failed: %v", opts.port, err)
 	}
-	logging.Infof("listening addr=:%d", opts.port)
+	log.Info("listening addr=:%d", opts.port)
 	proxyInstance, err := buildProxy(opts)
 	if err != nil {
-		fatalf("startup failed: %v", err)
+		log.Fatal("startup failed: %v", err)
 	}
 	run(listener, proxyInstance)
 }
@@ -133,14 +133,9 @@ func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy) {
 			return
 		}
 		if err := proxyInstance.Reload(); err != nil {
-			logging.Errorf("hot reload failed, keeping current config: %v", err)
+			log.Error("hot reload failed, keeping current config: %v", err)
 			continue
 		}
-		logging.Infof("routing config reloaded")
+		log.Info("routing config reloaded")
 	}
-}
-
-func fatalf(format string, args ...any) {
-	logging.Errorf(format, args...)
-	os.Exit(1)
 }

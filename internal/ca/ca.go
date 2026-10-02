@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"mrp/internal/cache"
-	"mrp/internal/logging"
+	"mrp/internal/log"
 )
 
 const (
@@ -150,7 +150,7 @@ func Load(certPath, keyPath string, explicitPair bool) (*tls.Config, *Authority,
 		certExists := fileExists(certPath)
 		keyExists := fileExists(keyPath)
 		if !certExists && !keyExists {
-			logging.Warnf("no default certificate found, serving HTTP and CONNECT tunnel only cert=%s key=%s", certPath, keyPath)
+			log.Warn("no default certificate found, serving HTTP and CONNECT tunnel only cert=%s key=%s", certPath, keyPath)
 			return nil, nil, nil
 		}
 		if certExists != keyExists {

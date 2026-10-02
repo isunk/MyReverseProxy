@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"mrp/internal/logging"
+	"mrp/internal/log"
 )
 
 const (
@@ -155,7 +155,7 @@ func (r *Route) rewriteRequest(request *httputil.ProxyRequest) {
 // UpstreamErrorHandler 上游不可达时回 502，不向客户端透出传输层错误细节。
 // 供本包的路由代理与 proxy 包的透传代理共用。
 func UpstreamErrorHandler(writer http.ResponseWriter, request *http.Request, err error) {
-	logging.Errorf("upstream request failed host=%s path=%s: %v", request.Host, request.URL.Path, err)
+	log.Error("upstream request failed host=%s path=%s: %v", request.Host, request.URL.Path, err)
 	writer.WriteHeader(http.StatusBadGateway)
 	_, _ = io.WriteString(writer, "502 Bad Gateway")
 }

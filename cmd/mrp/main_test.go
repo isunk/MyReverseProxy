@@ -18,12 +18,12 @@ import (
 	"time"
 
 	"mrp/internal/dns"
-	"mrp/internal/logging"
+	"mrp/internal/log"
 	"mrp/internal/testutil"
 )
 
 func init() {
-	logging.SetOutput(io.Discard)
+	log.SetOutput(io.Discard)
 }
 
 func repoRoot() string {
@@ -57,7 +57,7 @@ func TestParseStartupOptions_Defaults(t *testing.T) {
 	if opts.configPath != "config.yaml" || opts.certPath != "ca.crt" || opts.keyPath != "ca.key" {
 		t.Fatalf("default paths = %q %q %q", opts.configPath, opts.certPath, opts.keyPath)
 	}
-	if opts.logLevel != logging.Info {
+	if opts.logLevel != log.InfoLevel {
 		t.Fatalf("default log level = %v", opts.logLevel)
 	}
 	if opts.dnsTimeout != dns.AttemptTimeout || opts.dnsTTL != dns.TTL {
@@ -74,7 +74,7 @@ func TestParseStartupOptions_Custom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseStartupOptions: %v", err)
 	}
-	if opts.port != 8080 || opts.logLevel != logging.Debug || opts.dnsTTL != 0 {
+	if opts.port != 8080 || opts.logLevel != log.DebugLevel || opts.dnsTTL != 0 {
 		t.Fatalf("parsed opts = %+v", opts)
 	}
 	if !opts.configSpecified || !opts.certSpecified || !opts.keySpecified {
@@ -101,7 +101,7 @@ func TestParseStartupOptions_RejectsInvalidValues(t *testing.T) {
 func TestBuildProxy_EnsuresConfigWhenNotSpecified(t *testing.T) {
 	opts := startupOptions{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		logLevel:   logging.Error,
+		logLevel:   log.ErrorLevel,
 		dnsTimeout: dns.AttemptTimeout,
 		dnsTTL:     dns.TTL,
 	}
@@ -120,7 +120,7 @@ func TestBuildProxy_RejectsUnpairedCert(t *testing.T) {
 		certPath:        "ca.crt",
 		keyPath:         "",
 		certSpecified:   true,
-		logLevel:        logging.Error,
+		logLevel:        log.ErrorLevel,
 		dnsTimeout:      dns.AttemptTimeout,
 		dnsTTL:          dns.TTL,
 	}
