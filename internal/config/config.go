@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -113,6 +114,10 @@ func Parse(data []byte) (*Config, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&config); err != nil {
+		// 空文件与纯注释在 yaml 里都表现为 EOF，透出原始错误会让用户无从定位
+		if errors.Is(err, io.EOF) {
+			return nil, errors.New("config file is empty")
+		}
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	return &config, nil

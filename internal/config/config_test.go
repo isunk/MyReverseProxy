@@ -206,6 +206,24 @@ func TestLoadTable_RejectsUnknownField(t *testing.T) {
 	}
 }
 
+func TestLoadTable_EmptyConfigMessage(t *testing.T) {
+	for name, content := range map[string]string{
+		"empty":           "",
+		"comment_only":    "# 只有注释\n",
+		"whitespace_only": "   \n   \n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := Load(testutil.ConfigFile(t, name+".yaml", content))
+			if err == nil {
+				t.Fatal("empty config must fail")
+			}
+			if !strings.Contains(err.Error(), "config file is empty") {
+				t.Fatalf("error should mention empty config, got %q", err)
+			}
+		})
+	}
+}
+
 func TestLoadTable_AcceptsUTF8BOM(t *testing.T) {
 	config := "\ufeffservers: []\nnameservers: [\"114.114.114.114\"]\n"
 	if _, _, err := Load(testutil.ConfigFile(t, "bom.yaml", config)); err != nil {
