@@ -88,13 +88,18 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize dns nameservers: %w", err)
 	}
-	log.Info("dns nameservers=%s dns-ttl=%s", strings.Join(nameservers.Addresses(), ","), opts.dnsTTL)
 	transport := proxy.NewTransport(nameservers.DialContext)
 	tlsConfig, authority, err := ca.Load(opts.certPath, opts.keyPath, opts.certSpecified)
 	if err != nil {
 		return nil, fmt.Errorf("tls certificate configuration: %w", err)
 	}
-	return proxy.New(opts.configPath, transport, tlsConfig, authority, nameservers)
+	proxyInstance, err := proxy.New(opts.configPath, transport, tlsConfig, authority, nameservers)
+	if err != nil {
+		return nil, err
+	}
+	// 首次 reload 已让配置文件里的 nameservers 生效，此处打印实际生效列表而非初始默认值
+	log.Info("dns nameservers=%s dns-ttl=%s", strings.Join(nameservers.Addresses(), ","), opts.dnsTTL)
+	return proxyInstance, nil
 }
 
 func main() {

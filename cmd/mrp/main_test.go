@@ -185,9 +185,10 @@ func TestE2E_ConfigNameserversTakeEffect(t *testing.T) {
 	}
 	stub := testutil.NewStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
 	listenPort := testutil.FreePort(t)
+	refusedPort := testutil.ClosedUDPPort(t)
 	configPath := testutil.ConfigFile(t, "e2e.yaml",
 		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: http://api.mrp.local:"+upstreamPort+"\n"+
-			"nameservers:\n  - \"127.0.0.1:"+testutil.ClosedUDPPort(t)+"\"\n  - \""+stub.Address()+"\"\n")
+			"nameservers:\n  - \"127.0.0.1:"+refusedPort+"\"\n  - \""+stub.Address()+"\"\n")
 	caCert, caKey := testutil.AuthorityCA(t)
 	certPath, keyPath := testutil.WriteCertFiles(t, caCert, caKey)
 
@@ -241,7 +242,33 @@ func TestE2E_ConfigNameserversTakeEffect(t *testing.T) {
 	if stub.QueryCount() == 0 {
 		t.Fatalf("configured nameserver received no dns query\nlog:\n%s", logs.String())
 	}
-	if !strings.Contains(logs.String(), "dns nameservers=") {
-		t.Fatalf("effective nameservers not logged\nlog:\n%s", logs.String())
+	// 启动日志必须显示配置文件生效的 nameservers，而非 dns.New 的初始默认值
+	wantNameservers := "dns nameservers=127.0.0.1:" + refusedPort + "," + stub.Address() + " dns-ttl="
+	if !strings.Contains(logs.String(), wantNameservers) {
+		t.Fatalf("startup log must show effective nameservers %q\nlog:\n%s", wantNameservers, logs.String())
+	}
+}
+
+// 配置文件里的 nameservers 在首次 reload 生效，启动日志应打印生效列表而非默认值
+func TestBuildProxy_LogsConfiguredNameservers(t *testing.T) {
+	stub := testutil.NewStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers: []\nnameservers:\n  - \""+stub.Address()+"\"\n")
+	opts := startupOptions{
+		configPath:      configPath,
+		configSpecified: true,
+		logLevel:        log.InfoLevel,
+		dnsTimeout:      dns.AttemptTimeout,
+		dnsTTL:          dns.TTL,
+	}
+	var out syncBuffer
+	log.SetOutput(&out)
+	t.Cleanup(func() { log.SetOutput(io.Discard) })
+	if _, err := buildProxy(opts); err != nil {
+		t.Fatalf("buildProxy: %v", err)
+	}
+	wantNameservers := "dns nameservers=" + stub.Address() + " dns-ttl="
+	if !strings.Contains(out.String(), wantNameservers) {
+		t.Fatalf("startup log must show configured nameserver %q, got %q", wantNameservers, out.String())
 	}
 }

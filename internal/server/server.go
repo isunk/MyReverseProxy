@@ -2,18 +2,23 @@ package server
 
 import (
 	"bufio"
-	"log"
+	"errors"
+	stdlog "log"
 	"net"
 	"net/http"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"mrp/internal/log"
 )
 
 const (
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 60 * time.Second
+
+	acceptBackoffMax = time.Second
 )
 
 // oneConnListener 把已建立的连接包装为 Listener，让 http.Server 直接服务该连接，
@@ -54,12 +59,22 @@ type BufferedConn struct {
 func (c *BufferedConn) Read(p []byte) (int, error) { return c.Reader.Read(p) }
 
 // Serve 接受连接并逐条服务：单条连接服务结束（未发生 hijack）时关闭该连接。
+// 监听器已关闭即返回；其余 Accept 错误退避重试，设备上 fd 短暂耗尽（EMFILE）
+// 属临时故障，停止重试会让代理在进程存活的情况下静默拒绝一切连接。
 func Serve(listener net.Listener, handler http.Handler) error {
+	backoff := 5 * time.Millisecond
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			return err
+			if errors.Is(err, net.ErrClosed) {
+				return err
+			}
+			log.Error("listener accept failed, retrying in %s: %v", backoff, err)
+			time.Sleep(backoff)
+			backoff = min(backoff*2, acceptBackoffMax)
+			continue
 		}
+		backoff = 5 * time.Millisecond
 		go func() {
 			if !ServeSingleConn(New(handler), conn) {
 				conn.Close()
@@ -85,7 +100,7 @@ func ServeSingleConn(server *http.Server, conn net.Conn) bool {
 	return hijacked.Load()
 }
 
-var httpErrorLog = log.New(os.Stderr, "", 0)
+var httpErrorLog = stdlog.New(os.Stderr, "", 0)
 
 // New 构建承载单条连接的 http.Server：统一读头超时与空闲超时。
 func New(handler http.Handler) *http.Server {

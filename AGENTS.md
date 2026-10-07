@@ -16,7 +16,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 - `mrp.bat` 为纯 ASCII（英文 UI）、CRLF 行尾的 Windows 分发脚本（仓库按原始字节存储）。为避免 cmd 批处理解析器按系统 ANSI 代码页读取脚本导致的编码错位/乱码，脚本刻意不使用中文与 `chcp`，故在任何代码页、任何终端（PowerShell 7、Windows Terminal、VSCode、双机 conhost）下都能正确解析与显示。修改后自检：仍是 CRLF 行尾、纯 ASCII（无 BOM、无任何非 ASCII 字节），禁止引入中文或加回 `chcp`。
 
-代码按业界标准布局分层：`cmd/mrp` 是入口，业务逻辑全部在 `internal/*`，包之间单向依赖（`log`、`cache` 无内部依赖；`route`→`log`；`config`→`route,log`；`dns`→`cache,log`；`ca`→`cache,log`；`proxy`→`ca,config,dns,log,route,server`），禁止反向引用形成环。
+代码按业界标准布局分层：`cmd/mrp` 是入口，业务逻辑全部在 `internal/*`，包之间单向依赖（`log`、`cache` 无内部依赖；`route`→`log`；`config`→`route,log`；`dns`→`cache,log`；`ca`→`cache,log`；`server`→`log`；`proxy`→`ca,config,dns,log,route,server`），禁止反向引用形成环。
 
 | 文件 | 职责 | 不应包含 |
 |------|------|----------|
