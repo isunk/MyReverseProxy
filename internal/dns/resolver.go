@@ -70,7 +70,8 @@ func (r *Resolver) Update(entries []string) error {
 	}
 	r.current.Store(&state{addresses: addresses, resolvers: r.buildResolvers(addresses)})
 	r.cache.Clear()
-	log.Info("dns nameservers=%s", strings.Join(addresses, ","))
+	// 变化详情用 Debug 级：启动时 main 已打 Info 级 nameservers 日志，热加载由上层总日志覆盖
+	log.Debug("dns nameservers changed to %s", strings.Join(addresses, ","))
 	return nil
 }
 

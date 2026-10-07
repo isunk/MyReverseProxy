@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -59,6 +60,65 @@ func TestAuthority_SignsForSNI(t *testing.T) {
 
 	if _, err := authority.GetCertificate(&tls.ClientHelloInfo{ServerName: ""}); err == nil {
 		t.Fatal("缺少 SNI 应报错")
+	}
+}
+
+// TestAuthority_SignsForIP 验证 IP 字面量目标按 IP SAN 签发：IPv4/IPv6 均可
+// 通过客户端 hostname 校验，IP 与域名走同一缓存，SNI 与显式名字共享签发结果。
+func TestAuthority_SignsForIP(t *testing.T) {
+	caCert, caKey := testutil.AuthorityCA(t)
+	authority := New(caCert, caKey)
+
+	cert, err := authority.CertificateFor("192.168.1.50")
+	if err != nil {
+		t.Fatalf("CertificateFor: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leaf.IPAddresses) != 1 || leaf.IPAddresses[0].String() != "192.168.1.50" {
+		t.Fatalf("IP SAN 应为 192.168.1.50, got %v", leaf.IPAddresses)
+	}
+	if len(leaf.DNSNames) != 0 {
+		t.Fatalf("IP 目标不应写 DNSNames, got %v", leaf.DNSNames)
+	}
+	if err := leaf.VerifyHostname("192.168.1.50"); err != nil {
+		t.Fatalf("IP SAN 校验失败: %v", err)
+	}
+	if err := leaf.CheckSignatureFrom(caCert); err != nil {
+		t.Fatalf("证书应由 CA 签发: %v", err)
+	}
+
+	cached, err := authority.CertificateFor("192.168.1.50")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached != cert {
+		t.Fatal("同一 IP 应命中缓存返回同一证书")
+	}
+
+	viaSNI, err := authority.GetCertificate(&tls.ClientHelloInfo{ServerName: "192.168.1.50"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if viaSNI != cert {
+		t.Fatal("SNI 与显式名字应共享缓存证书")
+	}
+
+	cert6, err := authority.CertificateFor("::1")
+	if err != nil {
+		t.Fatalf("CertificateFor IPv6: %v", err)
+	}
+	leaf6, err := x509.ParseCertificate(cert6.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leaf6.IPAddresses) != 1 || !leaf6.IPAddresses[0].Equal(net.ParseIP("::1")) {
+		t.Fatalf("IP SAN 应为 ::1, got %v", leaf6.IPAddresses)
+	}
+	if err := leaf6.VerifyHostname("::1"); err != nil {
+		t.Fatalf("IPv6 SAN 校验失败: %v", err)
 	}
 }
 

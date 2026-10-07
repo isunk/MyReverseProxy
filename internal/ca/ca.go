@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -64,10 +65,17 @@ func New(cert *x509.Certificate, key crypto.Signer) *Authority {
 	}
 }
 
-// GetCertificate 命中缓存即返回；未命中时同域名并发握手合并为一次签发。
-// ECDSA 密钥生成与签名耗时较长，须在锁外执行，避免串行化所有域名的握手。
+// GetCertificate 供标准 TLS 握手按 SNI 取证书；SNI 缺失时报错，
+// 由每连接 TLS 配置在 IP 直连客户端不发 SNI 时以 CONNECT 目标回退。
 func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	serverName := strings.ToLower(hello.ServerName)
+	return a.CertificateFor(hello.ServerName)
+}
+
+// CertificateFor 按显式名字签发或取缓存证书：名字可来自 SNI，也可来自 CONNECT 目标
+// （客户端对 IP 直连不发 SNI）。命中缓存即返回；未命中时同名字并发握手合并为一次签发。
+// ECDSA 密钥生成与签名耗时较长，须在锁外执行，避免串行化所有域名的握手。
+func (a *Authority) CertificateFor(serverName string) (*tls.Certificate, error) {
+	serverName = strings.ToLower(serverName)
 	if serverName == "" {
 		return nil, errors.New("missing SNI, cannot sign certificate for domain")
 	}
@@ -77,6 +85,11 @@ func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate
 	call, leader := a.begin(serverName)
 	if !leader {
 		return call.wait()
+	}
+	// 双检：Get 未命中到取得 leader 之间，可能已有上一轮签发完成并写入缓存
+	if cached, ok := a.cache.Get(serverName); ok {
+		a.end(serverName, call, cached, nil)
+		return cached, nil
 	}
 	cert, err := a.sign(serverName)
 	if err == nil {
@@ -130,7 +143,12 @@ func (a *Authority) sign(serverName string) (*tls.Certificate, error) {
 		NotAfter:     time.Now().Add(certTTL),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{serverName},
+	}
+	// 名字为 IP 字面量时按 IP SAN 签发：客户端校验 https://<ip> 走 IPAddresses 而非 DNSNames
+	if ip := net.ParseIP(serverName); ip != nil {
+		template.IPAddresses = []net.IP{ip}
+	} else {
+		template.DNSNames = []string{serverName}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, a.cert, &priv.PublicKey, a.key)
 	if err != nil {

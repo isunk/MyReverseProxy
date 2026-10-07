@@ -1,8 +1,11 @@
 package route
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +40,7 @@ func TestPick_LongestPrefix(t *testing.T) {
 	}
 }
 
-func TestJoinPath(t *testing.T) {
+func TestSingleJoiningSlash(t *testing.T) {
 	cases := []struct {
 		base, rest, want string
 	}{
@@ -52,8 +55,44 @@ func TestJoinPath(t *testing.T) {
 		{"/", "foo", "/foo"},
 	}
 	for _, tc := range cases {
-		if got := joinPath(tc.base, tc.rest); got != tc.want {
-			t.Fatalf("joinPath(%q, %q) = %q, want %q", tc.base, tc.rest, got, tc.want)
+		if got := singleJoiningSlash(tc.base, tc.rest); got != tc.want {
+			t.Fatalf("singleJoiningSlash(%q, %q) = %q, want %q", tc.base, tc.rest, got, tc.want)
+		}
+	}
+}
+
+// TestRewriteRequest_PreservesEscapedPath 验证含编码字符（%2F、%20）的路径转发后
+// 编码语义原样保留，前缀按解码字节对齐剥离，前缀不匹配时整段原样转发。
+func TestRewriteRequest_PreservesEscapedPath(t *testing.T) {
+	cases := []struct {
+		prefix      string
+		inURL       string
+		wantPath    string
+		wantEscaped string
+	}{
+		{"/api", "/api/x", "/v1/x", "/v1/x"},
+		{"/api", "/api/a%2Fb", "/v1/a/b", "/v1/a%2Fb"},
+		{"/api/", "/api/a%2Fb", "/v1/a/b", "/v1/a%2Fb"},
+		{"/api", "/unmatched/a%2Fb", "/v1/unmatched/a/b", "/v1/unmatched/a%2Fb"},
+		{"/api", "/api/x%20y", "/v1/x y", "/v1/x%20y"},
+	}
+	for _, tc := range cases {
+		target, err := ParseTarget("http://up-a/v1")
+		if err != nil {
+			t.Fatalf("ParseTarget: %v", err)
+		}
+		handler := (&Route{Prefix: tc.prefix, Target: target}).buildProxy(nil)
+		inURL, err := url.Parse(tc.inURL)
+		if err != nil {
+			t.Fatalf("url.Parse(%q): %v", tc.inURL, err)
+		}
+		// 与 ReverseProxy 一致：In 为原始请求、Out 为其克隆，SetURL 只就地改写 Out
+		in := &http.Request{URL: inURL, Header: http.Header{}}
+		request := &httputil.ProxyRequest{In: in, Out: in.Clone(context.Background())}
+		handler.Rewrite(request)
+		if request.Out.URL.Path != tc.wantPath || request.Out.URL.EscapedPath() != tc.wantEscaped {
+			t.Fatalf("rewrite %q prefix %q: path = %q, escaped = %q, want %q / %q",
+				tc.inURL, tc.prefix, request.Out.URL.Path, request.Out.URL.EscapedPath(), tc.wantPath, tc.wantEscaped)
 		}
 	}
 }

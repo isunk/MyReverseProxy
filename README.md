@@ -7,6 +7,7 @@ Go 实现的本地反向代理。只监听一个端口（`--port`，默认 8000�
 ### HTTPS 解密
 
 - 按域名实时签发证书，无需预先登记要拦截的域名
+- 支持 IP 型 HTTPS 路由：客户端对 IP 直连不发 SNI，mrp 回退到 CONNECT 目标签发 IP SAN 证书，客户端按 IP 校验通过
 - 未提供 CA 时降级为不解密的代理与隧道透传
 
 ### 路由
@@ -14,6 +15,7 @@ Go 实现的本地反向代理。只监听一个端口（`--port`，默认 8000�
 - 多域名虚拟服务器，按域名、协议、端口匹配
 - 按路径前缀匹配，未命中的域名透传到原目标
 - 可改写 Host 头与请求、响应头
+- 路径中的编码字符（如 `%2F`）原样转发到上游，不被二次转义
 
 ### 上游
 
@@ -190,7 +192,7 @@ servers:
 
 Android / HarmonyOS 设备上的 `/etc/resolv.conf` 常把 nameserver 指向 `[::1]` 或网关等非标准地址（解析交给 netd 等守护进程完成），mrp 自带的 Go DNS 解析器读不到有效服务器时上游域名会解析失败，报 `read udp ...->[::1]:53: connection refused`。因此设备部署时必须显式配置 `nameservers`。
 
-未匹配的域名透传原目标。修改 `config.yaml` 后自动热加载，无需重启；只有路由或 `nameservers` 真正变化时才重建转发、拆掉旧的上游连接并清空 DNS 解析缓存，改注释不会打断已有连接。
+未匹配的域名透传原目标。修改 `config.yaml` 后自动热加载（轮询文件变更，`SIGHUP` 手动触发亦可），无需重启；只有路由或 `nameservers` 真正变化时才重建转发、拆掉旧的上游连接并清空 DNS 解析缓存与已签发证书缓存，改注释不会打断已有连接。CA 证书在启动时加载一次，热加载不重载证书。
 
 ### 4. 启动服务
 
@@ -339,4 +341,45 @@ export http_proxy=http://192.168.1.100:8000 https_proxy=http://192.168.1.100:800
 
 # 取消代理
 unset http_proxy https_proxy
+```
+
+## 从源码构建
+
+需要 Go 1.25+。克隆后直接编译：
+
+```bash
+go build -o mrp ./cmd/mrp
+```
+
+交叉编译静态二进制（`CGO_ENABLED=0`）：
+
+```bash
+# Android / Linux arm64 设备
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o mrp-linux-arm64 ./cmd/mrp
+
+# Windows amd64
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o mrp-windows-amd64.exe ./cmd/mrp
+```
+
+运行测试：
+
+```bash
+go test ./...
+go test -race ./internal/ca/ ./internal/proxy/
+```
+
+## 项目结构
+
+```
+cmd/mrp/        入口：命令行解析、信号处理、构建代理实例
+internal/
+  config/       YAML 配置结构与解析
+  route/        路由表、前缀匹配、路径改写（含编码保真）
+  proxy/        反向代理核心：请求转发、CONNECT 隧道、MITM 编排、热加载
+  server/       单端口明文监听、单连接复用（MITM 内层服务）
+  ca/           自签 CA 按名字现场签发证书（域名 SAN / IP SAN），并发合并
+  dns/          上游 DNS 解析与故障切换、结果缓存
+  cache/        通用并发缓存
+  log/          控制台日志（级别过滤、按级别着色）
+  testutil/     跨包共享测试替身
 ```

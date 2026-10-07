@@ -141,15 +141,70 @@ func (r *Route) buildProxy(transport *http.Transport) *httputil.ReverseProxy {
 }
 
 // rewriteRequest 换上游 scheme/host 并按配置剥掉路径前缀。SetURL 会把上游基路径
-// 与完整入站路径拼接，剥前缀后必须重写 Path，故此处显式覆盖。
+// 与完整入站路径拼接，剥前缀后必须重写 Path；RawPath 同步重建，
+// 保证 %2F 等编码语义原样转发到上游而非被重新转义。
 func (r *Route) rewriteRequest(request *httputil.ProxyRequest) {
 	request.SetURL(r.Target.URL)
-	request.Out.URL.Path = joinPath(r.Target.URL.Path, strings.TrimPrefix(request.In.URL.Path, r.Prefix))
-	request.Out.URL.RawPath = ""
+	restPath := strings.TrimPrefix(request.In.URL.Path, r.Prefix)
+	restRawPath := trimEncodedPrefix(request.In.URL.EscapedPath(), len(request.In.URL.Path)-len(restPath))
+	request.Out.URL.Path, request.Out.URL.RawPath = joinOutPath(r.Target.URL, restPath, restRawPath)
 	if r.Host != "" {
 		request.Out.Host = r.Host
 	}
 	r.Headers.rewriteRequest(request.Out.Header)
+}
+
+// trimEncodedPrefix 在原始编码路径上剥掉指定字节数的解码前缀：EscapedPath 的
+// 每一段（%XX 或单字节）恰好解码为 1 字节，与 Path 字节序列一一对应，
+// 按字节数逐段消费即可，避免把 %2F 重新转义成 %252F。
+func trimEncodedPrefix(escaped string, skip int) string {
+	for ; skip > 0 && escaped != ""; skip-- {
+		if escaped[0] == '%' && len(escaped) >= 3 {
+			escaped = escaped[3:]
+			continue
+		}
+		escaped = escaped[1:]
+	}
+	return escaped
+}
+
+// joinOutPath 按斜杠边界拼接上游基路径与入站剩余路径，语义与 httputil 内部
+// joinURLPath 一致：Path 与 RawPath（完整路径编码）按同一斜杠规则同步拼接，
+// RawPath 的 base 段取 base 的完整转义、rest 段取传入的编码剩余路径；
+// 结果无编码差异时 RawPath 置空，回归默认转义。
+func joinOutPath(base *url.URL, restPath, restRawPath string) (string, string) {
+	baseRaw := base.EscapedPath()
+	restRaw := restRawPath
+	if restRaw == "" {
+		restRaw = (&url.URL{Path: restPath}).EscapedPath()
+	}
+	baseSlash := strings.HasSuffix(base.Path, "/")
+	restSlash := strings.HasPrefix(restPath, "/")
+	path := singleJoiningSlash(base.Path, restPath)
+	raw := baseRaw + restRaw
+	switch {
+	case baseSlash && restSlash:
+		raw = baseRaw + restRaw[1:]
+	case !baseSlash && !restSlash:
+		raw = baseRaw + "/" + restRaw
+	}
+	if raw == (&url.URL{Path: path}).EscapedPath() {
+		raw = ""
+	}
+	return path, raw
+}
+
+// singleJoiningSlash 拼接两段路径，避免出现双斜杠或丢斜杠。
+func singleJoiningSlash(base, rest string) string {
+	baseSlash := strings.HasSuffix(base, "/")
+	restSlash := strings.HasPrefix(rest, "/")
+	switch {
+	case baseSlash && restSlash:
+		return base + rest[1:]
+	case !baseSlash && !restSlash:
+		return base + "/" + rest
+	}
+	return base + rest
 }
 
 // UpstreamErrorHandler 上游不可达时回 502，不向客户端透出传输层错误细节。
@@ -342,18 +397,4 @@ func pathHasPrefix(path, prefix string) bool {
 		return true
 	}
 	return len(path) == len(prefix) || path[len(prefix)] == '/'
-}
-
-// joinPath 拼接上游基路径与入站剩余路径，处理两端斜杠，避免出现双斜杠或丢斜杠。
-func joinPath(base, rest string) string {
-	if rest == "" {
-		rest = "/"
-	}
-	if !strings.HasPrefix(rest, "/") {
-		rest = "/" + rest
-	}
-	if base == "" {
-		return rest
-	}
-	return strings.TrimSuffix(base, "/") + rest
 }

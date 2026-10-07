@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"mrp/internal/ca"
 	"mrp/internal/log"
 	"mrp/internal/server"
 )
@@ -62,7 +63,26 @@ func (p *Proxy) serveConnect(client net.Conn, request *http.Request, protocol st
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return false
 	}
-	return server.ServeSingleConn(server.New(p.Handler()), tls.Server(client, p.tlsConfig))
+	return server.ServeSingleConn(server.New(p.Handler()), tls.Server(client, mitmTLSConfig(p.tlsConfig, p.authority, domain)))
+}
+
+// mitmTLSConfig 为单条 MITM 隧道构造 TLS 配置：客户端对 IP 直连不发 SNI，
+// 握手回调拿不到目标，故在按名字签发的配置上（GetCertificate 与 CA 均可用时）
+// 将 SNI 缺失的请求回退到 CONNECT 目标签名，使 IP 型 HTTPS 路由同样能 MITM。
+// 静态证书或无 CA 的构造原样返回，SNI 缺失时维持原行为。
+func mitmTLSConfig(template *tls.Config, authority *ca.Authority, domain string) *tls.Config {
+	if template.GetCertificate == nil || authority == nil {
+		return template
+	}
+	connConfig := template.Clone()
+	connConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		name := hello.ServerName
+		if name == "" {
+			name = domain
+		}
+		return authority.CertificateFor(name)
+	}
+	return connConfig
 }
 
 // tunnel 在客户端与目标之间双向搬运字节，不做任何内容检查或改写。

@@ -48,6 +48,14 @@ This file records user instructions, preferences, and teachings for reference in
   - HarmonyOS hdc has no verified global-HTTP-proxy *query* command. The set path is `hdc shell network-cfg set http_proxy <host:port>`, but no equivalent `get` was confirmable from official docs. The user explicitly chose to leave hdc proxy status as `Unknown` rather than wire in a guessed command. Do not add hdc proxy probing with an unverified command; only adb is probed (`adb shell settings get global http_proxy`, compared to `127.0.0.1:<PORT>`).
   - `adb shell` and `hdc shell` both merge device-side stderr into the host-side stdout, and exit codes are unreliable. Remote file-existence checks must therefore use a command that emits nothing on failure (`test -f %1 && echo Y`, judged by temp-file size) — never `ls %1`, whose error line leaks into stdout and makes the path always look present. `pidof <bin>` is safe because it prints nothing when no process matches.
 
+[User Instruction Summary]
+- Date: 2026-10-03
+- Context: 用户先后提出「优化变量命名」「仅优化函数名」，两次均在实现完成、门禁全绿后以「撤销修改」「撤销」要求全部还原（回到 a6321cd）
+- Instructions:
+  - 纯命名层面的重构（变量、接收者、函数名）风险收益比低：用户想先看改动方案，最终未必采纳。此类任务先输出改名对照表 + diff 预览请用户确认，确认后再落地，避免改完再撤。
+  - 不主动提议命名优化；mrp 现有命名被视为已足够。已确认的命名约定以 AGENTS.md 为准，不再额外收紧。
+  - 撤销指令用 `git restore .` 回到最近提交即可（mrp 仓库工作区平时保持干净）。
+
 [Project Knowledge Summary]
 - Date: 2026-09-29
 - Context: Discovered by Agent while measuring mrp proxy latency and TLS/DNS overhead during a performance optimization pass
