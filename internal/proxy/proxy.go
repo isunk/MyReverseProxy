@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -47,6 +48,10 @@ type Proxy struct {
 	authority   *ca.Authority
 	passthrough *httputil.ReverseProxy
 	nameservers *dns.Resolver
+
+	// reloadMu 串行化 reload：WatchFile 轮询与 SIGHUP 可并发触发，
+	// 不加锁时两个 reload 的 Load→Store 交错会让旧配置覆盖新配置
+	reloadMu sync.Mutex
 }
 
 func New(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *ca.Authority, nameservers *dns.Resolver) (*Proxy, error) {
@@ -81,7 +86,10 @@ func newPassthroughProxy(transport *http.Transport) *httputil.ReverseProxy {
 }
 
 // reload 重载配置：路由与 DNS 服务器无变化时保留现状，任一项变化则替换并清理派生状态。
+// 加锁串行化：读文件、比指纹、换表、清缓存是一个决策整体，并发重载必须保持顺序一致。
 func (p *Proxy) reload() error {
+	p.reloadMu.Lock()
+	defer p.reloadMu.Unlock()
 	table, nameservers, err := config.Load(p.configPath)
 	if err != nil {
 		return err

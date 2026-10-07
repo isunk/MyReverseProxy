@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -163,6 +164,48 @@ func TestWatch_HotReload(t *testing.T) {
 			t.Fatalf("配置变更未自动热加载")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// 并发触发 reload（对应 WatchFile ticker 与 SIGHUP 并发的真实场景）：
+// reload 串行化后不互相覆盖，全部结束后再 reload 一次，生效表必须收敛到文件当前内容。
+func TestReload_ConcurrentReloadsConverge(t *testing.T) {
+	upA := recordingServer(t, "A")
+	upB := recordingServer(t, "B")
+	configA := "servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: " + upA.URL + "\n"
+	configB := "servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: " + upB.URL + "\n"
+	configPath := testutil.ConfigFile(t, "r.yaml", configA)
+	servers := testNameservers(t)
+	proxy, err := New(configPath, NewTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	client := proxyClient(startListener(t, proxy))
+
+	var wg sync.WaitGroup
+	for i := range 4 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for range 20 {
+				content := configA
+				if i%2 == 1 {
+					content = configB
+				}
+				_ = os.WriteFile(configPath, []byte(content), 0o644)
+				_ = proxy.Reload()
+			}
+		}(i)
+	}
+	wg.Wait()
+	if err := os.WriteFile(configPath, []byte(configB), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if got := requestBody(t, client, "http://api.example.com/x"); !strings.HasPrefix(got, "B:/x") {
+		t.Fatalf("after concurrent reloads: %q", got)
 	}
 }
 
