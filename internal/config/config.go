@@ -169,7 +169,8 @@ func buildRoutes(server Server) ([]*route.Route, error) {
 	entries := make([]*route.Route, 0, len(server.Routes))
 	for _, configured := range server.Routes {
 		prefix := strings.TrimSpace(configured.Prefix)
-		if prefix == "" || configured.Upstream == "" {
+		upstream := strings.TrimSpace(configured.Upstream)
+		if prefix == "" || upstream == "" {
 			return nil, fmt.Errorf("domain %q: prefix and upstream are required", server.Domain)
 		}
 		if !strings.HasPrefix(prefix, "/") {
@@ -179,7 +180,7 @@ func buildRoutes(server Server) ([]*route.Route, error) {
 			return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, prefix)
 		}
 		seen[prefix] = true
-		target, err := route.ParseTarget(configured.Upstream)
+		target, err := route.ParseTarget(upstream)
 		if err != nil {
 			return nil, fmt.Errorf("domain %q: %w", server.Domain, err)
 		}

@@ -110,7 +110,7 @@ func TestLoadTable_NormalizesDomainCase(t *testing.T) {
 
 func TestLoadTable_TrimsWhitespace(t *testing.T) {
 	path := testutil.ConfigFile(t, "r.yaml",
-		"servers:\n  - domain: \" api.example.com \"\n    routes:\n      - prefix: \" /v1/ \"\n        upstream: http://up-a\n        host: \" up-a.example.com \"\n")
+		"servers:\n  - domain: \" api.example.com \"\n    routes:\n      - prefix: \" /v1/ \"\n        upstream: \" http://up-a \"\n        host: \" up-a.example.com \"\n")
 	table, _, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -124,6 +124,9 @@ func TestLoadTable_TrimsWhitespace(t *testing.T) {
 	}
 	if picked.Host != "up-a.example.com" {
 		t.Fatalf("host should be trimmed: got %q", picked.Host)
+	}
+	if picked.Target.URL.Host != "up-a" {
+		t.Fatalf("upstream should be trimmed: got %q", picked.Target.URL.Host)
 	}
 }
 
