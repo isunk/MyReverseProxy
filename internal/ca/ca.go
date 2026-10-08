@@ -47,7 +47,8 @@ func (c *certCall) deliver(cert *tls.Certificate, err error) {
 	close(c.done)
 }
 
-// Authority 按客户端 SNI 用持有的 CA 现场签发服务端证书，签发结果按域名缓存。
+// Authority 按握手目标名（客户端 SNI 或调用方构造的 ClientHelloInfo）
+// 用持有的 CA 现场签发服务端证书，签发结果按域名缓存。
 type Authority struct {
 	cert     *x509.Certificate
 	key      crypto.Signer
@@ -65,17 +66,12 @@ func New(cert *x509.Certificate, key crypto.Signer) *Authority {
 	}
 }
 
-// GetCertificate 供标准 TLS 握手按 SNI 取证书；SNI 缺失时报错，
-// 由每连接 TLS 配置在 IP 直连客户端不发 SNI 时以 CONNECT 目标回退。
-func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	return a.CertificateFor(hello.ServerName)
-}
-
-// CertificateFor 按显式名字签发或取缓存证书：名字可来自 SNI，也可来自 CONNECT 目标
-// （客户端对 IP 直连不发 SNI）。命中缓存即返回；未命中时同名字并发握手合并为一次签发。
+// GetCertificate 供标准 TLS 握手按 ClientHelloInfo 取证书：ServerName 通常来自
+// 客户端 SNI，也可由调用方构造 hello 填入显式名字（如 CONNECT 目标回退，客户端
+// 对 IP 直连不发 SNI）。命中缓存即返回；未命中时同名字并发握手合并为一次签发。
 // ECDSA 密钥生成与签名耗时较长，须在锁外执行，避免串行化所有域名的握手。
-func (a *Authority) CertificateFor(serverName string) (*tls.Certificate, error) {
-	serverName = strings.ToLower(serverName)
+func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	serverName := strings.ToLower(hello.ServerName)
 	if serverName == "" {
 		return nil, errors.New("missing SNI, cannot sign certificate for domain")
 	}

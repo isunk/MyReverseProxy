@@ -76,11 +76,10 @@ func mitmTLSConfig(template *tls.Config, authority *ca.Authority, domain string)
 	}
 	connConfig := template.Clone()
 	connConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		name := hello.ServerName
-		if name == "" {
-			name = domain
+		if hello.ServerName == "" {
+			hello.ServerName = domain
 		}
-		return authority.CertificateFor(name)
+		return authority.GetCertificate(hello)
 	}
 	return connConfig
 }

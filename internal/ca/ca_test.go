@@ -64,14 +64,15 @@ func TestAuthority_SignsForSNI(t *testing.T) {
 }
 
 // TestAuthority_SignsForIP 验证 IP 字面量目标按 IP SAN 签发：IPv4/IPv6 均可
-// 通过客户端 hostname 校验，IP 与域名走同一缓存，SNI 与显式名字共享签发结果。
+// 通过客户端 hostname 校验，IP 与域名走同一缓存；显式名字由调用方构造
+// ClientHelloInfo 表达，与真实 SNI 走同一条 GetCertificate 路径。
 func TestAuthority_SignsForIP(t *testing.T) {
 	caCert, caKey := testutil.AuthorityCA(t)
 	authority := New(caCert, caKey)
 
-	cert, err := authority.CertificateFor("192.168.1.50")
+	cert, err := authority.GetCertificate(&tls.ClientHelloInfo{ServerName: "192.168.1.50"})
 	if err != nil {
-		t.Fatalf("CertificateFor: %v", err)
+		t.Fatalf("GetCertificate: %v", err)
 	}
 	leaf, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
@@ -90,7 +91,7 @@ func TestAuthority_SignsForIP(t *testing.T) {
 		t.Fatalf("证书应由 CA 签发: %v", err)
 	}
 
-	cached, err := authority.CertificateFor("192.168.1.50")
+	cached, err := authority.GetCertificate(&tls.ClientHelloInfo{ServerName: "192.168.1.50"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,17 +99,9 @@ func TestAuthority_SignsForIP(t *testing.T) {
 		t.Fatal("同一 IP 应命中缓存返回同一证书")
 	}
 
-	viaSNI, err := authority.GetCertificate(&tls.ClientHelloInfo{ServerName: "192.168.1.50"})
+	cert6, err := authority.GetCertificate(&tls.ClientHelloInfo{ServerName: "::1"})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if viaSNI != cert {
-		t.Fatal("SNI 与显式名字应共享缓存证书")
-	}
-
-	cert6, err := authority.CertificateFor("::1")
-	if err != nil {
-		t.Fatalf("CertificateFor IPv6: %v", err)
+		t.Fatalf("GetCertificate IPv6: %v", err)
 	}
 	leaf6, err := x509.ParseCertificate(cert6.Certificate[0])
 	if err != nil {
