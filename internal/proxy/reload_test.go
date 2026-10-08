@@ -36,6 +36,43 @@ func TestReload_SwitchesRoute(t *testing.T) {
 	}
 }
 
+// 热加载失败必须保留旧路由表继续服务，配置修好后恢复切换
+func TestReload_InvalidConfigKeepsRoutes(t *testing.T) {
+	upA := recordingServer(t, "A")
+	upB := recordingServer(t, "B")
+	configA := "servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: " + upA.URL + "\n"
+	configB := "servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: " + upB.URL + "\n"
+	configPath := testutil.ConfigFile(t, "r.yaml", configA)
+	servers := testNameservers(t)
+	proxy, err := New(configPath, NewTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	client := proxyClient(startListener(t, proxy))
+
+	if got := requestBody(t, client, "http://api.example.com/one"); !strings.HasPrefix(got, "A:/one") {
+		t.Fatalf("before broken reload: %q", got)
+	}
+	if err := os.WriteFile(configPath, []byte("servers: [broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.Reload(); err == nil {
+		t.Fatal("broken config must fail to reload")
+	}
+	if got := requestBody(t, client, "http://api.example.com/two"); !strings.HasPrefix(got, "A:/two") {
+		t.Fatalf("failed reload must keep old routes: %q", got)
+	}
+	if err := os.WriteFile(configPath, []byte(configB), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.Reload(); err != nil {
+		t.Fatalf("Reload after fix: %v", err)
+	}
+	if got := requestBody(t, client, "http://api.example.com/three"); !strings.HasPrefix(got, "B:/three") {
+		t.Fatalf("after recovery: %q", got)
+	}
+}
+
 func TestReload_UnchangedConfigKeepsIdleConnections(t *testing.T) {
 	upA := recordingServer(t, "A")
 	upB := recordingServer(t, "B")

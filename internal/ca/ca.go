@@ -86,16 +86,20 @@ func (a *Authority) CertificateFor(serverName string) (*tls.Certificate, error) 
 	if !leader {
 		return call.wait()
 	}
+	var cert *tls.Certificate
+	var err error
+	// end 用 defer 兜底：sign 意外 panic 时 net/http 连接层会 recover，进程存活，
+	// 若不注销 inflight，该域名的所有后续握手将永久阻塞在 wait 上
+	defer func() { a.end(serverName, call, cert, err) }()
 	// 双检：Get 未命中到取得 leader 之间，可能已有上一轮签发完成并写入缓存
 	if cached, ok := a.cache.Get(serverName); ok {
-		a.end(serverName, call, cached, nil)
+		cert = cached
 		return cached, nil
 	}
-	cert, err := a.sign(serverName)
+	cert, err = a.sign(serverName)
 	if err == nil {
 		a.cache.Put(serverName, cert)
 	}
-	a.end(serverName, call, cert, err)
 	return cert, err
 }
 
