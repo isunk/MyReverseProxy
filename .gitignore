@@ -15,6 +15,9 @@ vendor/
 /mrp-*
 certs/
 
+# 运行时生成的本地配置
+config.yaml
+
 # IDE 与编辑器
 .idea/
 .vscode/
