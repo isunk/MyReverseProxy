@@ -722,19 +722,15 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           { name: 'Install files', run: function (api) {
               var self = this;
               ensureCA();
-              var done = function () {
-                if (!fileExists(CRT) || !fileExists(KEY)) { api.log('Missing CA files, cannot continue.', 'err'); return; }
-                runWait(tool + ' shell mkdir -p /data/local/mrp');
-                runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + DEV_BIN + '" /data/local/mrp');
-                if (fileExists(DEV_CFG)) runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + DEV_CFG + '" /data/local/mrp');
-                runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + CRT + '" /data/local/mrp');
-                runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + KEY + '" /data/local/mrp');
-                runWait(tool + ' shell chmod +x /data/local/mrp/' + DEV_BIN);
-                self.s.bin = true;
-                api.log('Device files installed.', 'ok');
-              };
-              if (!fileExists(DEV_BIN)) { api.log(DEV_BIN + ' not found at ' + WORKDIR + DEV_BIN + '. Download from GitHub Releases.', 'err'); return; }
-              done();
+              runWait(tool + ' shell mkdir -p /data/local/mrp');
+              var rc = runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + DEV_BIN + '" /data/local/mrp');
+              if (rc !== 0) { api.log(DEV_BIN + ' push failed (rc=' + rc + '). Download it from GitHub Releases into ' + WORKDIR, 'err'); return; }
+              if (fileExists(DEV_CFG)) runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + DEV_CFG + '" /data/local/mrp');
+              runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + CRT + '" /data/local/mrp');
+              runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + KEY + '" /data/local/mrp');
+              runWait(tool + ' shell chmod +x /data/local/mrp/' + DEV_BIN);
+              self.s.bin = true;
+              api.log('Device files installed.', 'ok');
             } },
           { name: 'Install CA', run: function (api) {
               var self = this;
