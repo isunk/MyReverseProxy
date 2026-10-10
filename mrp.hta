@@ -536,7 +536,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               this.s.miss = miss;
               this.s.filesOK = miss.length === 0;
               if (this.s.filesOK) { api.log('Files ready.', 'ok'); return; }
-              api.log('Missing: ' + miss.join(', ') + '. Download from GitHub Releases.', 'err');
+              api.log('Missing: ' + miss.join(', ') + ' in ' + WORKDIR + '. Download from GitHub Releases.', 'err');
             } },
           { name: 'Import CA', run: function (api) {
               var self = this;
@@ -733,7 +733,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
                 self.s.bin = true;
                 api.log('Device files installed.', 'ok');
               };
-              if (!fileExists(DEV_BIN)) { api.log(DEV_BIN + ' not found next to this script. Download it from GitHub Releases.', 'err'); return; }
+              if (!fileExists(DEV_BIN)) { api.log(DEV_BIN + ' not found at ' + WORKDIR + DEV_BIN + '. Download from GitHub Releases.', 'err'); return; }
               done();
             } },
           { name: 'Install CA', run: function (api) {
@@ -853,6 +853,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
     return {
       hasShell: hasShell, log: log, logClear: logClear,
+      workdir: WORKDIR,
       platforms: platforms, api: api, probeOne: probeOne
     };
   })();
@@ -968,7 +969,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       if (doc.addEventListener) doc.addEventListener('keydown', keyfn, false);
       else doc.attachEvent('onkeydown', keyfn);
       MyHosts.log(MyHosts.hasShell
-        ? 'mshta host - commands run directly on this machine. Click Refresh to probe devices.'
+        ? 'mshta host - workdir: ' + MyHosts.workdir + '. Click Refresh to probe devices.'
         : 'Browser host - no shell, actions will fail here.');
     }
   });
