@@ -316,8 +316,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           var argFn = (m2 && m2[2]) ? m2[2] : null;
           on(el, ev, function (e) {
             e = e || win.event;
-            if (e.preventDefault) e.preventDefault(); else e.returnValue = false;
             if (kc && (e.keyCode || e.which) !== kc) return;
+            if (e.preventDefault) e.preventDefault(); else e.returnValue = false;
             if (!m2) { report('bad handler: ' + spec.value); return; }
             var fn2 = self._ctx[m2[1]];
             if (!fn2) { report('handler not found: ' + spec.value); return; }
