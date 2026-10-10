@@ -579,9 +579,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               api.log(ok ? 'System proxy cleared.' : 'Warning: proxy not applied.', ok ? 'ok' : 'warn');
             } },
           { name: 'Start npm server', tool: true, run: function (api) {
-              var self = this;
-              runWait('cmd /c start "npm server" /D ' + WORKDIR + ' npm start', true);
-              api.log('npm server launching.', 'ok');
+              api.prompt('Start npm server', 'Enter the project directory', '', function (dir) {
+                dir = String(dir == null ? '' : dir).replace(/"/g, '');
+                if (!dir) return;
+                runWait('cmd /c start "npm server" /D "' + dir + '" npm start', true);
+                api.log('npm server launching in ' + dir + '.', 'ok');
+              });
             } },
           { name: 'Open local page', tool: true, run: function (api) {
               var self = this;
