@@ -390,8 +390,6 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     })();
 
     function pad2(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
-    function hms(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); }
-    function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
     var logBox = null;
     function log(text, lv) {
@@ -399,7 +397,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       if (!logBox) return;
       var d = doc.createElement('div');
       if (lv) d.className = lv;
-      d.innerHTML = '<i class="dim">[' + hms(new Date()) + ']</i> ' + esc(text);
+      var t = new Date();
+      d.innerHTML = '<i class="dim">[' + pad2(t.getHours()) + ':' + pad2(t.getMinutes()) + ':' + pad2(t.getSeconds()) + ']</i> ' +
+        String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       logBox.appendChild(d);
       while (logBox.children.length > 300) logBox.removeChild(logBox.firstChild);
       logBox.scrollTop = logBox.scrollHeight;
@@ -415,23 +415,22 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       try { return new ActiveXObject('WScript.Shell').Run('%comspec% /c "' + cmd + '"', show ? 1 : 0, true); }
       catch (ex) { return 1; }
     }
-    /* Exec 会为每条命令弹新控制台窗口，改用 Run 隐藏窗口 + 临时文件收 stdout */
+    /* Run 隐藏窗口 + 重定向到临时文件，读完即删 */
     function execText(cmd) {
       try {
-        var tmp = WORKDIR + '_mrp_out.tmp';
-        new ActiveXObject('WScript.Shell').Run('%comspec% /c ' + cmd + ' > "' + tmp + '"', 0, true);
+        var sh = new ActiveXObject('WScript.Shell');
         var fso = new ActiveXObject('Scripting.FileSystemObject');
-        if (!fso.FileExists(tmp)) return '';
-        var out = fso.OpenTextFile(tmp, 1, false, 0).ReadAll();
-        try { fso.DeleteFile(tmp); } catch (ex) {}
+        var tmp = WORKDIR + '_mrp_out.txt';
+        sh.Run('%comspec% /c (' + cmd + ') > "' + tmp + '"', 0, true);
+        var out = '';
+        if (fso.FileExists(tmp)) {
+          var f = fso.OpenTextFile(tmp, 1, false, 0);
+          if (!f.AtEndOfStream) out = f.ReadAll();
+          f.Close();
+          try { fso.DeleteFile(tmp); } catch (ex) {}
+        }
         return out;
       } catch (ex) { return ''; }
-    }
-    function elevate(cmd) {
-      var ps = 'powershell -NoProfile -Command "Start-Process -FilePath cmd.exe -Verb RunAs -Wait -ArgumentList \'/c ' +
-        cmd.replace(/'/g, "''") + '\'"';
-      log('> ' + cmd + ' [runas]', 'dim');
-      try { new ActiveXObject('WScript.Shell').Run(ps, 0, true); } catch (ex) {}
     }
     function fileExists(name) {
       return hasShell ? new ActiveXObject('Scripting.FileSystemObject').FileExists(WORKDIR + name) : false;
@@ -447,10 +446,47 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       if (!fileExists(CRT)) writeFileText(CRT, CA_CERT);
       if (!fileExists(KEY)) writeFileText(KEY, CA_KEY);
     }
+    /* 输入框记忆：启动读入缓存，会话内只改变量，关闭前写盘 */
+    var inputCache = {};
+    (function () {
+      if (!hasShell) return;
+      try {
+        var fso = new ActiveXObject('Scripting.FileSystemObject');
+        var path = WORKDIR + '_mrp_inputs.txt';
+        if (!fso.FileExists(path)) return;
+        var lines = fso.OpenTextFile(path, 1, false, 0).ReadAll().split('\r\n');
+        for (var i = 0; i < lines.length; i++) {
+          var idx = lines[i].indexOf('\t');
+          if (idx > 0) inputCache[lines[i].substring(0, idx)] = lines[i].substring(idx + 1);
+        }
+      } catch (ex) {}
+    })();
+    function flushInput() {
+      if (!hasShell) return;
+      try {
+        var fso = new ActiveXObject('Scripting.FileSystemObject');
+        var path = WORKDIR + '_mrp_inputs.txt';
+        var f = fso.CreateTextFile(path, true, false);
+        for (var k in inputCache) if (Object.prototype.hasOwnProperty.call(inputCache, k)) f.WriteLine(k + '\t' + inputCache[k]);
+        f.Close();
+      } catch (ex) {}
+    }
+    function loadInput(key) {
+      return inputCache[key] || '';
+    }
+    function saveInput(key, value) {
+      if (!hasShell) return;
+      inputCache[key] = value;
+    }
+    win.onbeforeunload = flushInput;
     /* netsh 代理写入需要管理员；net session 成功表示已提权，否则走 UAC 弹窗 */
     function setSystemProxy(cmd, expectOn) {
-      if (execText('net session >nul 2>&1 && echo OK') === '') elevate(cmd);
-      else runWait(cmd);
+      if (execText('net session >nul 2>&1 && echo OK') === '') {
+        var ps = 'powershell -NoProfile -Command "Start-Process -FilePath cmd.exe -Verb RunAs -Wait -ArgumentList \'/c ' +
+          cmd.replace(/'/g, "''") + '\'"';
+        log('> ' + cmd + ' [runas]', 'dim');
+        try { new ActiveXObject('WScript.Shell').Run(ps, 0, true); } catch (ex) {}
+      } else runWait(cmd);
       return execText('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0 === expectOn;
     }
     function winProcessRunning() {
@@ -477,7 +513,6 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       runWait(tool + ' wait-for-device');
       runWait(tool + ' remount');
     }
-    function withWorkdir(cmd) { return cmd.replace(/@WORK@/g, WORKDIR); }
 
     function cell(tone, text, act, danger) {
       return { tone: tone, text: text, act: act || '', danger: !!danger };
@@ -582,8 +617,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               api.prompt('Serve static', 'Enter the directory to serve', '', function (dir) {
                 dir = String(dir == null ? '' : dir).replace(/"/g, '');
                 if (!dir) return;
-                runWait('cmd /c start "static server" /D "' + dir + '" python -m http.server ' + PORT, true);
-                api.log('Serving ' + dir + ' at http://127.0.0.1:' + PORT, 'ok');
+                runWait('cmd /c start "static server" /D "' + dir + '" python -m http.server 8080', true);
+                api.log('Serving ' + dir + ' at http://127.0.0.1:8080', 'ok');
               });
             } },
           { name: 'Open local page', tool: true, run: function (api) {
@@ -852,7 +887,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
     return {
       hasShell: hasShell, log: log, logClear: logClear,
-      workdir: WORKDIR,
+      workdir: WORKDIR, loadInput: loadInput, saveInput: saveInput,
       platforms: platforms, api: api, probeOne: probeOne
     };
   })();
@@ -912,8 +947,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       },
       prompt: function (title, text, def, cb) {
         var self = this;
-        this.draft = def;
-        this.modal = { title: title, text: text, input: true, okText: 'OK', onOk: function () { cb(self.draft); } };
+        var saved = MyHosts.loadInput(title);
+        this.draft = saved || def;
+        this.modal = { title: title, text: text, input: true, okText: 'OK', onOk: function () { MyHosts.saveInput(title, self.draft); cb(self.draft); } };
       },
 
       askUninstall: function () {

@@ -68,7 +68,6 @@ jobs:
 
       - name: Stage release extras
         run: |
-          cp mrp.bat dist/mrp.bat
           cp mrp.hta dist/mrp.hta
 
       - name: Generate checksums

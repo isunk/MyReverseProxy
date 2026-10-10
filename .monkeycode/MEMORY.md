@@ -91,3 +91,16 @@ This file records user instructions, preferences, and teachings for reference in
   - Do not propose removing `p.authority.ClearCache()` from `Proxy.resetCaches`. The CA is loaded once at startup and reload never touches `tlsConfig`, so the clear drops still-valid certs (166 µs of re-signing on the next unseen SNI domain), but the user judged reload low frequency and treating stale derived state as throwaway as intended behaviour. The DNS cache clear in the same call is also covered by the `host:port` cache key and is fixed as a contract by `TestReload_ClearsDNSCache`.
   - `route.Table.Pick` stays a linear scan, and `server.ServeSingleConn` keeps allocating a per-connection `*http.Server`: hijack detection needs a per-connection `ConnState`, and sharing one server would race across connections. Both were reviewed and deliberately left.
   - Latent data race in the `log` package: `logFloor`, `logColor` and `logOut` are written by `Init`/`SetOutput` and read by `logf` outside `logMu`. No live race today because `Init` only runs at startup and tests never use `t.Parallel`, but it is the one concurrency wart in the codebase if someone adds parallel tests.
+
+[User Instruction Summary]
+- Date: 2026-10-08
+- Context: User reviewing the HTA conversion task ("把本地 mrp.bat 改造为可视化的 hta 代码")
+- Instructions:
+  - Do not auto-commit code. Only commit, push, or create branches when the user explicitly asks for it.
+
+[User Instruction Summary]
+- Date: 2026-10-10
+- Context: User reviewing comment style in the rewritten mrp.hta ("不要在注释中写思考过程和其他一些流水账记录")
+- Instructions:
+  - 注释只保留两种：简短的"为什么"说明，或一行功能/职责描述。禁止在注释中写思考过程、多行推理叙述（如"否则会……导致……"式推演）。
+  - 禁止流水账式记录：改动来源、修复历史、方案取舍过程（如"沿用已验证逻辑""不做占位""Proxy 换 defineProperty""与旧版相比"）。变更背景写在对话回复里，注释只描述当前代码的事实。

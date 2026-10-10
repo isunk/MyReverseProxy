@@ -18,6 +18,10 @@ certs/
 # 运行时生成的本地配置
 config.yaml
 
+# HTA 运行时产物
+_mrp_out.txt
+_mrp_inputs.txt
+
 # IDE 与编辑器
 .idea/
 .vscode/
