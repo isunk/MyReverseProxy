@@ -384,9 +384,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
     /* location.pathname 换算为脚本所在目录 */
     var WORKDIR = (function () {
-      var p = unescape(location.pathname).replace(/\+/g, ' ');
-      p = p.replace(/^[A-Za-z]:/, '').replace(/^\//, '').replace(/\//g, '\\');
-      return p.substring(0, p.lastIndexOf('\\') + 1);
+      var s = unescape(location.href).replace(/\+/g, ' ');
+      s = s.replace(/^file:\/\/\//i, '').replace(/\//g, '\\');
+      return s.substring(0, s.lastIndexOf('\\') + 1);
     })();
 
     function pad2(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
@@ -483,27 +483,6 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       return { tone: tone, text: text, act: act || '', danger: !!danger };
     }
 
-    /* 定位缺失文件：弹输入框请用户给目录，复制回脚本目录 */
-    function promptForFile(api, name, onDone) {
-      api.prompt('Locate ' + name,
-        name + ' not found.\nEnter the directory that contains it, e.g. your GitHub Releases download folder.',
-        '', function (src) {
-          src = String(src == null ? '' : src).replace(/"/g, '');
-          if (!src) return;
-          try {
-            var fso = new ActiveXObject('Scripting.FileSystemObject');
-            if (fso.FileExists(src + '\\' + name)) {
-              fso.CopyFile(src + '\\' + name, WORKDIR + name, true);
-              api.log('Copied ' + name + '.', 'ok');
-              onDone(true);
-            } else {
-              api.log(name + ' not found in that directory.', 'err');
-              onDone(false);
-            }
-          } catch (ex) { api.log('Copy failed.', 'err'); onDone(false); }
-        });
-    }
-
     /* ================= 平台描述符 ================= */
 
     var platforms = [
@@ -551,18 +530,13 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         ],
         actions: [
           { name: 'Locate files', run: function (api) {
-              var self = this;
               ensureCA();
+              var want = [MRP_EXE, CRT, KEY], miss = [], i;
+              for (i = 0; i < want.length; i++) if (!fileExists(want[i])) miss.push(want[i]);
+              this.s.miss = miss;
+              this.s.filesOK = miss.length === 0;
               if (this.s.filesOK) { api.log('Files ready.', 'ok'); return; }
-              var miss = (this.s.miss && this.s.miss.length) ? this.s.miss.slice() : [MRP_EXE];
-              var name = miss[0];
-              promptForFile(api, name, function (ok) {
-                if (!ok) return;
-                var rest = [], i;
-                for (i = 0; i < miss.length; i++) if (miss[i] !== name) rest.push(miss[i]);
-                self.s.miss = rest;
-                if (rest.length === 0) self.s.filesOK = true;
-              });
+              api.log('Missing: ' + miss.join(', ') + '. Download from GitHub Releases.', 'err');
             } },
           { name: 'Import CA', run: function (api) {
               var self = this;
@@ -759,7 +733,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
                 self.s.bin = true;
                 api.log('Device files installed.', 'ok');
               };
-              if (!fileExists(DEV_BIN)) { promptForFile(api, DEV_BIN, function (ok) { if (ok) done(); }); return; }
+              if (!fileExists(DEV_BIN)) { api.log(DEV_BIN + ' not found next to this script. Download it from GitHub Releases.', 'err'); return; }
               done();
             } },
           { name: 'Install CA', run: function (api) {
