@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<!--
+  MRP Helper
+  UTF-8 保存为 mrp.hta 双击运行；拖入浏览器仅显示界面，动作不可用。
+  渲染路径全 ASCII：中文用数字实体，圆点用 fromCharCode。
+  链接不带 href：HTA NAVIGABLE=no 会把 javascript: 交给默认浏览器，
+  手型与颜色由 CSS 提供，@事件统一 preventDefault。
+-->
+<html lang="zh-CN">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<title>MRP Helper</title>
+<HTA:APPLICATION ID="htaMrp" APPLICATIONNAME="MRP-HELPER" SINGLEINSTANCE="yes" CONTEXTMENU="no" NAVIGABLE="no" />
+<script>try { window.resizeTo(880, 860); } catch (ex) {}</script>
+<style>
+html,body{height:100%;margin:0;font:14px/1.7 "Segoe UI","Microsoft YaHei",sans-serif}
+#nav{position:absolute;left:0;top:0;bottom:0;width:140px;border-right:1px solid #eee;padding-top:8px;overflow-y:auto}
+#nav a{display:block;padding:8px 16px;border-left:3px solid transparent;color:#333;text-decoration:none}
+#nav a.act{border-left-color:#1677ff;background:#f5f8ff;color:#1677ff;font-weight:bold}
+#main{position:absolute;left:141px;top:0;right:0;bottom:0}
+#top{position:absolute;left:0;right:0;top:0;bottom:320px;padding:6px 14px 0;overflow-y:auto}
+fieldset{border:1px solid #e0e0e0;border-radius:4px;margin:0 0 10px;padding:0 12px 8px;min-width:0}
+legend{font-size:12px;color:#666;padding:0 6px}
+a{color:#1677ff;text-decoration:none;cursor:pointer}
+button{background:none;border:0;color:#1677ff;padding:3px 10px;cursor:pointer;font:inherit}
+table{width:100%;border-collapse:collapse}
+td{border-bottom:1px solid #f5f5f5;padding:8px 4px}
+#acts a{margin-right:16px}
+#con{position:absolute;left:14px;right:14px;top:330px;bottom:10px;margin:0;padding:0 12px 8px}
+pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid #eee;overflow-y:auto;font:12px/19px Consolas,monospace;margin:0;white-space:pre-wrap;word-break:break-all;box-sizing:border-box}
+.dim{color:#999}.ok{color:#52c41a}.warn{color:#e6a23c}.err{color:#ff4d4f}
+#mask{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.3)}
+#box{position:fixed;top:30%;left:50%;width:330px;margin-left:-165px;background:#fff;border:1px solid #bbb;padding:12px}
+#box input{width:100%;margin:8px 0;box-sizing:border-box}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- 左：页签列 -->
+  <nav id="nav">
+    <a v-for="t in tabs" v-class="{act: t.act}" @click="switchTab(t.key)">
+      <span>{{ t.label }}</span> <i v-class="dotCls(t.tone)">{{ toneChar(t.tone) }}</i>
+    </a>
+  </nav>
+  <!-- 右：页签内容 -->
+  <main id="main">
+    <div id="top">
+      <fieldset>
+        <legend>DEVICE &#183; <a @click="refresh">Refresh</a> &#183; <a class="err" @click="askUninstall">Uninstall</a></legend>
+        <table>
+          <tr v-for="r in rows">
+            <td width="120">{{ r.name }}</td>
+            <td><i v-class="dotCls(r.tone)">{{ toneChar(r.tone) }}</i> {{ r.text }}</td>
+            <td align="right"><a v-if="r.act" v-class="{err: r.danger}" @click="rowAct(r)">{{ r.act }}</a></td>
+          </tr>
+        </table>
+      </fieldset>
+      <fieldset>
+        <legend>TOOLS</legend>
+        <p id="acts"><a v-for="a in tools" v-class="{err: a.danger}" @click="runAction(a)">{{ a.name }}</a></p>
+      </fieldset>
+    </div>
+    <fieldset id="con">
+      <legend>CONSOLE &#183; <a @click="clearLog">Clear</a></legend>
+      <pre id="log"></pre>
+    </fieldset>
+  </main>
+  <!-- 模态 -->
+  <div id="mask" v-if="modal">
+    <div id="box">
+      <b>{{ modal ? modal.title : '' }}</b>
+      <p>{{ modal ? modal.text : '' }}</p>
+      <input v-if="modal && modal.input" v-model="draft" @keydown.enter="modalOk" />
+      <p align="right"><button v-class="{err: modal && modal.danger}" @click="modalOk">{{ modal ? modal.okText : 'OK' }}</button> <button @click="modalNo">Cancel</button></p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function (win, doc) {
+
+  /* MyVue：defineProperty 反应性内核，支持插值 / v-for / v-class / v-if / v-model / @事件 */
+  function MyVue(options) {
+    var self = this;
+    var _ecache = {};
+    var _collect = null;
+    var _errSeen = {};
+    var _depth = 0;   /* 订阅级联深度闸，超限斩断防死循环 */
+
+    this.$el = doc.querySelector(options.el || '#app');
+    this.$data = typeof options.data === 'function' ? options.data() : (options.data || {});
+    this._deps = {};
+    this._ctx = {};
+
+    function each(obj, fn) { for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) fn(obj[k], k); }
+    function on(el, ev, fn) { if (el.addEventListener) el.addEventListener(ev, fn, false); else if (el.attachEvent) el.attachEvent('on' + ev, fn); }
+    function trim(s) { return String(s).replace(/^\s+|\s+$/g, ''); }
+    function toggleClass(el, c, add) {
+      var cn = el.className.split(/\s+/), i = cn.indexOf(c);
+      if (add && i < 0) cn.push(c);
+      if (!add && i >= 0) cn.splice(i, 1);
+      el.className = cn.join(' ').replace(/^\s+|\s+$/g, '');
+    }
+    var KEYC = { enter: 13, esc: 27 };
+
+    function report(msg) {
+      if (_errSeen[msg]) return;
+      _errSeen[msg] = 1;
+      if (options.onerror) options.onerror('[kernel] ' + msg);
+    }
+
+    function getPath(key) {
+      var ks = key.split('.'), o = self.$data, i;
+      for (i = 0; i < ks.length && o != null; i++) o = o[ks[i]];
+      return o;
+    }
+    function setPath(key, value) {
+      var ks = key.split('.'), o = self.$data, i;
+      for (i = 0; i < ks.length - 1; i++) { o = o[ks[i]]; if (o == null) return; }
+      o[ks[i]] = value;
+    }
+
+    function addDep(path, fn) {
+      var a = self._deps[path] || (self._deps[path] = []);
+      if (a.indexOf(fn) < 0) a.push(fn);
+    }
+    function delDep(path, fn) {
+      var a = self._deps[path], i;
+      if (a && (i = a.indexOf(fn)) >= 0) a.splice(i, 1);
+    }
+    function notify(path) { /* 精确 + 前缀命中 */
+      var keys = [], k, i, j;
+      for (k in self._deps) if (Object.prototype.hasOwnProperty.call(self._deps, k)) keys.push(k);
+      for (i = 0; i < keys.length; i++) {
+        if (path === keys[i] || path.indexOf(keys[i] + '.') === 0) {
+          var subs = self._deps[keys[i]].slice();
+          for (j = 0; j < subs.length; j++) {
+            if (++_depth > 200) {
+              report('update cascade exceeded 200 levels at path "' + path + '"');
+              _depth--;
+              return;
+            }
+            try { subs[j](); } catch (ex) { report('update: ' + (ex && ex.message ? ex.message : ex)); }
+            _depth--;
+          }
+        }
+      }
+    }
+
+    function defineReactive(obj, key, val, path) {
+      if (val && typeof val === 'object') walk(val, path);
+      Object.defineProperty(obj, key, {
+        get: function () {
+          if (_collect && _collect.indexOf(path) < 0) _collect.push(path);
+          return val;
+        },
+        set: function (nv) {
+          if (nv === val) return;
+          val = nv; /* 新值不做深遍历：已响应化对象不会被二次生根 */
+          notify(path);
+        }
+      });
+    }
+    function walk(obj, base) {
+      each(obj, function (v, k) {
+        if (k !== 'length') defineReactive(obj, k, v, base ? base + '.' + k : k);
+      });
+    }
+
+    function evalExpr(expr, $s) {
+      var fn = _ecache[expr] || (_ecache[expr] = new Function('$c', '$s',
+        'with($c){with($s||{}){return (' + expr + ');}}'));
+      try { return fn.call(self._ctx, self._ctx, $s); } catch (ex) {
+        report('expr "' + expr + '": ' + (ex && ex.message ? ex.message : ex));
+        return undefined;
+      }
+    }
+
+    /* track：求值一次，把期间读到的路径登记为触发源 */
+    function track(run) {
+      var own = {};
+      function fire() {
+        var prev = _collect, paths, i, k;
+        _collect = [];
+        try { run(); } finally { paths = _collect; _collect = prev; }
+        var fresh = {};
+        for (i = 0; i < paths.length; i++) {
+          fresh[paths[i]] = 1;
+          if (!own[paths[i]]) { own[paths[i]] = 1; addDep(paths[i], fire); }
+        }
+        for (k in own) if (!fresh[k]) { delDep(k, fire); delete own[k]; }
+      }
+      fire();
+      return fire;
+    }
+
+    /* computed：用本地 last 比较，写回 $data 不会通知到自己 */
+    function computed(key, fn) {
+      var last;
+      track(function () {
+        var nv = fn.call(self._ctx);
+        if (nv !== last) {
+          last = nv;
+          self.$data[key] = nv;
+        }
+      });
+    }
+
+    /* 文本插值：拆分文本节点，动态段建绑定（支持元素混排） */
+    function bindText(node, $s) {
+      var src = node.nodeValue, re = /\{\{\s*([^}]+?)\s*\}\}/g;
+      if (!re.test(src)) return;
+      re.lastIndex = 0;
+      var frag = doc.createDocumentFragment(), binds = [], last = 0, m, tn;
+      while ((m = re.exec(src))) {
+        if (m.index > last) frag.appendChild(doc.createTextNode(src.slice(last, m.index)));
+        tn = doc.createTextNode('');
+        frag.appendChild(tn);
+        binds.push({ tn: tn, expr: m[1] });
+        last = m.index + m[0].length;
+      }
+      if (last < src.length) frag.appendChild(doc.createTextNode(src.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+      for (var i = 0; i < binds.length; i++) {
+        (function (b) {
+          track(function () {
+            var v = evalExpr(b.expr, $s), s2 = v == null ? '' : String(v);
+            if (b.tn.nodeValue !== s2) b.tn.nodeValue = s2;
+          });
+        })(binds[i]);
+      }
+    }
+
+    function setupFor(el, expr) {
+      var m = expr.match(/^\s*([\w$]+)\s+in\s+(.+?)\s*$/), parent = el.parentNode;
+      if (!m || !parent) return;
+      var name = m[1], listExpr = m[2];
+      var anchor = doc.createComment('v-for');
+      parent.insertBefore(anchor, el);
+      parent.removeChild(el);
+      var tpl = el.cloneNode(true);
+      tpl.removeAttribute('v-for');
+      track(function () {
+        try {
+          var list = evalExpr(listExpr) || [], n, i;
+          while ((n = anchor.nextSibling) && n._vfor) parent.removeChild(n);
+          var after = anchor.nextSibling; /* 删完旧克隆再取锚点：游离引用会让 insertBefore 抛错 */
+          for (i = 0; i < list.length; i++) {
+            var node = tpl.cloneNode(true);
+            node._vfor = 1;
+            parent.insertBefore(node, after);
+            var $s = {}; $s[name] = list[i]; $s.$index = i;
+            compile(node, $s);
+          }
+        } catch (ex) { report('v-for "' + listExpr + '": ' + (ex && ex.message ? ex.message : ex)); }
+      });
+    }
+
+    function compile(el, $s) {
+      if (!el || !el.getAttribute) return;
+      if (el.getAttribute('v-for')) { setupFor(el, el.getAttribute('v-for')); return; }
+
+      var nodes = el.childNodes, arr = [], i, n;
+      for (i = 0; i < nodes.length; i++) arr.push(nodes[i]);
+      for (i = 0; i < arr.length; i++) {
+        n = arr[i];
+        if (n.nodeType === 3) bindText(n, $s);
+        else compile(n, $s);
+      }
+
+      if (el.getAttribute('v-model')) {
+        (function (key, inp) {
+          var h = function () { setPath(key, inp.value); };
+          on(inp, 'input', h); on(inp, 'change', h);
+          track(function () {
+            var v = getPath(key), s2 = v == null ? '' : String(v);
+            if (inp.value !== s2) inp.value = s2;
+          });
+        })(el.getAttribute('v-model'), el);
+      }
+      if (el.getAttribute('v-bind')) {
+        (function (expr, el2) {
+          track(function () {
+            var v = evalExpr(expr, $s);
+            el2.innerHTML = v == null ? '' : String(v);
+          });
+        })(el.getAttribute('v-bind'), el);
+      }
+      if (el.getAttribute('v-if')) {
+        (function (expr, el2) {
+          var ph = doc.createComment('v-if'), shown = true;
+          track(function () {
+            var v = evalExpr(expr, $s);
+            if (v && !shown && ph.parentNode) { ph.parentNode.replaceChild(el2, ph); shown = true; }
+            else if (!v && shown && el2.parentNode) { el2.parentNode.replaceChild(ph, el2); shown = false; }
+          });
+        })(el.getAttribute('v-if'), el);
+      }
+      if (el.getAttribute('v-class')) {
+        (function (expr, el2) {
+          track(function () {
+            var map = evalExpr(expr, $s);
+            if (map) for (var c in map) if (Object.prototype.hasOwnProperty.call(map, c)) toggleClass(el2, c, !!map[c]);
+          });
+        })(el.getAttribute('v-class'), el);
+      }
+      /* @事件统一 preventDefault；支持修饰符与带参调用 */
+      var atts = el.attributes, evs = [];
+      for (i = 0; i < atts.length; i++) if (atts[i].name.charAt(0) === '@') evs.push(atts[i]);
+      for (i = 0; i < evs.length; i++) {
+        (function (spec) {
+          var dot = spec.name.substring(1).split('.'), ev = dot[0], kc = KEYC[dot[1]] || 0;
+          var m2 = trim(spec.value).match(/^([\w$]+)\s*(?:\((.*)\))?$/);
+          var argFn = (m2 && m2[2]) ? m2[2] : null;
+          on(el, ev, function (e) {
+            e = e || win.event;
+            if (e.preventDefault) e.preventDefault(); else e.returnValue = false;
+            if (kc && (e.keyCode || e.which) !== kc) return;
+            if (!m2) { report('bad handler: ' + spec.value); return; }
+            var fn2 = self._ctx[m2[1]];
+            if (!fn2) { report('handler not found: ' + spec.value); return; }
+            try { fn2(argFn ? evalExpr(argFn, $s) : e); }
+            catch (ex) { report(spec.value + ' -> ' + (ex && ex.message ? ex.message : ex)); }
+          });
+        })(evs[i]);
+      }
+    }
+
+    /* 装配：reactive → 上下文 → methods → computed → compile → mounted */
+    walk(this.$data, '');
+    each(this.$data, function (v, k) {
+      Object.defineProperty(self._ctx, k, {
+        get: function () { return self.$data[k]; },
+        set: function (nv) { self.$data[k] = nv; }
+      });
+    });
+    each(options.methods || {}, function (fn, k) { self._ctx[k] = fn.bind(self._ctx); });
+    if (options.computed) each(options.computed, function (fn, k) { computed(k, fn); });
+    compile(this.$el, null);
+    if (options.mounted) options.mounted.call(this._ctx);
+  }
+
+  /* ======================================================
+     MyHosts：外壳与平台资产
+     对外仅暴露 hasShell / log / logClear / platforms / api / probeOne；
+     Windows 走 netsh/certutil，Android 走 adb，HarmonyOS 走 hdc，
+     CA 用内嵌 ECDSA 模板
+     ====================================================== */
+  var MyHosts = (function () {
+
+    var hasShell = false;
+    try { hasShell = (typeof ActiveXObject !== 'undefined') && !!new ActiveXObject('WScript.Shell'); } catch (ex) {}
+
+    var MRP_EXE = 'mrp-windows-amd64.exe';
+    var DEV_BIN = 'mrp-linux-arm64';
+    var CRT = 'ca.crt';
+    var KEY = 'ca.key';
+    var DEV_CFG = 'config.yaml';
+    var PORT = '8000';
+    var CA_HASH = 'd6cd00d8';
+    var CA_CN = 'DeviceProxy CA';
+    var CA_CERT = [
+      '-----BEGIN CERTIFICATE-----',
+      'MIIBmDCCAT2gAwIBAgIUVfZslYEayBAiv6+V9lA5ktPf9jYwCgYIKoZIzj0EAwIw',
+      'GTEXMBUGA1UEAwwORGV2aWNlUHJveHkgQ0EwHhcNMjYwOTI5MDMwNTQzWhcNMzYw',
+      'OTI2MDMwNTQzWjAZMRcwFQYDVQQDDA5EZXZpY2VQcm94eSBDQTBZMBMGByqGSM49',
+      'AgEGCCqGSM49AwEHA0IABCh7WdaFBMOCXNjbRjaICJfAGQ2uCcBjKE+mDiqxCzxL',
+      '9LbtiJm7iKZDg7FUvb6vPGdRSHhYUIwlAIDbgBTTQJmjYzBhMB0GA1UdDgQWBBTo',
+      'tHWQTTk1+kp3Gn/omx7RbgFd6TAfBgNVHSMEGDAWgBTotHWQTTk1+kp3Gn/omx7R',
+      'bgFd6TAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIChDAKBggqhkjOPQQD',
+      'AgNJADBGAiEAsrLEFOvjAceXTc2WfnFCAoU0sGFVWrbOy3mj0A0r3CYCIQDYLtbX',
+      'It95OQr70jbFEwPw4mcqqHVaq59Vg35lGsF50Q==',
+      '-----END CERTIFICATE-----'
+    ];
+    var CA_KEY = [
+      '-----BEGIN PRIVATE KEY-----',
+      'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgkFv91z9F6RVPe5cI',
+      'cKsnH6OQt66aQXn3bB+mQqJo+j2hRANCAAQoe1nWhQTDglzY20Y2iAiXwBkNrgnA',
+      'YyhPpg4qsQs8S/S27YiZu4imQ4OxVL2+rzxnUUh4WFCMJQCA24AU00CZ',
+      '-----END PRIVATE KEY-----'
+    ];
+
+    /* location.pathname 换算为脚本所在目录 */
+    var WORKDIR = (function () {
+      var p = unescape(location.pathname).replace(/\+/g, ' ');
+      p = p.replace(/^[A-Za-z]:/, '').replace(/^\//, '').replace(/\//g, '\\');
+      return p.substring(0, p.lastIndexOf('\\') + 1);
+    })();
+
+    function pad2(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
+    function hms(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); }
+    function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+    var logBox = null;
+    function log(text, lv) {
+      if (!logBox) logBox = doc.getElementById('log');
+      if (!logBox) return;
+      var d = doc.createElement('div');
+      if (lv) d.className = lv;
+      d.innerHTML = '<i class="dim">[' + hms(new Date()) + ']</i> ' + esc(text);
+      logBox.appendChild(d);
+      while (logBox.children.length > 300) logBox.removeChild(logBox.firstChild);
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+    function logClear() {
+      if (!logBox) logBox = doc.getElementById('log');
+      if (logBox) logBox.innerHTML = '';
+    }
+
+    /* ---- shell / fs 原语（无 shell 环境下调用即失败，由 try/catch 兜底） ---- */
+    function runWait(cmd, show) {
+      if (cmd.indexOf('timeout ') !== 0) log('> ' + cmd, 'dim');
+      try { return new ActiveXObject('WScript.Shell').Run('%comspec% /c "' + cmd + '"', show ? 1 : 0, true); }
+      catch (ex) { return 1; }
+    }
+    /* Exec 会为每条命令弹新控制台窗口，改用 Run 隐藏窗口 + 临时文件收 stdout */
+    function execText(cmd) {
+      try {
+        var tmp = WORKDIR + '_mrp_out.tmp';
+        new ActiveXObject('WScript.Shell').Run('%comspec% /c ' + cmd + ' > "' + tmp + '"', 0, true);
+        var fso = new ActiveXObject('Scripting.FileSystemObject');
+        if (!fso.FileExists(tmp)) return '';
+        var out = fso.OpenTextFile(tmp, 1, false, 0).ReadAll();
+        try { fso.DeleteFile(tmp); } catch (ex) {}
+        return out;
+      } catch (ex) { return ''; }
+    }
+    function elevate(cmd) {
+      var ps = 'powershell -NoProfile -Command "Start-Process -FilePath cmd.exe -Verb RunAs -Wait -ArgumentList \'/c ' +
+        cmd.replace(/'/g, "''") + '\'"';
+      log('> ' + cmd + ' [runas]', 'dim');
+      try { new ActiveXObject('WScript.Shell').Run(ps, 0, true); } catch (ex) {}
+    }
+    function fileExists(name) {
+      return hasShell ? new ActiveXObject('Scripting.FileSystemObject').FileExists(WORKDIR + name) : false;
+    }
+    function writeFileText(name, lines) {
+      try {
+        var f = new ActiveXObject('Scripting.FileSystemObject').CreateTextFile(WORKDIR + name, true, false);
+        for (var i = 0; i < lines.length; i++) f.WriteLine(lines[i]);
+        f.Close();
+      } catch (ex) {}
+    }
+    function ensureCA() {
+      if (!fileExists(CRT)) writeFileText(CRT, CA_CERT);
+      if (!fileExists(KEY)) writeFileText(KEY, CA_KEY);
+    }
+    /* netsh 代理写入需要管理员；net session 成功表示已提权，否则走 UAC 弹窗 */
+    function setSystemProxy(cmd, expectOn) {
+      if (execText('net session >nul 2>&1 && echo OK') === '') elevate(cmd);
+      else runWait(cmd);
+      return execText('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0 === expectOn;
+    }
+    function winProcessRunning() {
+      return execText('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase()
+        .indexOf(MRP_EXE.toLowerCase()) >= 0;
+    }
+    function winCertState() {
+      if (!fileExists(CRT)) return 'NONE';
+      var dump = execText('certutil -dump "' + WORKDIR + CRT + '"').toLowerCase();
+      var at = dump.indexOf('cn=');
+      if (at < 0) return 'NONE';
+      var cn = dump.substring(at + 3).split('\r')[0].split('\n')[0].split(',')[0];
+      if (execText('certutil -store Root 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) return 'MACHINE';
+      if (execText('certutil -user -store Root 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) return 'USER';
+      return 'NONE';
+    }
+    /* test -f 静默判断；ls 的错误输出会混进 stdout 造成误判 */
+    function deviceFileExists(tool, path) {
+      return execText(tool + ' shell "test -f ' + path + ' && echo Y" 2>nul') !== '';
+    }
+    function remountSystem(tool) {
+      runWait(tool + ' root');
+      runWait('timeout /t 3 >nul');
+      runWait(tool + ' wait-for-device');
+      runWait(tool + ' remount');
+    }
+    function withWorkdir(cmd) { return cmd.replace(/@WORK@/g, WORKDIR); }
+
+    function cell(tone, text, act, danger) {
+      return { tone: tone, text: text, act: act || '', danger: !!danger };
+    }
+
+    /* 定位缺失文件：弹输入框请用户给目录，复制回脚本目录 */
+    function promptForFile(api, name, onDone) {
+      api.prompt('Locate ' + name,
+        name + ' not found.\nEnter the directory that contains it, e.g. your GitHub Releases download folder.',
+        '', function (src) {
+          src = String(src == null ? '' : src).replace(/"/g, '');
+          if (!src) return;
+          try {
+            var fso = new ActiveXObject('Scripting.FileSystemObject');
+            if (fso.FileExists(src + '\\' + name)) {
+              fso.CopyFile(src + '\\' + name, WORKDIR + name, true);
+              api.log('Copied ' + name + '.', 'ok');
+              onDone(true);
+            } else {
+              api.log(name + ' not found in that directory.', 'err');
+              onDone(false);
+            }
+          } catch (ex) { api.log('Copy failed.', 'err'); onDone(false); }
+        });
+    }
+
+    /* ================= 平台描述符 ================= */
+
+    var platforms = [
+
+      /* -------- Windows -------- */
+      {
+        name: 'Windows',
+        s: { filesOK: true, miss: [], cert: 'NONE', run: false, proxy: false },
+        probe: function () {
+          var want = [MRP_EXE, CRT, KEY], miss = [], i;
+          for (i = 0; i < want.length; i++) if (!fileExists(want[i])) miss.push(want[i]);
+          this.s.filesOK = miss.length === 0;
+          this.s.miss = miss;
+          this.s.cert = winCertState();
+          this.s.run = winProcessRunning();
+          this.s.proxy = execText('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0;
+        },
+        health: function () {
+          if (!this.s.filesOK || this.s.cert === 'NONE') return 'err';
+          return (this.s.run && this.s.proxy) ? 'ok' : 'warn';
+        },
+        states: [
+          { name: 'Files',
+            get: function () {
+              return this.s.filesOK
+                ? cell('ok', 'OK')
+                : cell('err', this.s.miss.length ? 'Missing: ' + this.s.miss.join(', ') : 'Missing files', 'Locate files');
+            } },
+          { name: 'CA certificate',
+            get: function () {
+              return this.s.cert === 'NONE'
+                ? cell('warn', 'Not imported', 'Import CA')
+                : cell('ok', 'Imported [' + this.s.cert + ']', 'Remove', true);
+            } },
+          { name: 'mrp process',
+            get: function () {
+              return this.s.run ? cell('ok', 'Running', 'Stop') : cell('warn', 'Stopped', 'Start');
+            } },
+          { name: 'Proxy',
+            get: function () {
+              return this.s.proxy
+                ? cell('ok', 'Configured (127.0.0.1:' + PORT + ')', 'Clear')
+                : cell('warn', 'Not set', 'Set');
+            } }
+        ],
+        actions: [
+          { name: 'Locate files', run: function (api) {
+              var self = this;
+              ensureCA();
+              if (this.s.filesOK) { api.log('Files ready.', 'ok'); return; }
+              var miss = (this.s.miss && this.s.miss.length) ? this.s.miss.slice() : [MRP_EXE];
+              var name = miss[0];
+              promptForFile(api, name, function (ok) {
+                if (!ok) return;
+                var rest = [], i;
+                for (i = 0; i < miss.length; i++) if (miss[i] !== name) rest.push(miss[i]);
+                self.s.miss = rest;
+                if (rest.length === 0) self.s.filesOK = true;
+              });
+            } },
+          { name: 'Import CA', run: function (api) {
+              var self = this;
+              ensureCA();
+              var state = winCertState();
+              if (state !== 'NONE') { api.log('Already imported - ' + state + '.', 'ok'); return; }
+              var code = runWait('certutil -user -addstore Root "' + WORKDIR + CRT + '"');
+              if (code === 0) { self.s.cert = 'USER'; api.log('CA imported into the user Root store.', 'ok'); }
+              else api.log('CA import failed.', 'err');
+            } },
+          { name: 'Remove', danger: true, run: function (api) {
+              var self = this;
+              runWait('powershell -NoProfile -Command "Get-ChildItem Cert:\\CurrentUser\\Root | Where-Object {$_.Subject -eq \'CN=' + CA_CN + '\'} | Remove-Item -Force" >nul 2>&1');
+              self.s.cert = 'NONE';
+              api.log('CA removed.', 'ok');
+            } },
+          { name: 'Start', run: function (api) {
+              var self = this;
+              if (winProcessRunning()) { api.log('mrp already running.', 'ok'); return; }
+              runWait('start "mrp" /D "' + WORKDIR + '" "' + WORKDIR + MRP_EXE + '"', true);
+              self.s.run = true;
+              api.log('mrp started in a new window.', 'ok');
+            } },
+          { name: 'Stop', run: function (api) {
+              var self = this;
+              if (winProcessRunning()) runWait('taskkill /im "' + MRP_EXE + '" /f');
+              self.s.run = false;
+              api.log('mrp stopped.', 'ok');
+            } },
+          { name: 'Set', run: function (api) {
+              var self = this;
+              var ok = setSystemProxy('netsh winhttp set proxy 127.0.0.1:' + PORT, true);
+              self.s.proxy = true;
+              api.log(ok ? 'System proxy set to 127.0.0.1:' + PORT + '.' : 'Warning: proxy not applied.', ok ? 'ok' : 'warn');
+            } },
+          { name: 'Clear', run: function (api) {
+              var self = this;
+              var ok = setSystemProxy('netsh winhttp reset proxy', false);
+              self.s.proxy = false;
+              api.log(ok ? 'System proxy cleared.' : 'Warning: proxy not applied.', ok ? 'ok' : 'warn');
+            } },
+          { name: 'Start npm server', tool: true, run: function (api) {
+              var self = this;
+              runWait('cmd /c start "npm server" /D ' + WORKDIR + ' npm start', true);
+              api.log('npm server launching.', 'ok');
+            } },
+          { name: 'Open local page', tool: true, run: function (api) {
+              var self = this;
+              runWait('cmd /c start "" http://127.0.0.1:' + PORT, true);
+              api.log('Opening local page.', 'ok');
+            } }
+        ],
+        uninstall: function (api) {
+          var self = this;
+          if (winProcessRunning()) runWait('taskkill /im "' + MRP_EXE + '" /f');
+          setSystemProxy('netsh winhttp reset proxy', false);
+          runWait('powershell -NoProfile -Command "Get-ChildItem Cert:\\CurrentUser\\Root | Where-Object {$_.Subject -eq \'CN=' + CA_CN + '\'} | Remove-Item -Force" >nul 2>&1');
+          try {
+            var fso = new ActiveXObject('Scripting.FileSystemObject');
+            if (fso.FileExists(WORKDIR + MRP_EXE)) fso.DeleteFile(WORKDIR + MRP_EXE, true);
+            if (fso.FileExists(WORKDIR + CRT)) fso.DeleteFile(WORKDIR + CRT, true);
+            if (fso.FileExists(WORKDIR + KEY)) fso.DeleteFile(WORKDIR + KEY, true);
+          } catch (ex) {}
+          self.s.filesOK = false; self.s.miss = [MRP_EXE];
+          self.s.cert = 'NONE'; self.s.run = false; self.s.proxy = false;
+          api.log('Windows toolchain uninstalled.', 'ok');
+        }
+      },
+
+      /* -------- Android / HarmonyOS（共享设备语义，命令分支） -------- */
+      devApp('and'),
+      devApp('harm')
+    ];
+
+    function devApp(kind) {
+      var android = kind === 'and';
+      var tool = android ? 'adb' : 'hdc';
+      var name = android ? 'Android' : 'HarmonyOS';
+      /* hdc 无代理查询命令，代理状态恒显 Unknown */
+      var known = android;
+      var certDir = android ? '/system/etc/security/cacerts' : '/etc/security/certificates';
+      var pushCmd = android ? 'push' : 'file send';
+      var listCmd = android ? 'devices' : 'list targets';
+      var proxySet = android
+        ? 'shell settings put global http_proxy 127.0.0.1:' + PORT
+        : 'shell network-cfg set http_proxy 127.0.0.1:' + PORT;
+      var proxyClear = android
+        ? 'shell settings put global http_proxy :0'
+        : 'shell network-cfg set http_proxy 0';
+      var proxyGet = android ? 'shell settings get global http_proxy' : null;
+      var openUrl = android
+        ? 'shell am start -a android.intent.action.VIEW -d "{URL}"'
+        : 'shell aa start -d "{URL}"';
+      var devtoolsCmd = android
+        ? 'forward tcp:9222 localabstract:chrome_devtools_remote'
+        : 'forward tcp:9222';
+      var reverseCmd = android
+        ? 'reverse tcp:8000 tcp:8000'
+        : 'rport tcp:8000 tcp:8000';
+
+      var app = {
+        name: name,
+        s: { ready: false, desc: '', bin: false, cert: false, run: false, proxy: false },
+        probe: function () {
+          if (execText('where ' + tool + ' >nul 2>&1 && echo OK') === '') {
+            this.s.ready = false; this.s.desc = 'Not installed'; return;
+          }
+          var out = execText(tool + ' ' + listCmd + ' 2>nul').split('\n'), desc = '', i, c;
+          if (android) {
+            for (i = 1; i < out.length; i++) {
+              c = out[i].replace(/\r/g, '').split(/\s+/);
+              if (c.length >= 2 && c[1] === 'device') { desc = c[0]; break; }
+            }
+          } else {
+            /* hdc 可能先打印守护进程启动行，取最后一行非空结果 */
+            for (i = 0; i < out.length; i++) {
+              var t2 = out[i].replace(/\s+/g, '');
+              if (t2 !== '') desc = t2;
+            }
+            if (desc === '' || desc.substring(0, 7) === '[Empty]' || desc.substring(0, 7) === 'Connect') desc = '';
+          }
+          if (!desc) { this.s.ready = false; this.s.desc = 'No device connected'; return; }
+          this.s.ready = true; this.s.desc = desc;
+          this.s.cert = deviceFileExists(tool, certDir + '/' + CA_HASH + '.0');
+          this.s.bin = deviceFileExists(tool, '/data/local/mrp/' + DEV_BIN);
+          this.s.run = execText(tool + ' shell pidof ' + DEV_BIN + ' 2>nul') !== '';
+          /* adb 输出带换行，按前缀匹配 */
+          this.s.proxy = known
+            ? execText(tool + ' ' + proxyGet + ' 2>nul').indexOf('127.0.0.1:' + PORT) === 0
+            : false;
+        },
+        health: function () {
+          if (!this.s.ready) return 'idle';
+          if (this.s.cert && this.s.bin && this.s.run) return 'ok';
+          if (this.s.cert || this.s.bin) return 'warn';
+          return 'err';
+        },
+        states: [
+          { name: 'Device',
+            get: function () {
+              return this.s.ready
+                ? cell('ok', this.s.desc, 'Sync config')
+                : cell('idle', this.s.desc || 'Not probed yet; click Refresh to check devices.');
+            } },
+          { name: 'Files',
+            get: function () {
+              if (!this.s.ready) return null;
+              return this.s.bin ? cell('ok', 'Installed') : cell('warn', 'Not installed', 'Install files');
+            } },
+          { name: 'CA certificate',
+            get: function () {
+              if (!this.s.ready) return null;
+              return this.s.cert
+                ? cell('ok', 'Installed', 'Remove', true)
+                : cell('warn', 'Not installed', 'Install CA');
+            } },
+          { name: 'mrp process',
+            get: function () {
+              if (!this.s.ready) return null;
+              if (!this.s.bin) return cell('err', 'Not installed');
+              return this.s.run ? cell('ok', 'Running', 'Stop') : cell('warn', 'Stopped', 'Start');
+            } },
+          { name: 'Proxy',
+            get: function () {
+              if (!this.s.ready) return null;
+              if (!known) return cell('idle', 'Unknown');
+              return this.s.proxy
+                ? cell('ok', 'Configured (127.0.0.1:' + PORT + ')', 'Clear')
+                : cell('warn', 'Not set', 'Set');
+            } }
+        ],
+        actions: [
+          { name: 'Sync config', run: function (api) {
+              var self = this;
+              if (!fileExists(DEV_CFG)) { api.log(DEV_CFG + ' not found next to this script.', 'err'); return; }
+              runWait(tool + ' shell mkdir -p /data/local/mrp');
+              if (runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + DEV_CFG + '" /data/local/mrp') !== 0) {
+                api.log('Sync failed; check device connection.', 'err');
+                return;
+              }
+              api.log(DEV_CFG + ' synced - mrp hot reloads it automatically.', 'ok');
+            } },
+          { name: 'Install files', run: function (api) {
+              var self = this;
+              ensureCA();
+              var done = function () {
+                if (!fileExists(CRT) || !fileExists(KEY)) { api.log('Missing CA files, cannot continue.', 'err'); return; }
+                runWait(tool + ' shell mkdir -p /data/local/mrp');
+                runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + DEV_BIN + '" /data/local/mrp');
+                if (fileExists(DEV_CFG)) runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + DEV_CFG + '" /data/local/mrp');
+                runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + CRT + '" /data/local/mrp');
+                runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + KEY + '" /data/local/mrp');
+                runWait(tool + ' shell chmod +x /data/local/mrp/' + DEV_BIN);
+                self.s.bin = true;
+                api.log('Device files installed.', 'ok');
+              };
+              if (!fileExists(DEV_BIN)) { promptForFile(api, DEV_BIN, function (ok) { if (ok) done(); }); return; }
+              done();
+            } },
+          { name: 'Install CA', run: function (api) {
+              var self = this;
+              ensureCA();
+              if (android) {
+                remountSystem(tool);
+                runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + CRT + '" ' + certDir + '/' + CA_HASH + '.0');
+                runWait(tool + ' shell chmod 644 ' + certDir + '/' + CA_HASH + '.0');
+              } else {
+                runWait('copy /y "' + WORKDIR + CRT + '" "%TEMP%\\' + CA_HASH + '.0" >nul');
+                runWait(tool + ' file send "%TEMP%\\' + CA_HASH + '.0" ' + certDir);
+              }
+              var ok = deviceFileExists(tool, certDir + '/' + CA_HASH + '.0');
+              if (ok) self.s.cert = true;
+              api.log(ok ? 'CA installed.'
+                : 'Warning: cert install may have failed; ensure the device is rooted or in developer mode.',
+                ok ? 'ok' : 'warn');
+            } },
+          { name: 'Remove', danger: true, run: function (api) {
+              var self = this;
+              if (android) remountSystem(tool);
+              runWait(tool + ' shell rm -f ' + certDir + '/' + CA_HASH + '.0');
+              self.s.cert = false;
+              api.log('CA removed.', 'ok');
+            } },
+          { name: 'Start', run: function (api) {
+              var self = this;
+              if (execText(tool + ' shell pidof ' + DEV_BIN + ' 2>nul') !== '') {
+                api.log('mrp already running on device.', 'ok'); return;
+              }
+              var consoleCmd = 'cmd /k ' + tool + ' shell "cd /data/local/mrp; ./' + DEV_BIN + '"';
+              log('> ' + consoleCmd, 'dim');
+              try { new ActiveXObject('WScript.Shell').Run(consoleCmd, 1, false); }
+              catch (ex) { api.log('Failed to open device console window.', 'err'); return; }
+              var up = false, i;
+              for (i = 0; i < 5; i++) {
+                runWait('timeout /t 1 >nul');
+                if (execText(tool + ' shell pidof ' + DEV_BIN + ' 2>nul') !== '') { up = true; break; }
+              }
+              if (up) self.s.run = true;
+              api.log(up ? 'mrp is now running on device - Ctrl+C in the new window to stop.'
+                : 'Warning: mrp did not start within 5 seconds.',
+                up ? 'ok' : 'err');
+            } },
+          { name: 'Stop', run: function (api) {
+              var self = this;
+              runWait(tool + ' shell pkill -f ' + DEV_BIN + ' >nul 2>&1');
+              self.s.run = false;
+              api.log('mrp stopped.', 'ok');
+            } }
+        ].concat(known ? [
+          { name: 'Set', run: function (api) {
+              var self = this;
+              runWait(tool + ' ' + proxySet);
+              self.s.proxy = true;
+              api.log('Device global proxy set to 127.0.0.1:' + PORT + '.', 'ok');
+            } },
+          { name: 'Clear', run: function (api) {
+              var self = this;
+              runWait(tool + ' ' + proxyClear);
+              self.s.proxy = false;
+              api.log('Device global proxy cleared.', 'ok');
+            } }
+        ] : []).concat([
+          { name: 'Port reverse :8000', tool: true, run: function (api) {
+              var self = this;
+              runWait(tool + ' ' + reverseCmd);
+              api.log('Port reverse :8000 active.', 'ok');
+            } },
+          { name: 'Open browser', tool: true, run: function (api) {
+              var self = this;
+              var cmd = tool + ' ' + openUrl;
+              api.prompt('Open browser', 'URL to open on the device', 'http://example.com', function (url) {
+                url = String(url == null ? '' : url);
+                if (url === '') return;
+                runWait(cmd.replace(/\{URL\}/g, url), true);
+              });
+            } },
+          { name: 'DevTools', tool: true, run: function (api) {
+              var self = this;
+              runWait(tool + ' ' + devtoolsCmd);
+              api.log('DevTools port forwarded.', 'ok');
+            } }
+        ]),
+        uninstall: function (api) {
+          var self = this;
+          runWait(tool + ' shell pkill -f ' + DEV_BIN + ' >nul 2>&1');
+          if (known) runWait(tool + ' ' + proxyClear);
+          if (android) remountSystem(tool);
+          runWait(tool + ' shell rm -f ' + certDir + '/' + CA_HASH + '.0');
+          runWait(tool + ' shell rm -rf /data/local/mrp');
+          self.s.bin = false; self.s.cert = false; self.s.run = false; self.s.proxy = false;
+          api.log(name + ' uninstall finished.', 'ok');
+        }
+      };
+      return app;
+    }
+
+    /* api 工厂：对话框与日志出口，由调用侧传入上下文 */
+    function api(ctx) {
+      return {
+        log: log,
+        confirm: function (title, text, okText, cb) { ctx.confirm(title, text, okText, cb); },
+        prompt: function (title, text, def, cb) { ctx.prompt(title, text, def, cb); }
+      };
+    }
+
+    function probeOne(p) {
+      if (p.probe) p.probe.call(p);
+      var h = p.health.call(p);
+      var msg = 'Probed ' + p.name + ': ' + h;
+      if (p.s.desc !== undefined) msg += ' (' + (p.s.desc || 'none') + ')';
+      else msg += ' cert=' + p.s.cert + ' proc=' + (p.s.run ? 'up' : 'down') + ' proxy=' + (p.s.proxy ? 'on' : 'off');
+      log(msg);
+    }
+
+    return {
+      hasShell: hasShell, log: log, logClear: logClear,
+      platforms: platforms, api: api, probeOne: probeOne
+    };
+  })();
+  new MyVue({
+
+    el: '#app',
+
+    /* 内核失败上报出口：任何静默失败都会在这里变成红色日志 */
+    onerror: function (msg) { MyHosts.log(msg, 'err'); },
+
+    data: {
+      tab: 0,
+      platforms: MyHosts.platforms,
+      draft: '',
+      modal: null,
+      cur: null, tabs: [], rows: [], tools: []
+    },
+
+    computed: {
+      cur: function () { return this.platforms[this.tab]; },
+      tabs: function () {
+        var out = [], i;
+        for (i = 0; i < this.platforms.length; i++)
+          out.push({ key: i, label: this.platforms[i].name, act: this.tab === i, tone: this.toneOf(this.platforms[i]) });
+        return out;
+      },
+      rows: function () {
+        var p = this.cur, out = [], i;
+        for (i = 0; i < p.states.length; i++) {
+          var c = p.states[i].get.call(p);
+          if (!c) continue;
+          c.name = p.states[i].name;
+          out.push(c);
+        }
+        return out;
+      },
+      /* 工具方法 = 仅展示带 tool 标记的动作（状态行按钮走 rowAct 查表） */
+      tools: function () {
+        var i, out = [];
+        var list = this.cur.actions;
+        for (i = 0; i < list.length; i++) if (list[i].tool) out.push(list[i]);
+        return out;
+      }
+    },
+
+    methods: {
+      toneOf: function (p) { return p.health.call(p); },
+      toneChar: function () { return String.fromCharCode(9679); },
+      dotCls: function (t) { var o = {}; o[t === 'idle' ? 'dim' : t] = true; return o; },
+      switchTab: function (k) {
+        k = Number(k);
+        if (isNaN(k) || k === this.tab) return;
+        this.tab = k;
+      },
+      confirm: function (title, text, okText, cb) {
+        this.modal = { title: title, text: text, okText: okText, danger: true, onOk: cb };
+      },
+      prompt: function (title, text, def, cb) {
+        var self = this;
+        this.draft = def;
+        this.modal = { title: title, text: text, input: true, okText: 'OK', onOk: function () { cb(self.draft); } };
+      },
+
+      askUninstall: function () {
+        var self = this, p = this.cur;
+        this.confirm('Confirm',
+          'Stop mrp, remove the CA certificate and delete the work files for ' + p.name + '?\n\nThis cannot be undone.',
+          'Uninstall', function () {
+          p.uninstall(self.api);
+        });
+      },
+      runAction: function (a) {
+        var self = this, p = this.cur;
+        var go = function () { MyHosts.log('>> ' + a.name, 'dim'); a.run.call(p, self.api); };
+        if (a.danger) this.confirm('Confirm', 'Run "' + a.name + '" on ' + p.name + '?' + (a.warn ? ' ' + a.warn : ''), a.name, go);
+        else go();
+      },
+      rowAct: function (r) {
+        if (!r || !r.act) return;
+        var list = this.cur.actions, i;
+        for (i = 0; i < list.length; i++) if (list[i].name === r.act) { this.runAction(list[i]); return; }
+        MyHosts.log('"' + r.act + '" is not available on ' + this.cur.name + '.', 'warn');
+      },
+
+      refresh: function () { MyHosts.probeOne(this.cur); },
+      clearLog: function () { MyHosts.logClear(); },
+      modalOk: function () { var m = this.modal; this.modal = null; if (m && m.onOk) m.onOk.call(this); },
+      modalNo: function () { this.modal = null; }
+    },
+
+    mounted: function () {
+      var self = this;
+      this.api = MyHosts.api(this);
+      /* 全局兜底：任何未被捕获的运行时错误都落到应用控制台 */
+      win.onerror = function (msg, url, line) {
+        MyHosts.log('window error: ' + msg + ' @' + (line || '?'), 'err');
+        return false;
+      };
+      var keyfn = function (e) {
+        e = e || win.event;
+        var c = e.keyCode || e.which || e.charCode;
+        if (self.modal) {
+          if (c === 27) self.modalNo();
+          return;
+        }
+        var tag = ((e.target && e.target.tagName) || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea') return;
+        if (c === 116 || (c === 82 && (e.ctrlKey || e.metaKey))) {
+          if (e.preventDefault) e.preventDefault(); else e.returnValue = false;
+          MyHosts.probeOne(self.cur);
+        }
+      };
+      if (doc.addEventListener) doc.addEventListener('keydown', keyfn, false);
+      else doc.attachEvent('onkeydown', keyfn);
+      MyHosts.log(MyHosts.hasShell
+        ? 'mshta host - commands run directly on this machine. Click Refresh to probe devices.'
+        : 'Browser host - no shell, actions will fail here.');
+    }
+  });
+
+})(window, document);
+</script>
+</body>
+</html>
