@@ -578,12 +578,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               self.s.proxy = false;
               api.log(ok ? 'System proxy cleared.' : 'Warning: proxy not applied.', ok ? 'ok' : 'warn');
             } },
-          { name: 'Start npm server', tool: true, run: function (api) {
-              api.prompt('Start npm server', 'Enter the project directory', '', function (dir) {
+          { name: 'Serve static', tool: true, run: function (api) {
+              api.prompt('Serve static', 'Enter the directory to serve', '', function (dir) {
                 dir = String(dir == null ? '' : dir).replace(/"/g, '');
                 if (!dir) return;
-                runWait('cmd /c start "npm server" /D "' + dir + '" npm start', true);
-                api.log('npm server launching in ' + dir + '.', 'ok');
+                runWait('cmd /c start "static server" /D "' + dir + '" python -m http.server ' + PORT, true);
+                api.log('Serving ' + dir + ' at http://127.0.0.1:' + PORT, 'ok');
               });
             } },
           { name: 'Open local page', tool: true, run: function (api) {
