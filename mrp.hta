@@ -41,7 +41,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   <!-- 左：页签列 -->
   <nav id="nav">
     <a v-for="t in tabs" v-class="{act: t.act}" @click="switchTab(t.key)">
-      <span>{{ t.label }}</span> <i v-class="dotCls(t.tone)">{{ toneChar(t.tone) }}</i>
+      <span>{{ t.label }}</span> <i v-class="dotCls(t.tone)">{{ dot }}</i>
     </a>
   </nav>
   <!-- 右：页签内容 -->
@@ -52,7 +52,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         <table>
           <tr v-for="r in rows">
             <td width="120">{{ r.name }}</td>
-            <td><i v-class="dotCls(r.tone)">{{ toneChar(r.tone) }}</i> {{ r.text }}</td>
+            <td><i v-class="dotCls(r.tone)">{{ dot }}</i> {{ r.text }}</td>
             <td align="right"><a v-if="r.act" v-class="{err: r.danger}" @click="rowAct(r)">{{ r.act }}</a></td>
           </tr>
         </table>
@@ -96,14 +96,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
     function each(obj, fn) { for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) fn(obj[k], k); }
     function on(el, ev, fn) { if (el.addEventListener) el.addEventListener(ev, fn, false); else if (el.attachEvent) el.attachEvent('on' + ev, fn); }
-    function trim(s) { return String(s).replace(/^\s+|\s+$/g, ''); }
     function toggleClass(el, c, add) {
       var cn = el.className.split(/\s+/), i = cn.indexOf(c);
       if (add && i < 0) cn.push(c);
       if (!add && i >= 0) cn.splice(i, 1);
       el.className = cn.join(' ').replace(/^\s+|\s+$/g, '');
     }
-    var KEYC = { enter: 13, esc: 27 };
 
     function report(msg) {
       if (_errSeen[msg]) return;
@@ -130,23 +128,21 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       var a = self._deps[path], i;
       if (a && (i = a.indexOf(fn)) >= 0) a.splice(i, 1);
     }
-    function notify(path) { /* 精确 + 前缀命中 */
-      var keys = [], k, i, j;
-      for (k in self._deps) if (Object.prototype.hasOwnProperty.call(self._deps, k)) keys.push(k);
-      for (i = 0; i < keys.length; i++) {
-        if (path === keys[i] || path.indexOf(keys[i] + '.') === 0) {
-          var subs = self._deps[keys[i]].slice();
-          for (j = 0; j < subs.length; j++) {
-            if (++_depth > 200) {
-              report('update cascade exceeded 200 levels at path "' + path + '"');
-              _depth--;
-              return;
-            }
-            try { subs[j](); } catch (ex) { report('update: ' + (ex && ex.message ? ex.message : ex)); }
+    function notify(path) { /* 精确 + 前缀命中；先快照订阅再执行，规避级联中途改表 */
+      var queues = [];
+      each(self._deps, function (subs, key) {
+        if (path === key || path.indexOf(key + '.') === 0) queues.push(subs.slice());
+      });
+      for (var i = 0; i < queues.length; i++)
+        for (var j = 0; j < queues[i].length; j++) {
+          if (++_depth > 200) {
             _depth--;
+            report('update cascade exceeded 200 levels at path "' + path + '"');
+            return;
           }
+          try { queues[i][j](); } catch (ex) { report('update: ' + (ex && ex.message ? ex.message : ex)); }
+          _depth--;
         }
-      }
     }
 
     function defineReactive(obj, key, val, path) {
@@ -223,14 +219,30 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       }
       if (last < src.length) frag.appendChild(doc.createTextNode(src.slice(last)));
       node.parentNode.replaceChild(frag, node);
-      for (var i = 0; i < binds.length; i++) {
-        (function (b) {
-          track(function () {
-            var v = evalExpr(b.expr, $s), s2 = v == null ? '' : String(v);
-            if (b.tn.nodeValue !== s2) b.tn.nodeValue = s2;
-          });
-        })(binds[i]);
-      }
+      for (var i = 0; i < binds.length; i++) bindSeg(binds[i], $s);
+    }
+    function bindSeg(seg, $s) {
+      track(function () {
+        var v = evalExpr(seg.expr, $s), s2 = v == null ? '' : String(v);
+        if (seg.tn.nodeValue !== s2) seg.tn.nodeValue = s2;
+      });
+    }
+
+    /* @事件统一 preventDefault；支持修饰符与带参调用 */
+    function bindEvent(el, spec, $s) {
+      var dot = spec.name.substring(1).split('.'), ev = dot[0], kc = dot[1] === 'enter' ? 13 : 0;
+      var m2 = spec.value.replace(/^\s+|\s+$/g, '').match(/^([\w$]+)\s*(?:\((.*)\))?$/);
+      var argFn = (m2 && m2[2]) ? m2[2] : null;
+      on(el, ev, function (e) {
+        e = e || win.event;
+        if (kc && (e.keyCode || e.which) !== kc) return;
+        if (e.preventDefault) e.preventDefault(); else e.returnValue = false;
+        if (!m2) { report('bad handler: ' + spec.value); return; }
+        var fn2 = self._ctx[m2[1]];
+        if (!fn2) { report('handler not found: ' + spec.value); return; }
+        try { fn2(argFn ? evalExpr(argFn, $s) : e); }
+        catch (ex) { report(spec.value + ' -> ' + (ex && ex.message ? ex.message : ex)); }
+      });
     }
 
     function setupFor(el, expr) {
@@ -251,7 +263,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             var node = tpl.cloneNode(true);
             node._vfor = 1;
             parent.insertBefore(node, after);
-            var $s = {}; $s[name] = list[i]; $s.$index = i;
+            var $s = {}; $s[name] = list[i];
             compile(node, $s);
           }
         } catch (ex) { report('v-for "' + listExpr + '": ' + (ex && ex.message ? ex.message : ex)); }
@@ -260,7 +272,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
     function compile(el, $s) {
       if (!el || !el.getAttribute) return;
-      if (el.getAttribute('v-for')) { setupFor(el, el.getAttribute('v-for')); return; }
+      var vfor = el.getAttribute('v-for');
+      if (vfor) { setupFor(el, vfor); return; }
 
       var nodes = el.childNodes, arr = [], i, n;
       for (i = 0; i < nodes.length; i++) arr.push(nodes[i]);
@@ -270,62 +283,34 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         else compile(n, $s);
       }
 
-      if (el.getAttribute('v-model')) {
-        (function (key, inp) {
-          var h = function () { setPath(key, inp.value); };
-          on(inp, 'input', h); on(inp, 'change', h);
-          track(function () {
-            var v = getPath(key), s2 = v == null ? '' : String(v);
-            if (inp.value !== s2) inp.value = s2;
-          });
-        })(el.getAttribute('v-model'), el);
+      var modelKey = el.getAttribute('v-model');
+      if (modelKey) {
+        var h = function () { setPath(modelKey, el.value); };
+        on(el, 'input', h);
+        on(el, 'change', h);
+        track(function () {
+          var v = getPath(modelKey), s2 = v == null ? '' : String(v);
+          if (el.value !== s2) el.value = s2;
+        });
       }
-      if (el.getAttribute('v-bind')) {
-        (function (expr, el2) {
-          track(function () {
-            var v = evalExpr(expr, $s);
-            el2.innerHTML = v == null ? '' : String(v);
-          });
-        })(el.getAttribute('v-bind'), el);
+      var ifExpr = el.getAttribute('v-if');
+      if (ifExpr) {
+        var ph = doc.createComment('v-if'), shown = true;
+        track(function () {
+          var v = evalExpr(ifExpr, $s);
+          if (v && !shown && ph.parentNode) { ph.parentNode.replaceChild(el, ph); shown = true; }
+          else if (!v && shown && el.parentNode) { el.parentNode.replaceChild(ph, el); shown = false; }
+        });
       }
-      if (el.getAttribute('v-if')) {
-        (function (expr, el2) {
-          var ph = doc.createComment('v-if'), shown = true;
-          track(function () {
-            var v = evalExpr(expr, $s);
-            if (v && !shown && ph.parentNode) { ph.parentNode.replaceChild(el2, ph); shown = true; }
-            else if (!v && shown && el2.parentNode) { el2.parentNode.replaceChild(ph, el2); shown = false; }
-          });
-        })(el.getAttribute('v-if'), el);
+      var clsExpr = el.getAttribute('v-class');
+      if (clsExpr) {
+        track(function () {
+          var map = evalExpr(clsExpr, $s);
+          if (map) for (var c in map) if (Object.prototype.hasOwnProperty.call(map, c)) toggleClass(el, c, !!map[c]);
+        });
       }
-      if (el.getAttribute('v-class')) {
-        (function (expr, el2) {
-          track(function () {
-            var map = evalExpr(expr, $s);
-            if (map) for (var c in map) if (Object.prototype.hasOwnProperty.call(map, c)) toggleClass(el2, c, !!map[c]);
-          });
-        })(el.getAttribute('v-class'), el);
-      }
-      /* @事件统一 preventDefault；支持修饰符与带参调用 */
-      var atts = el.attributes, evs = [];
-      for (i = 0; i < atts.length; i++) if (atts[i].name.charAt(0) === '@') evs.push(atts[i]);
-      for (i = 0; i < evs.length; i++) {
-        (function (spec) {
-          var dot = spec.name.substring(1).split('.'), ev = dot[0], kc = KEYC[dot[1]] || 0;
-          var m2 = trim(spec.value).match(/^([\w$]+)\s*(?:\((.*)\))?$/);
-          var argFn = (m2 && m2[2]) ? m2[2] : null;
-          on(el, ev, function (e) {
-            e = e || win.event;
-            if (kc && (e.keyCode || e.which) !== kc) return;
-            if (e.preventDefault) e.preventDefault(); else e.returnValue = false;
-            if (!m2) { report('bad handler: ' + spec.value); return; }
-            var fn2 = self._ctx[m2[1]];
-            if (!fn2) { report('handler not found: ' + spec.value); return; }
-            try { fn2(argFn ? evalExpr(argFn, $s) : e); }
-            catch (ex) { report(spec.value + ' -> ' + (ex && ex.message ? ex.message : ex)); }
-          });
-        })(evs[i]);
-      }
+      var atts = el.attributes;
+      for (i = 0; i < atts.length; i++) if (atts[i].name.charAt(0) === '@') bindEvent(el, atts[i], $s);
     }
 
     /* 装配：reactive → 上下文 → methods → computed → compile → mounted */
@@ -382,7 +367,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       '-----END PRIVATE KEY-----'
     ];
 
-    /* location.pathname 换算为脚本所在目录 */
+    /* location.href 换算为脚本所在目录（pathname 会丢失盘符） */
     var WORKDIR = (function () {
       var s = unescape(location.href).replace(/\+/g, ' ');
       s = s.replace(/^file:\/\/\//i, '').replace(/\//g, '\\');
@@ -392,21 +377,22 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     function pad2(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
 
     var logBox = null;
+    function getLogBox() { return logBox || (logBox = doc.getElementById('log')); }
     function log(text, lv) {
-      if (!logBox) logBox = doc.getElementById('log');
-      if (!logBox) return;
+      var box = getLogBox();
+      if (!box) return;
       var d = doc.createElement('div');
       if (lv) d.className = lv;
       var t = new Date();
       d.innerHTML = '<i class="dim">[' + pad2(t.getHours()) + ':' + pad2(t.getMinutes()) + ':' + pad2(t.getSeconds()) + ']</i> ' +
         String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      logBox.appendChild(d);
-      while (logBox.children.length > 300) logBox.removeChild(logBox.firstChild);
-      logBox.scrollTop = logBox.scrollHeight;
+      box.appendChild(d);
+      while (box.children.length > 300) box.removeChild(box.firstChild);
+      box.scrollTop = box.scrollHeight;
     }
     function logClear() {
-      if (!logBox) logBox = doc.getElementById('log');
-      if (logBox) logBox.innerHTML = '';
+      var box = getLogBox();
+      if (box) box.innerHTML = '';
     }
 
     /* ---- shell / fs 原语（无 shell 环境下调用即失败，由 try/catch 兜底） ---- */
@@ -446,15 +432,21 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       if (!fileExists(CRT)) writeFileText(CRT, CA_CERT);
       if (!fileExists(KEY)) writeFileText(KEY, CA_KEY);
     }
+    function checkWinFiles(p) {
+      var want = [MRP_EXE, CRT, KEY], miss = [], i;
+      for (i = 0; i < want.length; i++) if (!fileExists(want[i])) miss.push(want[i]);
+      p.s.filesOK = miss.length === 0;
+      p.s.miss = miss;
+    }
     /* 输入框记忆：启动读入缓存，会话内只改变量，关闭前写盘 */
     var inputCache = {};
+    var INPUT_FILE = WORKDIR + '_mrp_inputs.txt';
     (function () {
       if (!hasShell) return;
       try {
         var fso = new ActiveXObject('Scripting.FileSystemObject');
-        var path = WORKDIR + '_mrp_inputs.txt';
-        if (!fso.FileExists(path)) return;
-        var lines = fso.OpenTextFile(path, 1, false, 0).ReadAll().split('\r\n');
+        if (!fso.FileExists(INPUT_FILE)) return;
+        var lines = fso.OpenTextFile(INPUT_FILE, 1, false, 0).ReadAll().split('\r\n');
         for (var i = 0; i < lines.length; i++) {
           var idx = lines[i].indexOf('\t');
           if (idx > 0) inputCache[lines[i].substring(0, idx)] = lines[i].substring(idx + 1);
@@ -464,9 +456,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     function flushInput() {
       if (!hasShell) return;
       try {
-        var fso = new ActiveXObject('Scripting.FileSystemObject');
-        var path = WORKDIR + '_mrp_inputs.txt';
-        var f = fso.CreateTextFile(path, true, false);
+        var f = new ActiveXObject('Scripting.FileSystemObject').CreateTextFile(INPUT_FILE, true, false);
         for (var k in inputCache) if (Object.prototype.hasOwnProperty.call(inputCache, k)) f.WriteLine(k + '\t' + inputCache[k]);
         f.Close();
       } catch (ex) {}
@@ -479,6 +469,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       inputCache[key] = value;
     }
     win.onbeforeunload = flushInput;
+    function winProxyOn() {
+      return execText('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0;
+    }
     /* netsh 代理写入需要管理员；net session 成功表示已提权，否则走 UAC 弹窗 */
     function setSystemProxy(cmd, expectOn) {
       if (execText('net session >nul 2>&1 && echo OK') === '') {
@@ -487,25 +480,37 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         log('> ' + cmd + ' [runas]', 'dim');
         try { new ActiveXObject('WScript.Shell').Run(ps, 0, true); } catch (ex) {}
       } else runWait(cmd);
-      return execText('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0 === expectOn;
+      return winProxyOn() === expectOn;
     }
     function winProcessRunning() {
       return execText('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase()
         .indexOf(MRP_EXE.toLowerCase()) >= 0;
     }
+    function stopWinProcess() {
+      if (winProcessRunning()) runWait('taskkill /im "' + MRP_EXE + '" /f');
+    }
     function winCertState() {
       if (!fileExists(CRT)) return 'NONE';
       var dump = execText('certutil -dump "' + WORKDIR + CRT + '"').toLowerCase();
-      var at = dump.indexOf('cn=');
-      if (at < 0) return 'NONE';
-      var cn = dump.substring(at + 3).split('\r')[0].split('\n')[0].split(',')[0];
+      var m = dump.match(/cn=([^,\r\n]+)/);
+      if (!m) return 'NONE';
+      var cn = m[1];
       if (execText('certutil -store Root 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) return 'MACHINE';
       if (execText('certutil -user -store Root 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) return 'USER';
       return 'NONE';
     }
+    function removeUserCA() {
+      runWait('powershell -NoProfile -Command "Get-ChildItem Cert:\\CurrentUser\\Root | Where-Object {$_.Subject -eq \'CN=' + CA_CN + '\'} | Remove-Item -Force" >nul 2>&1');
+    }
     /* test -f 静默判断；ls 的错误输出会混进 stdout 造成误判 */
     function deviceFileExists(tool, path) {
       return execText(tool + ' shell "test -f ' + path + ' && echo Y" 2>nul') !== '';
+    }
+    function deviceBinRunning(tool) {
+      return execText(tool + ' shell pidof ' + DEV_BIN + ' 2>nul') !== '';
+    }
+    function stopDeviceBin(tool) {
+      runWait(tool + ' shell pkill -f ' + DEV_BIN + ' >nul 2>&1');
     }
     function remountSystem(tool) {
       runWait(tool + ' root');
@@ -527,17 +532,17 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         name: 'Windows',
         s: { filesOK: true, miss: [], cert: 'NONE', run: false, proxy: false },
         probe: function () {
-          var want = [MRP_EXE, CRT, KEY], miss = [], i;
-          for (i = 0; i < want.length; i++) if (!fileExists(want[i])) miss.push(want[i]);
-          this.s.filesOK = miss.length === 0;
-          this.s.miss = miss;
+          checkWinFiles(this);
           this.s.cert = winCertState();
           this.s.run = winProcessRunning();
-          this.s.proxy = execText('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0;
+          this.s.proxy = winProxyOn();
         },
         health: function () {
           if (!this.s.filesOK || this.s.cert === 'NONE') return 'err';
           return (this.s.run && this.s.proxy) ? 'ok' : 'warn';
+        },
+        summary: function () {
+          return ' cert=' + this.s.cert + ' proc=' + (this.s.run ? 'up' : 'down') + ' proxy=' + (this.s.proxy ? 'on' : 'off');
         },
         states: [
           { name: 'Files',
@@ -566,12 +571,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         actions: [
           { name: 'Locate files', run: function (api) {
               ensureCA();
-              var want = [MRP_EXE, CRT, KEY], miss = [], i;
-              for (i = 0; i < want.length; i++) if (!fileExists(want[i])) miss.push(want[i]);
-              this.s.miss = miss;
-              this.s.filesOK = miss.length === 0;
+              checkWinFiles(this);
               if (this.s.filesOK) { api.log('Files ready.', 'ok'); return; }
-              api.log('Missing: ' + miss.join(', ') + ' in ' + WORKDIR + '. Download from GitHub Releases.', 'err');
+              api.log('Missing: ' + this.s.miss.join(', ') + ' in ' + WORKDIR + '. Download from GitHub Releases.', 'err');
             } },
           { name: 'Import CA', run: function (api) {
               var self = this;
@@ -584,7 +586,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             } },
           { name: 'Remove', danger: true, run: function (api) {
               var self = this;
-              runWait('powershell -NoProfile -Command "Get-ChildItem Cert:\\CurrentUser\\Root | Where-Object {$_.Subject -eq \'CN=' + CA_CN + '\'} | Remove-Item -Force" >nul 2>&1');
+              removeUserCA();
               self.s.cert = 'NONE';
               api.log('CA removed.', 'ok');
             } },
@@ -597,7 +599,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             } },
           { name: 'Stop', run: function (api) {
               var self = this;
-              if (winProcessRunning()) runWait('taskkill /im "' + MRP_EXE + '" /f');
+              stopWinProcess();
               self.s.run = false;
               api.log('mrp stopped.', 'ok');
             } },
@@ -622,21 +624,18 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               });
             } },
           { name: 'Open local page', tool: true, run: function (api) {
-              var self = this;
               runWait('cmd /c start "" http://127.0.0.1:' + PORT, true);
               api.log('Opening local page.', 'ok');
             } }
         ],
         uninstall: function (api) {
           var self = this;
-          if (winProcessRunning()) runWait('taskkill /im "' + MRP_EXE + '" /f');
+          stopWinProcess();
           setSystemProxy('netsh winhttp reset proxy', false);
-          runWait('powershell -NoProfile -Command "Get-ChildItem Cert:\\CurrentUser\\Root | Where-Object {$_.Subject -eq \'CN=' + CA_CN + '\'} | Remove-Item -Force" >nul 2>&1');
+          removeUserCA();
           try {
-            var fso = new ActiveXObject('Scripting.FileSystemObject');
-            if (fso.FileExists(WORKDIR + MRP_EXE)) fso.DeleteFile(WORKDIR + MRP_EXE, true);
-            if (fso.FileExists(WORKDIR + CRT)) fso.DeleteFile(WORKDIR + CRT, true);
-            if (fso.FileExists(WORKDIR + KEY)) fso.DeleteFile(WORKDIR + KEY, true);
+            var fso = new ActiveXObject('Scripting.FileSystemObject'), files = [MRP_EXE, CRT, KEY], i;
+            for (i = 0; i < files.length; i++) if (fso.FileExists(WORKDIR + files[i])) fso.DeleteFile(WORKDIR + files[i], true);
           } catch (ex) {}
           self.s.filesOK = false; self.s.miss = [MRP_EXE];
           self.s.cert = 'NONE'; self.s.run = false; self.s.proxy = false;
@@ -658,34 +657,40 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       var certDir = android ? '/system/etc/security/cacerts' : '/etc/security/certificates';
       var pushCmd = android ? 'push' : 'file send';
       var listCmd = android ? 'devices' : 'list targets';
+      var devDir = '/data/local/mrp';
+      var certPath = certDir + '/' + CA_HASH + '.0';
       var proxySet = android
         ? 'shell settings put global http_proxy 127.0.0.1:' + PORT
         : 'shell network-cfg set http_proxy 127.0.0.1:' + PORT;
       var proxyClear = android
         ? 'shell settings put global http_proxy :0'
         : 'shell network-cfg set http_proxy 0';
-      var proxyGet = android ? 'shell settings get global http_proxy' : null;
       var openUrl = android
         ? 'shell am start -a android.intent.action.VIEW -d "{URL}"'
         : 'shell aa start -d "{URL}"';
       var devtoolsCmd = android
         ? 'forward tcp:9222 localabstract:chrome_devtools_remote'
         : 'forward tcp:9222';
-      var reverseCmd = android
-        ? 'reverse tcp:8000 tcp:8000'
-        : 'rport tcp:8000 tcp:8000';
+      var reverseCmd = (android ? 'reverse' : 'rport') + ' tcp:' + PORT + ' tcp:' + PORT;
 
-      var app = {
+      function ensureDevDir() {
+        runWait(tool + ' shell mkdir -p ' + devDir);
+      }
+      function pushDev(file, dest) {
+        return runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + file + '" ' + (dest || devDir));
+      }
+
+      return {
         name: name,
         s: { ready: false, desc: '', bin: false, cert: false, run: false, proxy: false },
         probe: function () {
           if (execText('where ' + tool + ' >nul 2>&1 && echo OK') === '') {
             this.s.ready = false; this.s.desc = 'Not installed'; return;
           }
-          var out = execText(tool + ' ' + listCmd + ' 2>nul').split('\n'), desc = '', i, c;
+          var out = execText(tool + ' ' + listCmd + ' 2>nul').split('\n'), desc = '', i;
           if (android) {
             for (i = 1; i < out.length; i++) {
-              c = out[i].replace(/\r/g, '').split(/\s+/);
+              var c = out[i].replace(/\r/g, '').split(/\s+/);
               if (c.length >= 2 && c[1] === 'device') { desc = c[0]; break; }
             }
           } else {
@@ -694,16 +699,17 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               var t2 = out[i].replace(/\s+/g, '');
               if (t2 !== '') desc = t2;
             }
-            if (desc === '' || desc.substring(0, 7) === '[Empty]' || desc.substring(0, 7) === 'Connect') desc = '';
+            var head = desc.substring(0, 7);
+            if (desc === '' || head === '[Empty]' || head === 'Connect') desc = '';
           }
           if (!desc) { this.s.ready = false; this.s.desc = 'No device connected'; return; }
           this.s.ready = true; this.s.desc = desc;
-          this.s.cert = deviceFileExists(tool, certDir + '/' + CA_HASH + '.0');
-          this.s.bin = deviceFileExists(tool, '/data/local/mrp/' + DEV_BIN);
-          this.s.run = execText(tool + ' shell pidof ' + DEV_BIN + ' 2>nul') !== '';
+          this.s.cert = deviceFileExists(tool, certPath);
+          this.s.bin = deviceFileExists(tool, devDir + '/' + DEV_BIN);
+          this.s.run = deviceBinRunning(tool);
           /* adb 输出带换行，按前缀匹配 */
           this.s.proxy = known
-            ? execText(tool + ' ' + proxyGet + ' 2>nul').indexOf('127.0.0.1:' + PORT) === 0
+            ? execText(tool + ' shell settings get global http_proxy 2>nul').indexOf('127.0.0.1:' + PORT) === 0
             : false;
         },
         health: function () {
@@ -711,6 +717,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           if (this.s.cert && this.s.bin && this.s.run) return 'ok';
           if (this.s.cert || this.s.bin) return 'warn';
           return 'err';
+        },
+        summary: function () {
+          return ' (' + (this.s.desc || 'none') + ')';
         },
         states: [
           { name: 'Device',
@@ -746,12 +755,11 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
                 : cell('warn', 'Not set', 'Set');
             } }
         ],
-        actions: [
+        actions: [].concat([
           { name: 'Sync config', run: function (api) {
-              var self = this;
               if (!fileExists(DEV_CFG)) { api.log(DEV_CFG + ' not found next to this script.', 'err'); return; }
-              runWait(tool + ' shell mkdir -p /data/local/mrp');
-              if (runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + DEV_CFG + '" /data/local/mrp') !== 0) {
+              ensureDevDir();
+              if (pushDev(DEV_CFG) !== 0) {
                 api.log('Sync failed; check device connection.', 'err');
                 return;
               }
@@ -760,13 +768,13 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           { name: 'Install files', run: function (api) {
               var self = this;
               ensureCA();
-              runWait(tool + ' shell mkdir -p /data/local/mrp');
-              var rc = runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + DEV_BIN + '" /data/local/mrp');
+              ensureDevDir();
+              var rc = pushDev(DEV_BIN);
               if (rc !== 0) { api.log(DEV_BIN + ' push failed (rc=' + rc + '). Download it from GitHub Releases into ' + WORKDIR, 'err'); return; }
-              if (fileExists(DEV_CFG)) runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + DEV_CFG + '" /data/local/mrp');
-              runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + CRT + '" /data/local/mrp');
-              runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + KEY + '" /data/local/mrp');
-              runWait(tool + ' shell chmod +x /data/local/mrp/' + DEV_BIN);
+              if (fileExists(DEV_CFG)) pushDev(DEV_CFG);
+              pushDev(CRT);
+              pushDev(KEY);
+              runWait(tool + ' shell chmod +x ' + devDir + '/' + DEV_BIN);
               self.s.bin = true;
               api.log('Device files installed.', 'ok');
             } },
@@ -775,13 +783,14 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               ensureCA();
               if (android) {
                 remountSystem(tool);
-                runWait(tool + ' ' + pushCmd + ' "' + WORKDIR + CRT + '" ' + certDir + '/' + CA_HASH + '.0');
-                runWait(tool + ' shell chmod 644 ' + certDir + '/' + CA_HASH + '.0');
+                pushDev(CRT, certPath);
+                runWait(tool + ' shell chmod 644 ' + certPath);
               } else {
-                runWait('copy /y "' + WORKDIR + CRT + '" "%TEMP%\\' + CA_HASH + '.0" >nul');
-                runWait(tool + ' file send "%TEMP%\\' + CA_HASH + '.0" ' + certDir);
+                var tmp = '%TEMP%\\' + CA_HASH + '.0';
+                runWait('copy /y "' + WORKDIR + CRT + '" "' + tmp + '" >nul');
+                runWait(tool + ' file send "' + tmp + '" ' + certDir);
               }
-              var ok = deviceFileExists(tool, certDir + '/' + CA_HASH + '.0');
+              var ok = deviceFileExists(tool, certPath);
               if (ok) self.s.cert = true;
               api.log(ok ? 'CA installed.'
                 : 'Warning: cert install may have failed; ensure the device is rooted or in developer mode.',
@@ -790,23 +799,23 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           { name: 'Remove', danger: true, run: function (api) {
               var self = this;
               if (android) remountSystem(tool);
-              runWait(tool + ' shell rm -f ' + certDir + '/' + CA_HASH + '.0');
+              runWait(tool + ' shell rm -f ' + certPath);
               self.s.cert = false;
               api.log('CA removed.', 'ok');
             } },
           { name: 'Start', run: function (api) {
               var self = this;
-              if (execText(tool + ' shell pidof ' + DEV_BIN + ' 2>nul') !== '') {
+              if (deviceBinRunning(tool)) {
                 api.log('mrp already running on device.', 'ok'); return;
               }
-              var consoleCmd = 'cmd /k ' + tool + ' shell "cd /data/local/mrp; ./' + DEV_BIN + '"';
+              var consoleCmd = 'cmd /k ' + tool + ' shell "cd ' + devDir + '; ./' + DEV_BIN + '"';
               log('> ' + consoleCmd, 'dim');
               try { new ActiveXObject('WScript.Shell').Run(consoleCmd, 1, false); }
               catch (ex) { api.log('Failed to open device console window.', 'err'); return; }
               var up = false, i;
               for (i = 0; i < 5; i++) {
                 runWait('timeout /t 1 >nul');
-                if (execText(tool + ' shell pidof ' + DEV_BIN + ' 2>nul') !== '') { up = true; break; }
+                if (deviceBinRunning(tool)) { up = true; break; }
               }
               if (up) self.s.run = true;
               api.log(up ? 'mrp is now running on device - Ctrl+C in the new window to stop.'
@@ -815,11 +824,11 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             } },
           { name: 'Stop', run: function (api) {
               var self = this;
-              runWait(tool + ' shell pkill -f ' + DEV_BIN + ' >nul 2>&1');
+              stopDeviceBin(tool);
               self.s.run = false;
               api.log('mrp stopped.', 'ok');
             } }
-        ].concat(known ? [
+        ], known ? [
           { name: 'Set', run: function (api) {
               var self = this;
               runWait(tool + ' ' + proxySet);
@@ -832,39 +841,34 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               self.s.proxy = false;
               api.log('Device global proxy cleared.', 'ok');
             } }
-        ] : []).concat([
+        ] : [], [
           { name: 'Port reverse :8000', tool: true, run: function (api) {
-              var self = this;
               runWait(tool + ' ' + reverseCmd);
               api.log('Port reverse :8000 active.', 'ok');
             } },
           { name: 'Open browser', tool: true, run: function (api) {
-              var self = this;
-              var cmd = tool + ' ' + openUrl;
               api.prompt('Open browser', 'URL to open on the device', 'http://example.com', function (url) {
                 url = String(url == null ? '' : url);
                 if (url === '') return;
-                runWait(cmd.replace(/\{URL\}/g, url), true);
+                runWait((tool + ' ' + openUrl).replace(/\{URL\}/g, url), true);
               });
             } },
           { name: 'DevTools', tool: true, run: function (api) {
-              var self = this;
               runWait(tool + ' ' + devtoolsCmd);
               api.log('DevTools port forwarded.', 'ok');
             } }
         ]),
         uninstall: function (api) {
           var self = this;
-          runWait(tool + ' shell pkill -f ' + DEV_BIN + ' >nul 2>&1');
+          stopDeviceBin(tool);
           if (known) runWait(tool + ' ' + proxyClear);
           if (android) remountSystem(tool);
-          runWait(tool + ' shell rm -f ' + certDir + '/' + CA_HASH + '.0');
-          runWait(tool + ' shell rm -rf /data/local/mrp');
+          runWait(tool + ' shell rm -f ' + certPath);
+          runWait(tool + ' shell rm -rf ' + devDir);
           self.s.bin = false; self.s.cert = false; self.s.run = false; self.s.proxy = false;
           api.log(name + ' uninstall finished.', 'ok');
         }
       };
-      return app;
     }
 
     /* api 工厂：对话框与日志出口，由调用侧传入上下文 */
@@ -877,12 +881,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     }
 
     function probeOne(p) {
-      if (p.probe) p.probe.call(p);
-      var h = p.health.call(p);
-      var msg = 'Probed ' + p.name + ': ' + h;
-      if (p.s.desc !== undefined) msg += ' (' + (p.s.desc || 'none') + ')';
-      else msg += ' cert=' + p.s.cert + ' proc=' + (p.s.run ? 'up' : 'down') + ' proxy=' + (p.s.proxy ? 'on' : 'off');
-      log(msg);
+      p.probe.call(p);
+      log('Probed ' + p.name + ': ' + p.health.call(p) + p.summary());
     }
 
     return {
@@ -903,15 +903,18 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       platforms: MyHosts.platforms,
       draft: '',
       modal: null,
-      cur: null, tabs: [], rows: [], tools: []
+      cur: null, tabs: [], rows: [], tools: [],
+      dot: String.fromCharCode(9679)
     },
 
     computed: {
       cur: function () { return this.platforms[this.tab]; },
       tabs: function () {
         var out = [], i;
-        for (i = 0; i < this.platforms.length; i++)
-          out.push({ key: i, label: this.platforms[i].name, act: this.tab === i, tone: this.toneOf(this.platforms[i]) });
+        for (i = 0; i < this.platforms.length; i++) {
+          var p = this.platforms[i];
+          out.push({ key: i, label: p.name, act: this.tab === i, tone: p.health.call(p) });
+        }
         return out;
       },
       rows: function () {
@@ -934,8 +937,6 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     },
 
     methods: {
-      toneOf: function (p) { return p.health.call(p); },
-      toneChar: function () { return String.fromCharCode(9679); },
       dotCls: function (t) { var o = {}; o[t === 'idle' ? 'dim' : t] = true; return o; },
       switchTab: function (k) {
         k = Number(k);
@@ -963,7 +964,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       runAction: function (a) {
         var self = this, p = this.cur;
         var go = function () { MyHosts.log('>> ' + a.name, 'dim'); a.run.call(p, self.api); };
-        if (a.danger) this.confirm('Confirm', 'Run "' + a.name + '" on ' + p.name + '?' + (a.warn ? ' ' + a.warn : ''), a.name, go);
+        if (a.danger) this.confirm('Confirm', 'Run "' + a.name + '" on ' + p.name + '?', a.name, go);
         else go();
       },
       rowAct: function (r) {
