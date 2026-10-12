@@ -115,7 +115,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   // ---- 环境检测 ----
   var hasShell = false;
   try {
-    hasShell = (typeof ActiveXObject !== 'undefined') && !!new ActiveXObject('WScript.Shell');
+    hasShell = !!new win.ActiveXObject('WScript.Shell');
   } catch (ex) {}
 
   var WORKDIR = (function() {
@@ -146,7 +146,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
   // ---- Shell 操作 ----
   function runRaw(cmd, show, wait) {
-    try { return new ActiveXObject('WScript.Shell').Run(cmd, show, wait); }
+    try { return new win.ActiveXObject('WScript.Shell').Run(cmd, show, wait); }
     catch (ex) { return 1; }
   }
 
@@ -157,8 +157,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
   function execText(cmd) {
     try {
-      var sh = new ActiveXObject('WScript.Shell'),
-          fso = new ActiveXObject('Scripting.FileSystemObject'),
+      var sh = new win.ActiveXObject('WScript.Shell'),
+          fso = new win.ActiveXObject('Scripting.FileSystemObject'),
           tmp = WORKDIR + '_mrp_out.txt';
       sh.Run('%comspec% /c (' + cmd + ') > "' + tmp + '"', 0, true);
       var out = '';
@@ -173,12 +173,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   }
 
   function fileExists(name) {
-    return hasShell ? new ActiveXObject('Scripting.FileSystemObject').FileExists(WORKDIR + name) : false;
+    return hasShell ? new win.ActiveXObject('Scripting.FileSystemObject').FileExists(WORKDIR + name) : false;
   }
 
   function writeFileText(name, lines) {
     try {
-      var f = new ActiveXObject('Scripting.FileSystemObject').CreateTextFile(WORKDIR + name, true, false);
+      var f = new win.ActiveXObject('Scripting.FileSystemObject').CreateTextFile(WORKDIR + name, true, false);
       for (var i = 0; i < lines.length; i++) f.WriteLine(lines[i]);
       f.Close();
     } catch (ex) {}
@@ -186,7 +186,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
   function deleteFiles(names) {
     try {
-      var fso = new ActiveXObject('Scripting.FileSystemObject'), i;
+      var fso = new win.ActiveXObject('Scripting.FileSystemObject'), i;
       for (i = 0; i < names.length; i++) {
         if (fso.FileExists(WORKDIR + names[i])) fso.DeleteFile(WORKDIR + names[i], true);
       }
@@ -199,7 +199,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   (function() {
     if (!hasShell) return;
     try {
-      var fso = new ActiveXObject('Scripting.FileSystemObject');
+      var fso = new win.ActiveXObject('Scripting.FileSystemObject');
       if (!fso.FileExists(INPUT_FILE)) return;
       var lines = fso.OpenTextFile(INPUT_FILE, 1, false, 0).ReadAll().split('\r\n');
       for (var i = 0; i < lines.length; i++) {
@@ -212,7 +212,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   function flushInput() {
     if (!hasShell) return;
     try {
-      var f = new ActiveXObject('Scripting.FileSystemObject').CreateTextFile(INPUT_FILE, true, false);
+      var f = new win.ActiveXObject('Scripting.FileSystemObject').CreateTextFile(INPUT_FILE, true, false);
       for (var k in inputCache) {
         if (Object.prototype.hasOwnProperty.call(inputCache, k)) {
           f.WriteLine(k + '\t' + inputCache[k]);
@@ -223,8 +223,16 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   }
 
   function loadInput(key) { return inputCache[key] || ''; }
-  function saveInput(key, value) { if (hasShell) inputCache[key] = value; }
-  win.onbeforeunload = flushInput;
+
+  var flushTimer = null;
+  function scheduleFlush() {
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushInput, 500);
+  }
+  function saveInput(key, value) {
+    inputCache[key] = value;
+    if (hasShell) scheduleFlush();
+  }
 
   // ---- 状态单元格 ----
   function cell(tone, text, act, danger) {
