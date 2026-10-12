@@ -82,6 +82,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
   // ---- 常量 ----
   var PORT = '8000',
+      HTTP_PORT = '8080',
       CA_HASH = 'd6cd00d8',
       CA_CN = 'DeviceProxy CA',
       CRT = 'ca.crt',
@@ -588,6 +589,15 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             var ok = setProxy('netsh winhttp reset proxy', false);
             s.proxy = false;
             host.log(ok ? 'System proxy cleared.' : 'Warning: proxy not cleared.', ok ? 'ok' : 'warn');
+          } },
+        { name: 'Static HTTP :' + HTTP_PORT, tool: true, run: function(s, vm) {
+            vm.prompt('Static HTTP server', 'Directory to serve', host.workdir, function(dir) {
+              dir = String(dir == null ? '' : dir).replace(/^\s+|\s+$/g, '');
+              if (dir === '') return;
+              if (/["]/.test(dir)) { host.log('Path must not contain double quotes.', 'warn'); return; }
+              host.runRaw('cmd /k python -m http.server ' + HTTP_PORT + ' --directory "' + dir + '"', 1, false);
+              host.log('Static server http://127.0.0.1:' + HTTP_PORT + ' serving ' + dir, 'ok');
+            });
           } }
       ],
       probe: function(s) { checkFiles(s); s.cert = certState(); s.run = procRunning(); s.proxy = proxyOn(); },
@@ -656,6 +666,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
     function remountForCert() { if (isAdb) remount(); }
 
+    // DevTools 套接字自动发现：PowerShell 子表达式 $(...) 在 PC 侧执行 adb/hdc shell 探测
+    function devtoolsForward() {
+      var probe = cfg.tool + ' shell \'cat /proc/net/unix | grep devtools | head -n 1 | cut -d @ -f2\'';
+      return 'powershell -Command "' + cfg.tool + ' ' + cfg.fwdCmd + ' tcp:9222 localabstract:$(' + probe + ')"';
+    }
+
     return {
       name: cfg.name,
       data: { ready: false, desc: '', bin: false, cert: false, run: false, proxy: false },
@@ -664,7 +680,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         { name: 'Files', get: function(s) { if (!s.ready) return null; return s.bin ? cell('ok', 'Installed') : cell('warn', 'Not installed', 'Install files'); } },
         { name: 'CA certificate', get: function(s) { if (!s.ready) return null; return s.cert ? cell('ok', 'Installed', 'Remove', true) : cell('warn', 'Not installed', 'Install CA'); } },
         { name: 'mrp process', get: function(s) { if (!s.ready) return null; if (!s.bin) return cell('err', 'Not installed'); return s.run ? cell('ok', 'Running', 'Stop') : cell('warn', 'Stopped', 'Start'); } },
-        { name: 'Proxy', get: function(s) { if (!s.ready) return null; if (!cfg.known) return cell('idle', 'Unknown'); return s.proxy ? cell('ok', 'Configured (127.0.0.1:' + PORT + ')', 'Clear') : cell('warn', 'Not set', 'Set'); } }
+        { name: 'Proxy', get: function(s) { if (!s.ready) return null; return s.proxy ? cell('ok', 'Configured (127.0.0.1:' + PORT + ')', 'Clear') : cell('warn', 'Not set', 'Set'); } }
       ],
       actions: [].concat([
         { name: 'Sync config', run: function(s) {
@@ -712,7 +728,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         { name: 'Set', run: function(s) { host.run(cfg.tool + ' ' + cfg.proxySet); s.proxy = true; host.log('Device global proxy set to 127.0.0.1:' + PORT + '.', 'ok'); } },
         { name: 'Clear', run: function(s) { host.run(cfg.tool + ' ' + cfg.proxyClear); s.proxy = false; host.log('Device global proxy cleared.', 'ok'); } }
       ] : [], [
-        { name: 'Port reverse :8000', tool: true, run: function(s) { host.run(cfg.tool + ' ' + cfg.reverseCmd); host.log('Port reverse :8000 active.', 'ok'); } },
+        { name: 'Port reverse :' + HTTP_PORT, tool: true, run: function(s) { host.run(cfg.tool + ' ' + cfg.reverseCmd); host.log('Port reverse :' + HTTP_PORT + ' active.', 'ok'); } },
         { name: 'Open browser', tool: true, run: function(s, vm) {
             vm.prompt('Open browser', 'URL to open on the device', 'http://example.com', function(url) {
               url = String(url == null ? '' : url).replace(/^\s+|\s+$/g, '');
@@ -721,7 +737,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               host.run((cfg.tool + ' ' + cfg.openUrl).replace(/\{URL\}/g, url), true);
             });
           } },
-        { name: 'DevTools', tool: true, run: function(s) { host.run(cfg.tool + ' ' + cfg.devtoolsCmd); host.log('DevTools port forwarded.', 'ok'); } }
+        { name: 'DevTools', tool: true, run: function(s) { host.runRaw(devtoolsForward(), 0, true); host.log('DevTools port forwarded.', 'ok'); } }
       ]),
       probe: function(s) {
         if (host.exec('where ' + cfg.tool + ' >nul 2>&1 && echo OK') === '') { s.ready = false; s.desc = 'Not installed'; return; }
@@ -732,7 +748,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         s.cert = devFileExists(certPath);
         s.bin = devFileExists(devDir + '/' + DEV_BIN);
         s.run = binRunning();
-        s.proxy = cfg.known ? host.exec(cfg.tool + ' shell settings get global http_proxy 2>nul').indexOf('127.0.0.1:' + PORT) === 0 : false;
+        s.proxy = isAdb ? host.exec(cfg.tool + ' shell settings get global http_proxy 2>nul').indexOf('127.0.0.1:' + PORT) === 0 : s.proxy;
       },
       health: function(s) {
         if (!s.ready) return 'idle';
@@ -765,20 +781,18 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         try { list.push(createDeviceModule({
           name: 'Android', tool: 'adb', known: true,
           certDir: '/system/etc/security/cacerts',
-          pushCmd: 'push', listCmd: 'devices',
-          devtoolsCmd: 'forward tcp:9222 localabstract:chrome_devtools_remote',
-          reverseCmd: 'reverse tcp:' + PORT + ' tcp:' + PORT,
+          pushCmd: 'push', listCmd: 'devices', fwdCmd: 'forward',
+          reverseCmd: 'reverse tcp:' + HTTP_PORT + ' tcp:' + HTTP_PORT,
           proxySet: 'shell settings put global http_proxy 127.0.0.1:' + PORT,
           proxyClear: 'shell settings put global http_proxy :0',
           openUrl: 'shell am start -a android.intent.action.VIEW -d "{URL}"'
         })); }
         catch (ex) { log('Android module init failed: ' + ex, 'err'); }
         try { list.push(createDeviceModule({
-          name: 'HarmonyOS', tool: 'hdc', known: false,
+          name: 'HarmonyOS', tool: 'hdc', known: true,
           certDir: '/etc/security/certificates',
-          pushCmd: 'file send', listCmd: 'list targets',
-          devtoolsCmd: 'forward tcp:9222',
-          reverseCmd: 'rport tcp:' + PORT + ' tcp:' + PORT,
+          pushCmd: 'file send', listCmd: 'list targets', fwdCmd: 'fport',
+          reverseCmd: 'rport tcp:' + HTTP_PORT + ' tcp:' + HTTP_PORT,
           proxySet: 'shell network-cfg set http_proxy 127.0.0.1:' + PORT,
           proxyClear: 'shell network-cfg set http_proxy 0',
           openUrl: 'shell aa start -d "{URL}"'
