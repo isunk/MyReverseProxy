@@ -247,8 +247,8 @@ func newStaticHandler(root, prefix string, responseHeaders map[string]string) *s
 	return &staticHandler{root: http.Dir(root), prefix: prefix, responseHeaders: responseHeaders}
 }
 
-// ServeHTTP 以本地目录为根托起静态文件：目录命中时回退 index.html，
-// 不生成目录列表；路径解析交由 http.Dir 以阻断路径穿越。
+// ServeHTTP 以本地目录为根托起静态文件：不生成目录列表、不回退 index.html；
+// 路径解析交由 http.Dir 以阻断路径穿越。
 func (h *staticHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	for name, value := range h.responseHeaders {
 		writer.Header().Set(name, value)
@@ -265,22 +265,11 @@ func (h *staticHandler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		http.NotFound(writer, request)
 		return
 	}
-	if !info.IsDir() {
-		http.ServeContent(writer, request, info.Name(), info.ModTime(), file)
-		return
-	}
-	index, err := h.root.Open(relPath + "/index.html")
-	if err != nil {
+	if info.IsDir() {
 		http.NotFound(writer, request)
 		return
 	}
-	defer index.Close()
-	indexInfo, err := index.Stat()
-	if err != nil || indexInfo.IsDir() {
-		http.NotFound(writer, request)
-		return
-	}
-	http.ServeContent(writer, request, indexInfo.Name(), indexInfo.ModTime(), index)
+	http.ServeContent(writer, request, info.Name(), info.ModTime(), file)
 }
 
 // Entry 一个虚拟服务器：按 protocol 与 port 筛选请求，

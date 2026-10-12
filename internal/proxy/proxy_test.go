@@ -236,7 +236,7 @@ func TestProxy_StaticDirectory(t *testing.T) {
 	proxyURL, _ := startProxy(t, configPath, nil)
 	client := proxyClient(proxyURL)
 
-	if got := requestBody(t, client, "http://static.example.com/"); got != "<h1>home</h1>" {
+	if got := requestBody(t, client, "http://static.example.com/index.html"); got != "<h1>home</h1>" {
 		t.Fatalf("index: got %q", got)
 	}
 	if got := requestBody(t, client, "http://static.example.com/assets/app.js"); got != "console.log(1)" {
@@ -248,7 +248,7 @@ func TestProxy_StaticDirectory(t *testing.T) {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("empty dir without index: want 404, got %d", resp.StatusCode)
+		t.Fatalf("dir request: want 404, got %d", resp.StatusCode)
 	}
 	resp, err = client.Get("http://static.example.com/missing")
 	if err != nil {
