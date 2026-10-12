@@ -738,7 +738,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       ] : [], [
         { name: 'Port reverse :' + HTTP_PORT, tool: true, run: function(s) { host.run(cfg.tool + ' ' + cfg.reverseCmd); host.log('Port reverse :' + HTTP_PORT + ' active.', 'ok'); } },
         { name: 'Open browser', tool: true, run: function(s, vm) {
-            vm.prompt('Open browser', 'URL to open on the device', 'http://example.com', function(url) {
+            vm.prompt('Open browser', 'URL to open on the device', 'http://127.0.0.1:' + HTTP_PORT + '/', function(url) {
               url = String(url == null ? '' : url).replace(/^\s+|\s+$/g, '');
               if (url === '') return;
               if (/[&|^<>"'%\s]/.test(url)) { host.log('URL contains shell-hostile characters; skipped.', 'warn'); return; }
@@ -803,7 +803,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           reverseCmd: 'rport tcp:' + HTTP_PORT + ' tcp:' + HTTP_PORT,
           proxySet: 'shell network-cfg set http_proxy 127.0.0.1:' + PORT,
           proxyClear: 'shell network-cfg set http_proxy 0',
-          openUrl: 'shell aa start -d "{URL}"'
+          openUrl: 'shell aa start -A ohos.want.action.viewData -U "{URL}"'
         })); }
         catch (ex) { log('HarmonyOS module init failed: ' + ex, 'err'); }
         return list;
