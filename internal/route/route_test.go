@@ -192,7 +192,7 @@ func TestStaticHandler_ResponseHeaders(t *testing.T) {
 	}
 	handler := newStaticHandler(root, "/", map[string]string{"Access-Control-Allow-Origin": "*"})
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/index.html", nil)
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", recorder.Code)
@@ -220,7 +220,7 @@ func TestStaticHandler_DotRootEquivalent(t *testing.T) {
 	for _, root := range []string{".", "./"} {
 		handler := newStaticHandler(root, "/", nil)
 		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/index.html", nil))
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("root %q: code=%d, want %d", root, recorder.Code, http.StatusOK)
 		}
