@@ -114,6 +114,8 @@ type Route struct {
 	Host    string
 	Headers HeaderRewrite
 	Target  *Target
+	Status  int
+	Body    string
 
 	handler http.Handler
 }
@@ -122,6 +124,9 @@ type Route struct {
 func (r *Route) Handler() http.Handler { return r.handler }
 
 func (r *Route) buildHandler(transport *http.Transport) http.Handler {
+	if r.Status != 0 {
+		return newStatusHandler(r.Status, r.Body, r.Headers.Response)
+	}
 	if r.Target.Root != "" {
 		return newStaticHandler(r.Target.Root, r.Prefix, r.Headers.Response)
 	}
@@ -281,6 +286,32 @@ func (h *staticHandler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	http.ServeContent(writer, request, indexInfo.Name(), indexInfo.ModTime(), index)
+}
+
+type statusHandler struct {
+	status          int
+	body            string
+	responseHeaders map[string]string
+}
+
+func newStatusHandler(status int, body string, responseHeaders map[string]string) *statusHandler {
+	return &statusHandler{status: status, body: body, responseHeaders: responseHeaders}
+}
+
+func (h *statusHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	for name, value := range h.responseHeaders {
+		writer.Header().Set(name, value)
+	}
+	if h.body != "" {
+		if writer.Header().Get("Content-Type") == "" {
+			writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		}
+		writer.Header().Set("Content-Length", strconv.Itoa(len(h.body)))
+	}
+	writer.WriteHeader(h.status)
+	if request.Method != http.MethodHead && h.body != "" {
+		_, _ = io.WriteString(writer, h.body)
+	}
 }
 
 // Entry 一个虚拟服务器：按 protocol 与 port 筛选请求，

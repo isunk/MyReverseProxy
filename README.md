@@ -172,6 +172,9 @@ servers:
         upstream: http://192.168.1.50:8080
   - domain: admin.target-app.com
     routes:
+      - prefix: /health
+        status: 200
+        body: OK
       - prefix: /
         upstream: http://127.0.0.1:9000
 ```
@@ -184,7 +187,9 @@ servers:
 | `servers[].protocol` | 可选，请求协议 `http` 或 `https`，省略匹配任意协议；不参与监听，mrp 始终在 `--port` 上监听明文连接 |
 | `servers[].port` | 可选，请求目标端口，省略匹配任意端口；不参与监听，mrp 始终在 `--port` 上监听 |
 | `routes[].prefix` | 最长路径前缀匹配，必须以 `/` 开头 |
-| `routes[].upstream` | 上游地址，路径前缀自动映射；也支持本地目录路径（相对进程工作目录，托起静态文件，目录命中回退 `index.html`） |
+| `routes[].upstream` | 上游地址，路径前缀自动映射；也支持本地目录路径（相对进程工作目录，托起静态文件，目录命中回退 `index.html`）；与 `status` 互斥 |
+| `routes[].status` | 可选，直接返回该状态码，不转发到 `upstream`；取值 100-599；与 `upstream` 互斥 |
+| `routes[].body` | 可选，`status` 模式下的响应体；默认 `Content-Type: text/plain; charset=utf-8`，可通过 `headers.response` 覆盖 |
 | `routes[].host` | 可选，改写转发时的 Host 头 |
 | `routes[].headers.request` | 可选，改写发往上游的请求头（Set 语义，覆盖同名已有值） |
 | `routes[].headers.response` | 可选，覆盖下游返回的响应头（如跨域校验头 `Access-Control-Allow-*`） |

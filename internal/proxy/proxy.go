@@ -191,7 +191,11 @@ func (p *Proxy) routeHandler(request *http.Request, protocol string, port int, d
 		log.Debug("no route matched, passing through to original target domain=%s protocol=%s port=%d", domain, protocol, port)
 		return p.passthrough
 	}
-	log.Debug("route matched domain=%s protocol=%s port=%d prefix=%s upstream=%s", domain, protocol, port, targetRoute.Prefix, targetRoute.Target.Summary)
+	if targetRoute.Status != 0 {
+		log.Debug("route matched domain=%s protocol=%s port=%d prefix=%s status=%d", domain, protocol, port, targetRoute.Prefix, targetRoute.Status)
+	} else {
+		log.Debug("route matched domain=%s protocol=%s port=%d prefix=%s upstream=%s", domain, protocol, port, targetRoute.Prefix, targetRoute.Target.Summary)
+	}
 	return targetRoute.Handler()
 }
 

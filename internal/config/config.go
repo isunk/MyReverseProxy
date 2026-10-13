@@ -26,7 +26,9 @@ const defaultConfig = `# mrp 反向代理路由配置
 # upstream:   上游服务地址，路径前缀自动映射；写法：
 #               http://host[:port][/path]  https://host[:port][/path]  完整 URL
 #               host[:port]                简写，按 http 转发（如 192.168.1.50:8080）
-#               目录路径或 "."、".."        本地目录（相对/绝对，含 Windows 盘符 C:\；"." 与 "./" 等价；目录命中回退 index.html）
+#               目录路径或 "."、".."        本地目录（相对/绝对，含 Windows 盘符 C:\；"." 与 "./" 等价；目录请求返回 404）
+# status:     可选，直接返回该状态码，不转发到 upstream；与 upstream 互斥
+# body:       可选，status 模式下的响应体（默认 Content-Type: text/plain）
 # host:       可选，改写转发时的 Host 头
 # headers:    可选，改写消息头（Set 语义，覆盖同名已有值）
 #   request:  发往上游的请求头
@@ -51,6 +53,9 @@ const defaultConfig = `# mrp 反向代理路由配置
 #             Access-Control-Allow-Methods: "GET, POST, OPTIONS"
 #       - prefix: /assets/
 #         upstream: ./dist
+#       - prefix: /health
+#         status: 200
+#         body: OK
 #       - prefix: /
 #         upstream: 192.168.1.50:8080
 # nameservers:
@@ -77,9 +82,12 @@ type Server struct {
 }
 
 // Route 一条路径前缀到上游的映射，命中最长前缀时生效。
+// Status 非零时直接返回该状态码与 Body，不转发到 upstream。
 type Route struct {
 	Prefix   string  `yaml:"prefix"`
 	Upstream string  `yaml:"upstream"`
+	Status   int     `yaml:"status"`
+	Body     string  `yaml:"body"`
 	Host     string  `yaml:"host"`
 	Headers  Headers `yaml:"headers"`
 }
@@ -164,35 +172,52 @@ func buildServerEntry(server Server) (*route.Entry, error) {
 }
 
 // buildRoutes 构建单个虚拟服务器的路由条目：前缀必填且以 / 开头，条目内不可重复。
+// status 与 upstream 互斥：status 非零时直接返回状态码，不解析 upstream。
 func buildRoutes(server Server) ([]*route.Route, error) {
 	seen := map[string]bool{}
 	entries := make([]*route.Route, 0, len(server.Routes))
 	for _, configured := range server.Routes {
 		prefix := strings.TrimSpace(configured.Prefix)
 		upstream := strings.TrimSpace(configured.Upstream)
-		if prefix == "" || upstream == "" {
-			return nil, fmt.Errorf("domain %q: prefix and upstream are required", server.Domain)
+		status := configured.Status
+		if prefix == "" {
+			return nil, fmt.Errorf("domain %q: prefix is required", server.Domain)
 		}
 		if !strings.HasPrefix(prefix, "/") {
 			return nil, fmt.Errorf("domain %q: prefix %q must start with /", server.Domain, prefix)
+		}
+		if status != 0 && upstream != "" {
+			return nil, fmt.Errorf("domain %q: prefix %q: status and upstream are mutually exclusive", server.Domain, prefix)
+		}
+		if status == 0 && upstream == "" {
+			return nil, fmt.Errorf("domain %q: prefix %q: status or upstream is required", server.Domain, prefix)
+		}
+		if status != 0 && (status < 100 || status > 599) {
+			return nil, fmt.Errorf("domain %q: prefix %q: status %d out of range (100-599)", server.Domain, prefix, status)
 		}
 		if seen[prefix] {
 			return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, prefix)
 		}
 		seen[prefix] = true
-		target, err := route.ParseTarget(upstream)
-		if err != nil {
-			return nil, fmt.Errorf("domain %q: %w", server.Domain, err)
-		}
-		entries = append(entries, &route.Route{
+		r := &route.Route{
 			Prefix: prefix,
 			Host:   strings.TrimSpace(configured.Host),
 			Headers: route.HeaderRewrite{
 				Request:  configured.Headers.Request,
 				Response: configured.Headers.Response,
 			},
-			Target: target,
-		})
+		}
+		if status != 0 {
+			r.Status = status
+			r.Body = configured.Body
+		} else {
+			target, err := route.ParseTarget(upstream)
+			if err != nil {
+				return nil, fmt.Errorf("domain %q: %w", server.Domain, err)
+			}
+			r.Target = target
+		}
+		entries = append(entries, r)
 	}
 	return entries, nil
 }

@@ -260,6 +260,53 @@ func TestProxy_StaticDirectory(t *testing.T) {
 	}
 }
 
+func TestProxy_StatusRoute(t *testing.T) {
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /health\n        status: 200\n        body: OK\n      - prefix: /redirect\n        status: 301\n        headers:\n          response:\n            Location: https://example.com/\n      - prefix: /teapot\n        status: 418\n")
+	proxyURL, _ := startProxy(t, configPath, nil)
+	client := proxyClient(proxyURL)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	resp, err := client.Get("http://api.example.com/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health: status=%d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Fatalf("health: Content-Type=%q, want text/plain", ct)
+	}
+	if body := requestBody(t, client, "http://api.example.com/health"); body != "OK" {
+		t.Fatalf("health: body=%q, want %q", body, "OK")
+	}
+
+	resp, err = client.Get("http://api.example.com/redirect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMovedPermanently {
+		t.Fatalf("redirect: status=%d, want %d", resp.StatusCode, http.StatusMovedPermanently)
+	}
+	if loc := resp.Header.Get("Location"); loc != "https://example.com/" {
+		t.Fatalf("redirect: Location=%q, want %q", loc, "https://example.com/")
+	}
+
+	resp, err = client.Get("http://api.example.com/teapot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusTeapot {
+		t.Fatalf("teapot: status=%d, want %d", resp.StatusCode, http.StatusTeapot)
+	}
+	if resp.ContentLength != 0 {
+		t.Fatalf("teapot: ContentLength=%d, want 0", resp.ContentLength)
+	}
+}
+
 func TestProxy_StaticPrefixMapping(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("local directory routing is not exercised on windows")

@@ -229,3 +229,63 @@ func TestStaticHandler_DotRootEquivalent(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusHandler_BareCode(t *testing.T) {
+	handler := newStatusHandler(http.StatusNoContent, "", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("code=%d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("body=%q, want empty", recorder.Body.String())
+	}
+	if recorder.Header().Get("Content-Type") != "" {
+		t.Fatalf("Content-Type=%q, want unset", recorder.Header().Get("Content-Type"))
+	}
+}
+
+func TestStatusHandler_WithBody(t *testing.T) {
+	handler := newStatusHandler(http.StatusOK, "OK", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("code=%d, want %d", recorder.Code, http.StatusOK)
+	}
+	if recorder.Body.String() != "OK" {
+		t.Fatalf("body=%q, want %q", recorder.Body.String(), "OK")
+	}
+	if ct := recorder.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type=%q, want %q", ct, "text/plain; charset=utf-8")
+	}
+	if cl := recorder.Header().Get("Content-Length"); cl != "2" {
+		t.Fatalf("Content-Length=%q, want %q", cl, "2")
+	}
+}
+
+func TestStatusHandler_ResponseHeaders(t *testing.T) {
+	handler := newStatusHandler(http.StatusMovedPermanently, "", map[string]string{"Location": "https://example.com/"})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if recorder.Code != http.StatusMovedPermanently {
+		t.Fatalf("code=%d, want %d", recorder.Code, http.StatusMovedPermanently)
+	}
+	if loc := recorder.Header().Get("Location"); loc != "https://example.com/" {
+		t.Fatalf("Location=%q, want %q", loc, "https://example.com/")
+	}
+}
+
+func TestStatusHandler_HeadSkipsBody(t *testing.T) {
+	handler := newStatusHandler(http.StatusOK, "body", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodHead, "/", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("code=%d, want %d", recorder.Code, http.StatusOK)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("body=%q, want empty for HEAD", recorder.Body.String())
+	}
+	if cl := recorder.Header().Get("Content-Length"); cl != "4" {
+		t.Fatalf("Content-Length=%q, want %q", cl, "4")
+	}
+}
