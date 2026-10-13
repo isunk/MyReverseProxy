@@ -177,7 +177,7 @@ func Ensure(path string) error {
 	if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(defaultConfig), 0o644); err != nil {
+	if err := os.WriteFile(path, defaultConfig, 0o644); err != nil {
 		return err
 	}
 	log.Info("created default config file path=%s", path)

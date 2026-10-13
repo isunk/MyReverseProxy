@@ -187,7 +187,7 @@ func TestEnsureConfig_CreatesMissingFile(t *testing.T) {
 }
 
 func TestDefaultConfig_Parses(t *testing.T) {
-	table, nameservers, err := Load(testutil.ConfigFile(t, "default.yaml", defaultConfig))
+	table, nameservers, err := Load(testutil.ConfigFile(t, "default.yaml", string(defaultConfig)))
 	if err != nil {
 		t.Fatalf("Load(defaultConfig): %v", err)
 	}
@@ -201,7 +201,7 @@ func TestDefaultConfig_Parses(t *testing.T) {
 
 func TestDefaultConfig_DocumentsNameservers(t *testing.T) {
 	for _, line := range []string{"# nameservers:", "#   - \"114.114.114.114\"", "nameservers: []"} {
-		if !strings.Contains(defaultConfig, line) {
+		if !strings.Contains(string(defaultConfig), line) {
 			t.Fatalf("defaultConfig missing %q", line)
 		}
 	}
