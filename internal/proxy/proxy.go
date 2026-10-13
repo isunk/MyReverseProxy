@@ -25,8 +25,6 @@ import (
 
 // 请求协议取值与省略端口时补齐的默认端口
 const (
-	protocolHTTP     = "http"
-	protocolHTTPS    = "https"
 	defaultHTTPPort  = 80
 	defaultHTTPSPort = 443
 )
@@ -135,12 +133,12 @@ func (p *Proxy) Handler() http.Handler {
 func targetOf(request *http.Request) (string, int, string) {
 	if request.Method == http.MethodConnect {
 		host, port := hostAndPort(request.Host, defaultHTTPSPort)
-		return protocolHTTPS, port, strings.ToLower(host)
+		return route.ProtocolHTTPS, port, strings.ToLower(host)
 	}
 	if request.URL.Scheme == "" {
-		protocol := protocolHTTP
+		protocol := route.ProtocolHTTP
 		if request.TLS != nil {
-			protocol = protocolHTTPS
+			protocol = route.ProtocolHTTPS
 		}
 		host, port := hostAndPort(request.Host, defaultPort(protocol))
 		return protocol, port, strings.ToLower(host)
@@ -162,15 +160,16 @@ func hostAndPort(host string, fallback int) (string, int) {
 
 // hostOnly 取 Host 头的主机名部分并小写化，便于与路由表键对齐。
 func hostOnly(host string) string {
-	if host, _, err := net.SplitHostPort(host); err == nil {
-		return strings.ToLower(host)
+	name, _, err := net.SplitHostPort(host)
+	if err == nil {
+		return strings.ToLower(name)
 	}
 	return strings.ToLower(host)
 }
 
 // defaultPort 按协议补齐省略的目标端口
 func defaultPort(protocol string) int {
-	if protocol == protocolHTTPS {
+	if protocol == route.ProtocolHTTPS {
 		return defaultHTTPSPort
 	}
 	return defaultHTTPPort

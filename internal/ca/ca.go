@@ -70,26 +70,23 @@ func New(cert *x509.Certificate, key crypto.Signer) *Authority {
 // 客户端 SNI，也可由调用方构造 hello 填入显式名字（如 CONNECT 目标回退，客户端
 // 对 IP 直连不发 SNI）。命中缓存即返回；未命中时同名字并发握手合并为一次签发。
 // ECDSA 密钥生成与签名耗时较长，须在锁外执行，避免串行化所有域名的握手。
-func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certificate, err error) {
 	serverName := strings.ToLower(hello.ServerName)
 	if serverName == "" {
 		return nil, errors.New("missing SNI, cannot sign certificate for domain")
 	}
-	if cert, ok := a.cache.Get(serverName); ok {
-		return cert, nil
+	if cached, ok := a.cache.Get(serverName); ok {
+		return cached, nil
 	}
 	call, leader := a.begin(serverName)
 	if !leader {
 		return call.wait()
 	}
-	var cert *tls.Certificate
-	var err error
 	// end 用 defer 兜底：sign 意外 panic 时 net/http 连接层会 recover，进程存活，
 	// 若不注销 inflight，该域名的所有后续握手将永久阻塞在 wait 上
 	defer func() { a.end(serverName, call, cert, err) }()
 	// 双检：Get 未命中到取得 leader 之间，可能已有上一轮签发完成并写入缓存
 	if cached, ok := a.cache.Get(serverName); ok {
-		cert = cached
 		return cached, nil
 	}
 	cert, err = a.sign(serverName)

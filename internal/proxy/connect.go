@@ -25,8 +25,9 @@ func (p *Proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 	if !ok {
 		return
 	}
-	// serveConnect 返回 false 表示连接仍在手里（隧道结束、502 或握手失败），由这里收尾
-	if !p.serveConnect(client, request, protocol, port, domain) {
+	// transferred 为 true 表示连接已移交内层 HTTP 服务（hijack 链），由那里收尾；
+	// 为 false 时连接仍在手里，这里关闭收尾。
+	if transferred := p.serveConnect(client, request, protocol, port, domain); !transferred {
 		client.Close()
 	}
 }
@@ -47,8 +48,8 @@ func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
 }
 
 // serveConnect 按 CONNECT 目标分发：命中虚拟服务器走 MITM，否则透传隧道；
-// 返回 true 表示连接已移交内层 HTTP 服务（hijack 链），调用方不得再关闭
-func (p *Proxy) serveConnect(client net.Conn, request *http.Request, protocol string, port int, domain string) bool {
+// transferred 为 true 表示连接已移交内层 HTTP 服务（hijack 链），调用方不得再关闭
+func (p *Proxy) serveConnect(client net.Conn, request *http.Request, protocol string, port int, domain string) (transferred bool) {
 	if !p.table.Load().Has(protocol, port, domain) {
 		log.Info("connect target=%s mode=tunnel", request.Host)
 		p.tunnel(client, request.Host)

@@ -15,9 +15,10 @@ import (
 	"mrp/internal/log"
 )
 
+// Protocol 请求协议取值：配置的 protocol 字段、请求目标 scheme 与上游 URL scheme 共用。
 const (
-	protocolHTTP  = "http"
-	protocolHTTPS = "https"
+	ProtocolHTTP  = "http"
+	ProtocolHTTPS = "https"
 )
 
 // HeaderRewrite 转发时改写的消息头：Request 写入发往上游的请求头，
@@ -58,7 +59,7 @@ func ParseTarget(upstream string) (*Target, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid upstream %q: %w", upstream, err)
 		}
-		if parsed.Scheme != protocolHTTP && parsed.Scheme != protocolHTTPS {
+		if parsed.Scheme != ProtocolHTTP && parsed.Scheme != ProtocolHTTPS {
 			return nil, fmt.Errorf("unsupported upstream scheme %q", upstream)
 		}
 		if parsed.Host == "" {
@@ -75,7 +76,7 @@ func ParseTarget(upstream string) (*Target, error) {
 // parseTargetHost 解析省略 scheme 的 host[:port] 简写，统一按 http 转发。
 // 支持 host、host:port、[IPv6]:port 写法；裸 IPv6 须用括号并显式端口。
 func parseTargetHost(upstream string) (*Target, error) {
-	remote := url.URL{Scheme: protocolHTTP}
+	remote := url.URL{Scheme: ProtocolHTTP}
 	if host, port, err := net.SplitHostPort(upstream); err == nil {
 		if host == "" {
 			return nil, fmt.Errorf("upstream %q is missing host", upstream)

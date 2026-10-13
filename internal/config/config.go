@@ -160,7 +160,7 @@ func buildTable(config *Config) (*route.Table, error) {
 func buildServerEntry(server Server) (*route.Entry, error) {
 	protocol := strings.ToLower(strings.TrimSpace(server.Protocol))
 	switch protocol {
-	case "", "http", "https":
+	case "", route.ProtocolHTTP, route.ProtocolHTTPS:
 	default:
 		return nil, fmt.Errorf("domain %q: unsupported protocol %q", server.Domain, server.Protocol)
 	}
