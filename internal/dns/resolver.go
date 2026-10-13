@@ -58,26 +58,27 @@ func New(attemptTimeout, ttl time.Duration, entries []string) (*Resolver, error)
 	return set, nil
 }
 
-// Update 用新的服务器列表重建解析器，列表未变化时直接返回。
-func (r *Resolver) Update(entries []string) error {
+// Update 用新的服务器列表重建解析器，返回列表是否实际变化；未变化时不重建。
+// 是否变化由本方法判定并对外暴露，调用方无需再自行比较地址列表。
+func (r *Resolver) Update(entries []string) (bool, error) {
 	addresses, err := normalizeNameservers(entries)
 	if err != nil {
-		return err
+		return false, err
 	}
 	current := r.current.Load()
 	if slices.Equal(current.addresses, addresses) {
-		return nil
+		return false, nil
 	}
 	r.current.Store(&state{addresses: addresses, resolvers: r.buildResolvers(addresses)})
 	r.cache.Clear()
 	// 变化详情用 Debug 级：启动时 main 已打 Info 级 nameservers 日志，热加载由上层总日志覆盖
 	log.Debug("dns nameservers changed to %s", strings.Join(addresses, ","))
-	return nil
+	return true, nil
 }
 
-// Addresses 返回当前生效的服务器地址列表，用于判断列表是否真正变化。
+// Addresses 返回当前生效服务器地址的副本，避免外部修改内部状态。
 func (r *Resolver) Addresses() []string {
-	return r.current.Load().addresses
+	return slices.Clone(r.current.Load().addresses)
 }
 
 // DialContext 按主机:端口取缓存的解析结果，未命中才发 DNS 查询，再逐个尝试解析出的地址。

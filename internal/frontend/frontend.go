@@ -76,6 +76,7 @@ func Serve(listener net.Listener, handler http.Handler) error {
 		}
 		backoff = 5 * time.Millisecond
 		go func() {
+			// ServeSingleConn 会给传入 server 的 ConnState 赋值，复用同一实例会在并发连接间相互覆盖，故每条连接新建。
 			if !ServeSingleConn(New(handler), conn) {
 				conn.Close()
 			}

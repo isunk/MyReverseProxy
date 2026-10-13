@@ -8,7 +8,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -86,11 +85,10 @@ func (p *Proxy) reload() error {
 	}
 	current := p.table.Load()
 	routesChanged := current == nil || current.Fingerprint() != table.Fingerprint()
-	previous := p.nameservers.Addresses()
-	if err := p.nameservers.Update(nameservers); err != nil {
+	nameserversChanged, err := p.nameservers.Update(nameservers)
+	if err != nil {
 		return err
 	}
-	nameserversChanged := !slices.Equal(previous, p.nameservers.Addresses())
 	if !routesChanged && !nameserversChanged {
 		log.Debug("config parsed but routes and nameservers unchanged, keeping current pool")
 		return nil

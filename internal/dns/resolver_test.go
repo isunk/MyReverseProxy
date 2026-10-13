@@ -80,7 +80,7 @@ func TestResolver_Failover(t *testing.T) {
 	_, port, _ := net.SplitHostPort(echo)
 	stub := testutil.NewStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
 	set := testNameservers(t)
-	if err := set.Update([]string{"127.0.0.1:" + testutil.ClosedUDPPort(t), stub.Address()}); err != nil {
+	if _, err := set.Update([]string{"127.0.0.1:" + testutil.ClosedUDPPort(t), stub.Address()}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	conn, err := set.DialContext(context.Background(), "tcp", "echo.mrp.local:"+port)
@@ -222,7 +222,7 @@ func TestResolver_StaleCacheRetries(t *testing.T) {
 func TestResolver_UpdateFailureKeepsServers(t *testing.T) {
 	stub := testutil.NewStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
 	set := testNameservers(t, stub.Address())
-	if err := set.Update([]string{"dns.example.com"}); err == nil {
+	if _, err := set.Update([]string{"dns.example.com"}); err == nil {
 		t.Fatal("hostname nameserver should be rejected")
 	}
 	if got := set.Addresses(); !slices.Equal(got, []string{stub.Address()}) {
