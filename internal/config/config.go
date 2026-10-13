@@ -13,60 +13,6 @@ import (
 	"mrp/internal/route"
 )
 
-const defaultConfig = `# mrp 反向代理路由配置
-# 修改后自动热加载，无需重启。
-#
-# mrp 只监听一个端口（--port），以下字段决定哪个请求归属哪个 server，不参与监听
-#
-# domain:     按域名精确匹配，HTTPS 用 CONNECT 目标主机、HTTP 用 Host 头
-# protocol:   可选，匹配请求的协议 http 或 https，省略匹配任意协议
-# port:       可选，匹配请求的目标端口，省略匹配任意端口
-#             同一 (domain, protocol, port) 组合只能声明一次
-# prefix:     路径前缀，按最长前缀匹配转发到 upstream
-# upstream:   上游服务地址，路径前缀自动映射；写法：
-#               http://host[:port][/path]  https://host[:port][/path]  完整 URL
-#               host[:port]                简写，按 http 转发（如 192.168.1.50:8080）
-#               目录路径或 "."、".."        本地目录（相对/绝对，含 Windows 盘符 C:\；"." 与 "./" 等价；目录请求返回 404）
-# status:     可选，直接返回该状态码，不转发到 upstream；与 upstream 互斥
-# body:       可选，status 模式下的响应体（默认 Content-Type: text/plain）
-# host:       可选，改写转发时的 Host 头
-# headers:    可选，改写消息头（Set 语义，覆盖同名已有值）
-#   request:  发往上游的请求头
-#   response: 覆盖下游返回的响应头（如跨域校验 Access-Control-Allow-*）
-#
-# nameservers: 顶层字段，上游域名解析用的 DNS 服务器，支持裸 IP（默认 53 端口）与 host:port 写法，按顺序故障切换
-#   设备上的 /etc/resolv.conf 常指向 [::1]:53 等守护进程地址，mrp 读不到可用服务器时上游域名会解析失败，
-#   部署到设备时必须显式配置
-#
-# 示例：
-# servers:
-#   - domain: api.target-app.com
-#     routes:
-#       - prefix: /v1/
-#         upstream: https://api.our-server.com/v1/
-#         host: api.our-server.com
-#         headers:
-#           request:
-#             Authorization: "Bearer token"
-#           response:
-#             Access-Control-Allow-Origin: "*"
-#             Access-Control-Allow-Methods: "GET, POST, OPTIONS"
-#       - prefix: /assets/
-#         upstream: ./dist
-#       - prefix: /health
-#         status: 200
-#         body: OK
-#       - prefix: /
-#         upstream: 192.168.1.50:8080
-# nameservers:
-#   - "114.114.114.114"
-#   - "223.5.5.5"
-#   - "[2001:4860:4860::8888]:5353"
-
-servers: []
-nameservers: []
-`
-
 // Config 顶层配置：Servers 为按域名分组的虚拟服务器，Nameservers 为上游域名解析用的 DNS 服务器。
 type Config struct {
 	Servers     []Server `yaml:"servers"`
