@@ -36,6 +36,33 @@ func TestReload_SwitchesRoute(t *testing.T) {
 	}
 }
 
+// status 路由的 Target 为 nil，第二次 reload 走指纹比较分支时不得解引用
+func TestReload_StatusRouteFingerprint(t *testing.T) {
+	configPath := testutil.ConfigFile(t, "r.yaml", "servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /health\n        status: 200\n        body: OK\n")
+	servers := testNameservers(t)
+	proxy, err := New(configPath, NewTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	client := proxyClient(startListener(t, proxy))
+	if got := requestBody(t, client, "http://api.example.com/health"); got != "OK" {
+		t.Fatalf("before reload: %q", got)
+	}
+	if err := proxy.Reload(); err != nil {
+		t.Fatalf("unchanged reload: %v", err)
+	}
+	if got := requestBody(t, client, "http://api.example.com/health"); got != "OK" {
+		t.Fatalf("after unchanged reload: %q", got)
+	}
+	_ = os.WriteFile(configPath, []byte("servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /health\n        status: 200\n        body: Changed\n"), 0o644)
+	if err := proxy.Reload(); err != nil {
+		t.Fatalf("changed reload: %v", err)
+	}
+	if got := requestBody(t, client, "http://api.example.com/health"); got != "Changed" {
+		t.Fatalf("after changed reload: %q", got)
+	}
+}
+
 // 热加载失败必须保留旧路由表继续服务，配置修好后恢复切换
 func TestReload_InvalidConfigKeepsRoutes(t *testing.T) {
 	upA := recordingServer(t, "A")

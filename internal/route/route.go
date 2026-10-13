@@ -221,9 +221,15 @@ func UpstreamErrorHandler(writer http.ResponseWriter, request *http.Request, err
 }
 
 func (r *Route) fingerprint() string {
+	target := ""
+	if r.Target != nil {
+		target = r.Target.Summary
+	}
 	return strings.Join([]string{
 		r.Prefix,
-		r.Target.Summary,
+		target,
+		strconv.Itoa(r.Status),
+		r.Body,
 		r.Host,
 		headerFingerprint(r.Headers.Request),
 		headerFingerprint(r.Headers.Response),

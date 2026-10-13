@@ -151,10 +151,15 @@ func TestRouteTable_Fingerprint(t *testing.T) {
 	}
 	headerOnly := strings.Replace(base, "upstream: http://up-a:8080\n",
 		"upstream: http://up-a:8080\n        headers:\n          response:\n            X-Test: \"1\"\n", 1)
+	status := "servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        status: 200\n        body: OK\n"
 	same(loaded(base), loaded(base), "identical config")
 	different(loaded(base), loaded(strings.Replace(base, "up-a", "up-b", 1)), "upstream change")
 	different(loaded(base), loaded(headerOnly), "header-only change")
 	same(loaded(base), loaded(base+"nameservers:\n  - \"127.0.0.1:53\"\n"), "nameservers-only change")
+	same(loaded(status), loaded(status), "identical status config")
+	different(loaded(status), loaded(strings.Replace(status, "body: OK", "body: Changed", 1)), "status body change")
+	different(loaded(status), loaded(strings.Replace(status, "status: 200", "status: 503", 1)), "status code change")
+	different(loaded(base), loaded(status), "upstream vs status route")
 }
 
 func TestEnsureConfig_CreatesMissingFile(t *testing.T) {
