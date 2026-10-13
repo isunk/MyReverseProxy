@@ -745,7 +745,10 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               host.run((cfg.tool + ' ' + cfg.openUrl).replace(/\{URL\}/g, url), true);
             });
           } },
-        { name: 'DevTools', tool: true, run: function(s) { host.runRaw(devtoolsForward(), 0, true); host.log('DevTools port forwarded.', 'ok'); } }
+        { name: 'DevTools', tool: true, run: function(s) {
+            var rc = host.runRaw(devtoolsForward(), 0, true);
+            host.log(rc === 0 ? 'DevTools port forwarded.' : 'DevTools forward failed (rc=' + rc + ').', rc === 0 ? 'ok' : 'err');
+          } }
       ]),
       probe: function(s) {
         if (host.exec('where ' + cfg.tool + ' >nul 2>&1 && echo OK') === '') { s.ready = false; s.desc = 'Not installed'; return; }
