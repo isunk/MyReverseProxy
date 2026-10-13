@@ -149,7 +149,6 @@ func (r *Resolver) dropCached(host, port string) {
 }
 
 // resolve 按配置顺序尝试 DNS 服务器，单次尝试超时后切换下一台。
-// LookupIPAddr 在无应答时会返回 no such host 错误，故 len(ips)==0 必然伴随非 nil 错误。
 func (r *Resolver) resolve(ctx context.Context, host, port string) ([]string, error) {
 	var lastError error
 	for _, resolver := range r.current.Load().resolvers {
@@ -158,6 +157,11 @@ func (r *Resolver) resolve(ctx context.Context, host, port string) ([]string, er
 		cancel()
 		if err == nil && len(ips) > 0 {
 			return formatTargets(ips, port), nil
+		}
+		// 兜底防御：err 为 nil 却无地址时不能向上返回 (nil, nil)，
+		// 否则调用链会产出 nil 连接与 nil 错误，击穿 transport 的错误处理
+		if err == nil {
+			err = fmt.Errorf("no addresses returned for %q", host)
 		}
 		lastError = err
 	}

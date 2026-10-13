@@ -138,8 +138,13 @@ func buildRoutes(server Server) ([]*route.Route, error) {
 		if status == 0 && upstream == "" {
 			return nil, fmt.Errorf("domain %q: prefix %q: status or upstream is required", server.Domain, prefix)
 		}
-		if status != 0 && (status < 100 || status > 599) {
-			return nil, fmt.Errorf("domain %q: prefix %q: status %d out of range (100-599)", server.Domain, prefix, status)
+		// 1xx 在 net/http 里是 informational 响应，status 路由配了拿不到最终响应，直接拒绝
+		if status != 0 && (status < 200 || status > 599) {
+			return nil, fmt.Errorf("domain %q: prefix %q: status %d out of range (200-599)", server.Domain, prefix, status)
+		}
+		// 204/304 按协议不得携带消息体，Go 服务端会静默丢弃 body，配置了也无效
+		if configured.Body != "" && (status == 204 || status == 304) {
+			return nil, fmt.Errorf("domain %q: prefix %q: status %d must not carry a body", server.Domain, prefix, status)
 		}
 		if seen[prefix] {
 			return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, prefix)

@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -48,13 +49,17 @@ servers:
 
 func TestLoadTable_Errors(t *testing.T) {
 	cases := map[string]string{
-		"empty_domain": "servers:\n  - domain: \"\"\n    routes: []",
-		"dup_domain":   "servers:\n  - domain: a\n    routes: []\n  - domain: a\n    routes: []",
-		"empty_prefix": "servers:\n  - domain: a\n    routes:\n      - prefix: \"\"\n        upstream: http://x",
-		"dup_prefix":   "servers:\n  - domain: a\n    routes:\n      - prefix: /a\n        upstream: http://x\n      - prefix: /a\n        upstream: http://y",
-		"bad_upstream": "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        upstream: ftp://x",
-		"bad_prefix":   "servers:\n  - domain: a\n    routes:\n      - prefix: v1\n        upstream: http://x",
-		"bad_yaml":     "servers: [this is broken",
+		"empty_domain":    "servers:\n  - domain: \"\"\n    routes: []",
+		"dup_domain":      "servers:\n  - domain: a\n    routes: []\n  - domain: a\n    routes: []",
+		"empty_prefix":    "servers:\n  - domain: a\n    routes:\n      - prefix: \"\"\n        upstream: http://x",
+		"dup_prefix":      "servers:\n  - domain: a\n    routes:\n      - prefix: /a\n        upstream: http://x\n      - prefix: /a\n        upstream: http://y",
+		"bad_upstream":    "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        upstream: ftp://x",
+		"bad_prefix":      "servers:\n  - domain: a\n    routes:\n      - prefix: v1\n        upstream: http://x",
+		"bad_yaml":        "servers: [this is broken",
+		"status_1xx":      "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: 100",
+		"status_600":      "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: 600",
+		"status_204_body": "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: 204\n        body: gone",
+		"status_304_body": "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: 304\n        body: etag",
 	}
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -63,6 +68,22 @@ func TestLoadTable_Errors(t *testing.T) {
 				t.Fatalf("expected error for %s", name)
 			}
 		})
+	}
+}
+
+// status 路由的合法边界：200-599 且 204/304 不得带 body，其余组合可用
+func TestLoadTable_StatusBoundary(t *testing.T) {
+	valid := []int{200, 204, 304, 404, 500, 599}
+	for _, status := range valid {
+		body := ""
+		if status != 204 && status != 304 {
+			body = "\n        body: OK"
+		}
+		content := "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: " + strconv.Itoa(status) + body + "\n"
+		path := testutil.ConfigFile(t, "s.yaml", content)
+		if _, _, err := Load(path); err != nil {
+			t.Fatalf("status %d: unexpected error: %v", status, err)
+		}
 	}
 }
 

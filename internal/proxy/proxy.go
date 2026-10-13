@@ -159,6 +159,7 @@ func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	statFailed := false
 	for {
 		select {
 		case <-stop:
@@ -166,9 +167,14 @@ func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 		case <-ticker.C:
 			info, err := os.Stat(p.configPath)
 			if err != nil {
-				log.Warn("failed to stat routing config: %v", err)
+				// 文件缺失（被删除）期间只提示一次，避免每轮轮询刷屏；恢复后照常比对重载
+				if !statFailed {
+					statFailed = true
+					log.Warn("failed to stat routing config: %v", err)
+				}
 				continue
 			}
+			statFailed = false
 			// 比 size 与 mtime 而非读全文；mtime 为毫秒级粒度，间隔极短的连续保存可能只触发一次重载
 			if previousKnown && info.Size() == previousSize && info.ModTime().Equal(previousModTime) {
 				continue
