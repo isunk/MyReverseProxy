@@ -14,9 +14,9 @@ import (
 	"mrp/internal/ca"
 	"mrp/internal/config"
 	"mrp/internal/dns"
+	"mrp/internal/frontend"
 	"mrp/internal/log"
 	"mrp/internal/proxy"
-	"mrp/internal/server"
 )
 
 const defaultListenPort = 8000
@@ -123,7 +123,7 @@ func main() {
 // run 在唯一代理端口上常驻服务：监听不随配置热加载变化，
 // 此后仅轮询配置热加载并等待信号。退出信号关闭监听后返回。
 func run(listener net.Listener, proxyInstance *proxy.Proxy) {
-	go server.Serve(listener, proxyInstance.Handler())
+	go frontend.Serve(listener, proxyInstance.Handler())
 	// stop 传 nil 表示热加载常驻到进程退出，由上面的退出信号关闭监听来结束
 	go proxyInstance.WatchFile(time.Second, nil)
 	serveSignals(listener, proxyInstance)

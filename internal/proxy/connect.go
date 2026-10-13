@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"mrp/internal/ca"
+	"mrp/internal/frontend"
 	"mrp/internal/log"
-	"mrp/internal/server"
 )
 
 const (
@@ -44,7 +44,7 @@ func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
 		return nil, false
 	}
 	// 保留 http.Server 内部 bufio.Reader 预读的数据（客户端紧跟 CONNECT 发送的字节）
-	return &server.BufferedConn{Conn: client, Reader: bufioRW.Reader}, true
+	return &frontend.BufferedConn{Conn: client, Reader: bufioRW.Reader}, true
 }
 
 // serveConnect 按 CONNECT 目标分发：命中虚拟服务器走 MITM，否则透传隧道；
@@ -64,7 +64,7 @@ func (p *Proxy) serveConnect(client net.Conn, request *http.Request, protocol st
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return false
 	}
-	return server.ServeSingleConn(server.New(p.Handler()), tls.Server(client, mitmTLSConfig(p.tlsConfig, p.authority, domain)))
+	return frontend.ServeSingleConn(frontend.New(p.Handler()), tls.Server(client, mitmTLSConfig(p.tlsConfig, p.authority, domain)))
 }
 
 // mitmTLSConfig 为单条 MITM 隧道构造 TLS 配置：客户端对 IP 直连不发 SNI，

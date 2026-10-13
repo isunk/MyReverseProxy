@@ -22,8 +22,8 @@ import (
 	"mrp/internal/ca"
 	"mrp/internal/config"
 	"mrp/internal/dns"
+	"mrp/internal/frontend"
 	"mrp/internal/log"
-	"mrp/internal/server"
 	"mrp/internal/testutil"
 )
 
@@ -77,7 +77,7 @@ func startListener(t testing.TB, proxy *Proxy) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { listener.Close() })
-	go server.Serve(listener, proxy.Handler())
+	go frontend.Serve(listener, proxy.Handler())
 	return "http://" + listener.Addr().String()
 }
 
