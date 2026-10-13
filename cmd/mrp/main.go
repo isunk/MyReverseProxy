@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -19,7 +20,13 @@ import (
 	"mrp/internal/proxy"
 )
 
-const defaultListenPort = 8000
+const (
+	defaultListenPort = 8000
+
+	// shutdownGracePeriod 是收到退出信号后，等待 in-flight 连接自行结束的时间窗口；
+	// 超时后强制退出。长连接（隧道、空闲 keep-alive）通常不会在此窗口内自然结束。
+	shutdownGracePeriod = 10 * time.Second
+)
 
 // startupOptions 命令行解析结果，构建代理实例所需的全部启动参数。
 type startupOptions struct {
@@ -121,26 +128,58 @@ func main() {
 }
 
 // run 在唯一代理端口上常驻服务：监听不随配置热加载变化，
-// 此后仅轮询配置热加载并等待信号。退出信号关闭监听后返回。
+// 此后仅轮询配置热加载并等待信号。退出信号先关闭监听停止接收新连接，
+// 再等待 in-flight 连接在宽限期内 drain 后返回。
 func run(listener net.Listener, proxyInstance *proxy.Proxy) {
-	go frontend.Serve(listener, proxyInstance.Handler())
-	// stop 传 nil 表示热加载常驻到进程退出，由上面的退出信号关闭监听来结束
+	var connections sync.WaitGroup
+	serveDone := make(chan struct{})
+	go func() {
+		frontend.Serve(listener, proxyInstance.Handler(), &connections)
+		close(serveDone)
+	}()
+	// stop 传 nil 表示热加载常驻到进程退出，由下面的退出信号关闭监听来结束
 	go proxyInstance.WatchFile(time.Second, nil)
-	serveSignals(listener, proxyInstance)
+	serveSignals(listener, proxyInstance, &connections, serveDone)
 }
 
-func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy) {
+func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy, connections *sync.WaitGroup, serveDone <-chan struct{}) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	for sig := range sigCh {
-		if sig != syscall.SIGHUP {
-			listener.Close()
-			return
-		}
-		if err := proxyInstance.Reload(); err != nil {
-			log.Error("hot reload failed, keeping current config: %v", err)
+		if sig == syscall.SIGHUP {
+			if err := proxyInstance.Reload(); err != nil {
+				log.Error("hot reload failed, keeping current config: %v", err)
+				continue
+			}
+			log.Info("routing config reloaded")
 			continue
 		}
-		log.Info("routing config reloaded")
+		log.Info("shutdown signal received, draining connections")
+		if err := listener.Close(); err != nil {
+			log.Debug("listener close during shutdown: %v", err)
+		}
+		// 等 Serve 退出 accept 循环：保证所有 Add 都已发生在随后的 Wait 之前。
+		<-serveDone
+		if drainConnections(connections, shutdownGracePeriod) {
+			log.Info("shutdown complete: all connections drained")
+			return
+		}
+		log.Warn("shutdown grace period elapsed, forcing exit")
+		return
+	}
+}
+
+// drainConnections 等待全部活跃连接在宽限期内结束；超时返回 false。
+func drainConnections(connections *sync.WaitGroup, gracePeriod time.Duration) bool {
+	drained := make(chan struct{})
+	go func() {
+		connections.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		return true
+	case <-time.After(gracePeriod):
+		return false
 	}
 }

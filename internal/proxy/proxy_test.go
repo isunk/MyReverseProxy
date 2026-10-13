@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,8 +77,9 @@ func startListener(t testing.TB, proxy *Proxy) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var connections sync.WaitGroup
 	t.Cleanup(func() { listener.Close() })
-	go frontend.Serve(listener, proxy.Handler())
+	go frontend.Serve(listener, proxy.Handler(), &connections)
 	return "http://" + listener.Addr().String()
 }
 

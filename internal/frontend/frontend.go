@@ -61,7 +61,9 @@ func (c *BufferedConn) Read(p []byte) (int, error) { return c.Reader.Read(p) }
 // Serve 接受连接并逐条服务：单条连接服务结束（未发生 hijack）时关闭该连接。
 // 监听器已关闭即返回；其余 Accept 错误退避重试，设备上 fd 短暂耗尽（EMFILE）
 // 属临时故障，停止重试会让代理在进程存活的情况下静默拒绝一切连接。
-func Serve(listener net.Listener, handler http.Handler) error {
+// connections 为每条仍被服务的连接计数，退出前可 Wait 完成 drain；Serve 返回后
+// 不再新增计数，但已接受连接的结束仍需等待其对应 Done。
+func Serve(listener net.Listener, handler http.Handler, connections *sync.WaitGroup) error {
 	backoff := 5 * time.Millisecond
 	for {
 		conn, err := listener.Accept()
@@ -75,7 +77,9 @@ func Serve(listener net.Listener, handler http.Handler) error {
 			continue
 		}
 		backoff = 5 * time.Millisecond
+		connections.Add(1)
 		go func() {
+			defer connections.Done()
 			// ServeSingleConn 会给传入 server 的 ConnState 赋值，复用同一实例会在并发连接间相互覆盖，故每条连接新建。
 			if !ServeSingleConn(New(handler), conn) {
 				conn.Close()

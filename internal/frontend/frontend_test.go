@@ -61,8 +61,9 @@ func TestServe_RetriesTransientAcceptErrors(t *testing.T) {
 		close(handlerCalled)
 	})
 
+	var connections sync.WaitGroup
 	serveDone := make(chan error, 1)
-	go func() { serveDone <- Serve(listener, handler) }()
+	go func() { serveDone <- Serve(listener, handler, &connections) }()
 
 	clientConn.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := fmt.Fprintf(clientConn, "GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"); err != nil {
@@ -92,6 +93,7 @@ func TestServe_RetriesTransientAcceptErrors(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Serve did not return after listener close")
 	}
+	connections.Wait()
 }
 
 func TestServe_ReturnsOnListenerClose(t *testing.T) {
@@ -99,9 +101,10 @@ func TestServe_ReturnsOnListenerClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var connections sync.WaitGroup
 	serveDone := make(chan error, 1)
 	go func() {
-		serveDone <- Serve(listener, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		serveDone <- Serve(listener, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), &connections)
 	}()
 	listener.Close()
 	select {
@@ -111,5 +114,63 @@ func TestServe_ReturnsOnListenerClose(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Serve did not return after listener close")
+	}
+}
+
+// TestServe_TracksInFlightConnections 验证退出前可通过 connections.Wait 等待仍在服务的连接：
+// 监听关闭后 Serve 立即返回，但阻塞中的 handler 会令 Wait 持续阻塞，直到 handler 释放为止。
+func TestServe_TracksInFlightConnections(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		close(started)
+		<-release
+	})
+
+	var connections sync.WaitGroup
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- Serve(listener, handler, &connections) }()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler was not invoked")
+	}
+
+	listener.Close()
+	select {
+	case err := <-serveDone:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("Serve err = %v, want net.ErrClosed", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after listener close")
+	}
+
+	waited := make(chan struct{})
+	go func() { connections.Wait(); close(waited) }()
+	select {
+	case <-waited:
+		t.Fatal("connections drained before handler released")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connections did not drain after handler released")
 	}
 }

@@ -272,3 +272,21 @@ func TestBuildProxy_LogsConfiguredNameservers(t *testing.T) {
 		t.Fatalf("startup log must show configured nameserver %q, got %q", wantNameservers, out.String())
 	}
 }
+
+func TestDrainConnections(t *testing.T) {
+	t.Run("returns_true_when_idle", func(t *testing.T) {
+		var connections sync.WaitGroup
+		if !drainConnections(&connections, time.Second) {
+			t.Fatal("drainConnections = false for idle waitgroup")
+		}
+	})
+
+	t.Run("returns_false_on_timeout", func(t *testing.T) {
+		var connections sync.WaitGroup
+		connections.Add(1)
+		if drainConnections(&connections, 50*time.Millisecond) {
+			t.Fatal("drainConnections = true while connection still in flight")
+		}
+		connections.Done()
+	})
+}
