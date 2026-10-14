@@ -104,3 +104,14 @@ This file records user instructions, preferences, and teachings for reference in
 - Instructions:
   - 注释只保留两种：简短的"为什么"说明，或一行功能/职责描述。禁止在注释中写思考过程、多行推理叙述（如"否则会……导致……"式推演）。
   - 禁止流水账式记录：改动来源、修复历史、方案取舍过程（如"沿用已验证逻辑""不做占位""Proxy 换 defineProperty""与旧版相比"）。变更背景写在对话回复里，注释只描述当前代码的事实。
+
+[Project Knowledge Summary]
+- Date: 2026-10-14
+- Context: Discovered by Agent while diagnosing mrp MITM "http: TLS handshake error ... local error: tls: bad record MAC"
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - "bad record MAC" 在 mrp MITM 路径下不是字节管道/会话票证/并发 bug，而是 Go 1.25.x 把 TLS 1.3 客户端"拒绝 MITM 证书"误报：客户端在 server hello 后以明文发 alert（unknown_ca/bad_certificate），Go 服务端 cipher 已装好（setTrafficSecret），把明文 alert 当加密记录 AEAD.Open 失败 → alertBadRecordMAC。对应 Go issue #76767。同一场景 TLS 1.2 正确报 "remote error: tls: unknown certificate authority"。
+  - 复现方法：curl 经 mrp 用无关 --cacert 走 TLS 1.3 → 代理日志出现 "local error: tls: bad record MAC"，curl 端显示 "TLS alert, unknown CA (560)"。
+  - 真正根因在客户端：拒绝 mrp 现场签发证书——证书固定（pinning）或 App 未信任用户 CA（Android 7+ 须 App 显式允许用户 CA）。mrp 无法绕过 pinning，字节层面无解。
+  - 不要再为该错误尝试会话票证/复用类修复：禁用 SessionTickets 无效（已实测并 revert，提交 2c66987→14b228e）。生产路径 mitmTLSConfig 每连接 Clone 会让 MITM 服务端会话票证密钥逐连接随机生成、客户端跨连接复用必然失败（实测 resumed=0），但这是性能问题、不产生 bad record MAC。
+  - 若需让固定证书域名仍经 mrp 路由，只能走透传隧道（不 MITM）：当前需把该域移出 servers 配置使其落入 tunnel 路径；命中域目前固定 MITM，无 per-route passthrough 开关。
