@@ -188,10 +188,13 @@ func Load(certPath, keyPath string, explicitPair bool) (*tls.Config, *Authority,
 		return nil, nil, errors.New("unsupported private key type")
 	}
 	authority := New(caCert, signer)
+	// MITM 隧道逐连接独立、证书现场签发，会话票证缺乏跨连接稳定密钥来源，
+	// 禁用使客户端每次完整握手，避免携带旧票证重连触发 bad record MAC 握手失败。
 	return &tls.Config{
-		GetCertificate: authority.GetCertificate,
-		NextProtos:     []string{"http/1.1"},
-		MinVersion:     tls.VersionTLS12,
+		GetCertificate:         authority.GetCertificate,
+		NextProtos:             []string{"http/1.1"},
+		MinVersion:             tls.VersionTLS12,
+		SessionTicketsDisabled: true,
 	}, authority, nil
 }
 

@@ -217,6 +217,24 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 }
 
+// TestLoad_DisablesSessionTickets 验证 MITM 服务端禁用会话票证：
+// 每条 CONNECT 是独立隧道、证书现场签发，无跨连接稳定票证密钥，禁用以避免
+// 客户端携带旧票证重连时触发 bad record MAC 握手失败。
+func TestLoad_DisablesSessionTickets(t *testing.T) {
+	caCert, caKey := testutil.AuthorityCA(t)
+	certPath, keyPath := testutil.WriteCertFiles(t, caCert, caKey)
+	cfg, _, err := Load(certPath, keyPath, false)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("want non-nil config with CA files")
+	}
+	if !cfg.SessionTicketsDisabled {
+		t.Fatal("MITM 服务端应禁用会话票证")
+	}
+}
+
 func TestLoad_ExplicitPairRequiresBothFiles(t *testing.T) {
 	cert := testutil.SelfSignedCert(t, []string{"api.example.com"})
 	certPath := testutil.ConfigFile(t, "ca.crt", string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})))
