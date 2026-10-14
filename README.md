@@ -188,7 +188,7 @@ servers:
 | `servers[].port` | 可选，请求目标端口，省略匹配任意端口；不参与监听，mrp 始终在 `--port` 上监听 |
 | `routes[].prefix` | 最长路径前缀匹配，必须以 `/` 开头 |
 | `routes[].upstream` | 上游地址，路径前缀自动映射；也支持本地目录路径（相对进程工作目录，托起静态文件，目录命中回退 `index.html`）；与 `status` 互斥 |
-| `routes[].status` | 可选，直接返回该状态码，不转发到 `upstream`；取值 100-599；与 `upstream` 互斥 |
+| `routes[].status` | 可选，直接返回该状态码，不转发到 `upstream`；取值 200-599，其中 204/304 不得携带 `body`；与 `upstream` 互斥 |
 | `routes[].body` | 可选，`status` 模式下的响应体；默认 `Content-Type: text/plain; charset=utf-8`，可通过 `headers.response` 覆盖 |
 | `routes[].host` | 可选，改写转发时的 Host 头 |
 | `routes[].headers.request` | 可选，改写发往上游的请求头（Set 语义，覆盖同名已有值） |
@@ -210,8 +210,8 @@ wget https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp-linux-
 # Windows（amd64）
 curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp-windows-amd64.exe
 
-# Windows 一键部署脚本（可选，内置固定 CA，无需 openssl；支持提权导入与设备安装）
-curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp.bat
+# Windows 可视化部署面板（可选，内置固定 CA，无需 openssl；支持提权导入与设备安装）
+curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp.hta
 ```
 
 在 `--port` 指定的端口（默认 8000）监听，加载 `ca.crt` / `ca.key`：
@@ -222,7 +222,7 @@ chmod +x mrp-linux-arm64
 ./mrp-linux-arm64
 ```
 
-Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.bat` 双击运行：脚本内置一份固定 CA（`ca.crt` 哈希 `d6cd00d8`，无需 openssl），Windows 侧提供 install（准备文件+导入 CA）、start（运行+设代理）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删文件）；Android(adb)/HarmonyOS(hdc) 设备侧工作目录统一为 `/data/local/mrp`，提供 install（推文件+装 CA）、start（运行+设代理）、sync config（把本地 config.yaml 同步到设备）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删整个工作目录）。设备菜单统一展示证书状态（是否安装）、应用状态（未安装/已安装未运行/已运行）、代理状态（adb 可查询，hdc 因无可验证命令显示 Unknown）。
+Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.hta` 双击运行（MRP Helper 部署面板）：内置一份固定 CA（`ca.crt` 哈希 `d6cd00d8`，无需 openssl），Windows 侧提供文件定位、导入/移除 CA（支持提权）、启停进程、设置/清除系统代理与卸载；Android(adb)/HarmonyOS(hdc) 设备侧工作目录统一为 `/data/local/mrp`，提供 install（推文件+装 CA）、start（运行+设代理）、sync config（把本地 config.yaml 同步到设备，mrp 自动热加载）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删整个工作目录）。面板统一展示设备/文件/证书/应用/代理状态（hdc 因无可验证命令，代理状态显示 Unknown）。
 
 命令行参数：
 
