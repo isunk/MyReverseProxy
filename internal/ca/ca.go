@@ -134,12 +134,13 @@ func (a *Authority) sign(serverName string) (*tls.Certificate, error) {
 		return nil, err
 	}
 	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: serverName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(certTTL),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: serverName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(certTTL),
+		BasicConstraintsValid: true, // 显式端实体 CA:false，少数严格校验器要求叶子携带 basicConstraints
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	// 名字为 IP 字面量时按 IP SAN 签发：客户端校验 https://<ip> 走 IPAddresses 而非 DNSNames
 	if ip := net.ParseIP(serverName); ip != nil {
