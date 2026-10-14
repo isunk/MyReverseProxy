@@ -36,10 +36,11 @@ func targetOf(request *http.Request) (string, int, string) {
 }
 
 // hostAndPort 拆分 Host 为名称与端口，端口缺失或非法时补 fallback。
+// 无端口的 [::1] 括号形态剥掉括号，使域名键与配置写法（::1）及 JoinHostPort 语义对齐。
 func hostAndPort(host string, fallback int) (string, int) {
 	name, port, err := net.SplitHostPort(host)
 	if err != nil || name == "" {
-		name = host
+		name = trimIPv6Brackets(host)
 	}
 	if number, err := strconv.Atoi(port); err == nil && number >= 1 && number <= 65535 {
 		return name, number
@@ -53,7 +54,15 @@ func hostOnly(host string) string {
 	if err == nil {
 		return strings.ToLower(name)
 	}
-	return strings.ToLower(host)
+	return strings.ToLower(trimIPv6Brackets(host))
+}
+
+// trimIPv6Brackets 剥掉仅由一对括号包裹的 IPv6 字面量，其余形态原样返回。
+func trimIPv6Brackets(host string) string {
+	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
+		return host[1 : len(host)-1]
+	}
+	return host
 }
 
 // defaultPort 按协议补齐省略的目标端口

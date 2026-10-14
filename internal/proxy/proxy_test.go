@@ -190,6 +190,35 @@ func TestHostOnly_Lowercase(t *testing.T) {
 	}
 }
 
+// 无端口 IPv6 括号形态剥括号对齐配置键；带端口形态由 SplitHostPort 正常拆分
+func TestHostAndPort_IPv6Brackets(t *testing.T) {
+	cases := []struct {
+		host     string
+		fallback int
+		wantName string
+		wantPort int
+	}{
+		{"[::1]", 443, "::1", 443},
+		{"[::1]:8080", 443, "::1", 8080},
+		{"::1", 443, "::1", 443},
+		{"example.com", 443, "example.com", 443},
+		{"example.com:0", 443, "example.com", 443},
+		{":443", 443, ":443", 443},
+	}
+	for _, tc := range cases {
+		name, port := hostAndPort(tc.host, tc.fallback)
+		if name != tc.wantName || port != tc.wantPort {
+			t.Fatalf("hostAndPort(%q, %d) = (%q, %d), want (%q, %d)", tc.host, tc.fallback, name, port, tc.wantName, tc.wantPort)
+		}
+	}
+	if got := hostOnly("[::1]"); got != "::1" {
+		t.Fatalf("hostOnly bracketed bare: got %q", got)
+	}
+	if got := hostOnly("[::1]:8080"); got != "::1" {
+		t.Fatalf("hostOnly bracketed with port: got %q", got)
+	}
+}
+
 func TestProxy_HTTPRoutingAndPassthrough(t *testing.T) {
 	upA := recordingServer(t, "A")
 	upB := recordingServer(t, "B")

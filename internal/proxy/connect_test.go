@@ -38,6 +38,46 @@ func readConnectResponse(t *testing.T, reader *bufio.Reader) int {
 	return code
 }
 
+// CONNECT 目标缺端口时隧道必须按补齐后的 host:port 拨号（老式 CONNECT/1.0 客户端），
+// 而非把原始 Host 字符串直接交给拨号链路。在 443 上起回显服务验证可达性，
+// 特权端口不可绑定的环境跳过；IPv6 括号规范化由 target 层单测覆盖。
+func TestConnect_NoPortTargetDialsDefaultPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:443")
+	if err != nil {
+		t.Skipf("bind 127.0.0.1:443 unavailable: %v", err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) { io.Copy(conn, conn); conn.Close() }(conn)
+		}
+	}()
+
+	configPath := testutil.ConfigFile(t, "r.yaml", "servers: []\n")
+	proxyURL, _ := startProxy(t, configPath, nil)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	// CONNECT 与数据一次写入，回显到达即证明隧道按 127.0.0.1:443 建立成功
+	fmt.Fprintf(conn, "CONNECT 127.0.0.1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\nPING\n")
+	reader := bufio.NewReader(conn)
+	if code := readConnectResponse(t, reader); code != 200 {
+		t.Fatalf("want 200, got %d", code)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil || line != "PING\n" {
+		t.Fatalf("tunnel should reach 127.0.0.1:443: got %q err=%v", line, err)
+	}
+}
+
 func TestConnect_TunnelBadGateway(t *testing.T) {
 	closed := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {}))
 	closed.Close()

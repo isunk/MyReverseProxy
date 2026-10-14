@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"mrp/internal/ca"
@@ -52,7 +53,9 @@ func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
 func (p *Proxy) serveConnect(client net.Conn, request *http.Request, protocol string, port int, domain string) (transferred bool) {
 	if !p.table.Load().Has(protocol, port, domain) {
 		log.Info("connect target=%s mode=tunnel", request.Host)
-		p.tunnel(client, request.Host)
+		// 隧道按规范化目标拨号：Host 缺端口（老式 CONNECT/1.0）时补协议默认端口，
+		// IPv6 裸地址补括号，否则 net.SplitHostPort 直接报错使目标必然不可达
+		p.tunnel(client, net.JoinHostPort(domain, strconv.Itoa(port)))
 		return false
 	}
 	if p.tlsConfig == nil {

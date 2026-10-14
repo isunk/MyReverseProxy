@@ -381,7 +381,7 @@ internal/
   config/       YAML 配置结构与解析
   route/        路由表、前缀匹配、路径改写（含编码保真）
   proxy/        反向代理核心：请求转发、CONNECT 隧道、MITM 编排、热加载
-  server/       单端口明文监听、单连接复用（MITM 内层服务）
+   frontend/     单端口明文监听、单连接复用（MITM 内层服务）
   ca/           自签 CA 按名字现场签发证书（域名 SAN / IP SAN），并发合并
   dns/          上游 DNS 解析与故障切换、结果缓存
   cache/        通用并发缓存
