@@ -8,13 +8,14 @@ Go 实现的本地反向代理。只监听一个端口（`--port`，默认 8000�
 
 - 按域名实时签发证书，无需预先登记要拦截的域名
 - 支持 IP 型 HTTPS 路由：客户端对 IP 直连不发 SNI，mrp 回退到 CONNECT 目标签发 IP SAN 证书，客户端按 IP 校验通过
-- 未提供 CA 时降级为不解密的代理与隧道透传
+- 未提供 CA 时无法解密：命中配置域名的 CONNECT 返回 502，其余域名仍走透传隧道
 
 ### 路由
 
 - 多域名虚拟服务器，按域名、协议、端口匹配
 - 按路径前缀匹配，未命中的域名透传到原目标
 - 可改写 Host 头与请求、响应头
+- 支持 `status` 短路响应：命中前缀直接返回指定状态码与 `body`，不转发上游
 - 路径中的编码字符（如 `%2F`）原样转发到上游，不被二次转义
 
 ### 上游
@@ -52,15 +53,17 @@ sequenceDiagram
         mrp->>App: "200 Connection Established"
         App->>mrp: "TLS 握手（SNI: api.target-app.com）"
         mrp->>mrp: 用自签 CA 现场签发该域名证书
-        mrp-->>App: 握手完成，拿到解密后的明文 HTTP
+        mrp-->>App: TLS 握手完成
+        App->>mrp: "HTTP 请求（已被 mrp 解密）"
         mrp->>mrp: 按域名与路径前缀匹配路由
-        mrp->>DNS: 解析上游域名
+        mrp->>DNS: "解析上游域名（结果按 --dns-ttl 缓存）"
         DNS-->>mrp: 上游地址
         mrp->>Up: "转发请求（可改写 Host 与消息头）"
         Up-->>mrp: HTTP 响应
         mrp-->>App: 加密回传响应
 
     else 未命中配置域名，字节隧道透传
+        mrp->>Tgt: 建立 TCP 连接（失败回 502）
         mrp->>App: "200 Connection Established"
         App->>mrp: 目标域名的加密流量
         mrp->>Tgt: 原样搬运字节，不解密、不改写
@@ -70,6 +73,8 @@ sequenceDiagram
     else 明文 HTTP 请求，域名解析到 mrp 或经代理访问
         App->>mrp: "GET http://api.target-app.com/v1/hello"
         mrp->>mrp: 按 Host 头匹配路由
+        mrp->>DNS: "解析上游域名（结果按 --dns-ttl 缓存）"
+        DNS-->>mrp: 上游地址
         mrp->>Up: 转发到配置的上游
         Up-->>mrp: HTTP 响应
         mrp-->>App: 原样返回
@@ -124,11 +129,11 @@ hdc file send ${HASH}.0 /etc/security/certificates
 
 #### Windows
 
-```bash
-# 当前用户（免管理员）
+```bat
+rem 当前用户（免管理员）
 certutil -user -addstore Root ca.crt
 
-# 或机器全局（需管理员）
+rem 或机器全局（需管理员）
 certutil -addstore Root ca.crt
 ```
 
@@ -250,7 +255,7 @@ curl --resolve api.target-app.com:8000:127.0.0.1 \
   http://api.target-app.com:8000/v1/hello
 ```
 
-观察 mrp 日志（`domain` / `path` / `upstream` / `status` / `elapsed`）确认路由命中与转发结果；上游不可达时返回 502。
+观察 mrp 日志确认路由命中与转发结果：每条请求打印 `domain` / `protocol` / `port` / `path` / `status` / `elapsed`，CONNECT 打印 `target` 与 `mode`（`mitm` 或 `tunnel`）；上游不可达时返回 502。
 
 日志格式为 `MM-dd HH:mm:ss.SSS\t级别\t消息+参数`，例如：
 
@@ -322,11 +327,11 @@ hdc shell network-cfg set http_proxy 0
 
 #### Windows
 
-```bash
-# 设置 WinHTTP 系统代理（服务与部分命令行工具生效）
+```bat
+rem 设置 WinHTTP 系统代理（服务与部分命令行工具生效）
 netsh winhttp set proxy 192.168.1.100:8000
 
-# 取消代理
+rem 取消代理
 netsh winhttp reset proxy
 ```
 

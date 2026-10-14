@@ -114,7 +114,7 @@ func (t *Table) Pick(protocol string, port int, domain, path string) (*Route, bo
 	return best, best != nil
 }
 
-// Has 判断该协议的该端口下是否存在该域名的路由，供 CONNECT 隧道区分 MITM 与透传
+// Has 判断该域名在指定协议与端口下是否配置了路由，供 CONNECT 隧道区分 MITM 与透传
 func (t *Table) Has(protocol string, port int, domain string) bool {
 	for _, entry := range t.byDomain[domain] {
 		if entry.matches(protocol, port) {

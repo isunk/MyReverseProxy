@@ -23,8 +23,7 @@ func (h *HeaderRewrite) rewriteRequest(headers http.Header) {
 	}
 }
 
-// rewriteResponse 作为 ReverseProxy 的 ModifyResponse 钩子；
-// 没有响应头改写时构建器不挂载该钩子，避免每次响应空跑。
+// rewriteResponse 按配置 Set 覆盖上游返回的响应头；没有响应头改写时构建器不挂载该钩子，避免每次响应空跑。
 func (h *HeaderRewrite) rewriteResponse(response *http.Response) error {
 	for name, value := range h.Response {
 		response.Header.Set(name, value)

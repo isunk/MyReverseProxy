@@ -81,7 +81,7 @@ func (r *Resolver) Addresses() []string {
 	return slices.Clone(r.current.Load().addresses)
 }
 
-// DialContext 按主机:端口取缓存的解析结果，未命中才发 DNS 查询，再逐个尝试解析出的地址。
+// DialContext 拨向指定地址：IP 字面量直接拨号跳过 DNS，域名经 dialHost 解析后拨号。
 func (r *Resolver) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {

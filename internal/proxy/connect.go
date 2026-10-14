@@ -26,8 +26,7 @@ func (p *Proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 	if !ok {
 		return
 	}
-	// transferred 为 true 表示连接已移交内层 HTTP 服务（hijack 链），由那里收尾；
-	// 为 false 时连接仍在手里，这里关闭收尾。
+	// serveConnect 未接管（transferred=false）的连接仍在本函数手里，由这里关闭收尾
 	if transferred := p.serveConnect(client, request, protocol, port, domain); !transferred {
 		client.Close()
 	}
