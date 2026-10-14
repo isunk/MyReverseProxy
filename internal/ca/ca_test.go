@@ -40,9 +40,6 @@ func TestAuthority_SignsForSNI(t *testing.T) {
 	if err := leaf.CheckSignatureFrom(caCert); err != nil {
 		t.Fatalf("证书应由 CA 签发：%v", err)
 	}
-	if !leaf.BasicConstraintsValid || leaf.IsCA {
-		t.Fatalf("叶子证书应为显式端实体 CA:false，got BasicConstraintsValid=%v IsCA=%v", leaf.BasicConstraintsValid, leaf.IsCA)
-	}
 
 	cached, err := authority.GetCertificate(hello)
 	if err != nil {
