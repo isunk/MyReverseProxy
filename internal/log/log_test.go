@@ -11,8 +11,8 @@ import (
 var testStamp = time.Date(2026, 9, 28, 9, 21, 36, 865_000_000, time.FixedZone("CST", 8*3600))
 
 func TestFormatLogLine(t *testing.T) {
-	got := formatLogLine(testStamp, InfoLevel, "created default config file path=config.yaml", false)
-	want := "09-28 09:21:36.865\tINFO\tcreated default config file path=config.yaml\n"
+	got := formatLogLine(testStamp, InfoLevel, "config created path=config.yaml", false)
+	want := "09-28 09:21:36.865\tINFO\tconfig created path=config.yaml\n"
 	if got != want {
 		t.Fatalf("format mismatch:\n got %q\nwant %q", got, want)
 	}

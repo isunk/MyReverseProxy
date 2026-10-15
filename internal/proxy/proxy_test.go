@@ -181,6 +181,52 @@ func TestRouteTable_DotUpstreamIsLocal(t *testing.T) {
 	}
 }
 
+// Debug 级日志呈现完整路由决策：入站完整 URL 与改写后实际发出的 URL
+func TestRouteHandler_DebugLogShowsRouteResult(t *testing.T) {
+	up := recordingServer(t, "up")
+	_, port, err := net.SplitHostPort(up.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := testutil.ConfigFile(t, "route-log.yaml",
+		"servers:\n"+
+			"  - domain: a.local\n    routes:\n"+
+			"      - prefix: /api/v1\n        upstream: http://127.0.0.1:"+port+"/v1/\n"+
+			"  - domain: b.local\n    routes:\n"+
+			"      - prefix: /health\n        status: 204\n")
+	servers := testNameservers(t)
+	proxy, err := New(configPath, NewTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var out strings.Builder
+	log.SetOutput(&out)
+	log.Init(log.DebugLevel)
+	t.Cleanup(func() {
+		log.Init(log.InfoLevel)
+		log.SetOutput(io.Discard)
+	})
+	for _, rawURL := range []string{
+		"http://a.local:80/api/v1/users?x=1",
+		"http://a.local:80/other",
+		"http://b.local:80/health",
+		"http://d.local:80/x",
+	} {
+		request := httptest.NewRequest(http.MethodGet, rawURL, nil)
+		proxy.Handler().ServeHTTP(httptest.NewRecorder(), request)
+	}
+	for _, want := range []string{
+		"route http://a.local:80/api/v1/users?x=1 -> http://127.0.0.1:" + port + "/v1/users?x=1",
+		"route http://a.local:80/other -> passthrough",
+		"route http://b.local:80/health -> status 204",
+		"route http://d.local:80/x -> passthrough",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("debug log missing %q\nlog:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestHostOnly_Lowercase(t *testing.T) {
 	if got := hostOnly("API.Example.COM:443"); got != "api.example.com" {
 		t.Fatalf("hostOnly: got %q", got)
@@ -216,6 +262,30 @@ func TestHostAndPort_IPv6Brackets(t *testing.T) {
 	}
 	if got := hostOnly("[::1]:8080"); got != "::1" {
 		t.Fatalf("hostOnly bracketed with port: got %q", got)
+	}
+}
+
+func TestAbsoluteTarget(t *testing.T) {
+	cases := []struct {
+		protocol, domain string
+		port             int
+		requestURL       string
+		want             string
+	}{
+		{"http", "a.local", 80, "http://a.local/api/x?x=1", "http://a.local:80/api/x?x=1"},
+		{"https", "a.local", 443, "https://a.local/x", "https://a.local:443/x"},
+		{"http", "a.local", 8080, "http://a.local/x", "http://a.local:8080/x"},
+		{"http", "::1", 8080, "http://::1/x", "http://[::1]:8080/x"},
+		{"http", "a.local", 80, "http://a.local/x?a=1&b=2", "http://a.local:80/x?a=1&b=2"},
+	}
+	for _, tc := range cases {
+		requestURL, err := url.Parse(tc.requestURL)
+		if err != nil {
+			t.Fatalf("url.Parse(%q): %v", tc.requestURL, err)
+		}
+		if got := absoluteTarget(tc.protocol, tc.port, tc.domain, requestURL); got != tc.want {
+			t.Fatalf("absoluteTarget(%q, %d, %q) = %q, want %q", tc.protocol, tc.port, tc.domain, got, tc.want)
+		}
 	}
 }
 

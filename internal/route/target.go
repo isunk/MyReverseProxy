@@ -22,10 +22,10 @@ func ParseTarget(upstream string) (*Target, error) {
 	if strings.Contains(upstream, "://") {
 		parsed, err := url.Parse(upstream)
 		if err != nil {
-			return nil, fmt.Errorf("invalid upstream %q: %w", upstream, err)
+			return nil, fmt.Errorf("upstream %q is invalid: %w", upstream, err)
 		}
 		if parsed.Scheme != ProtocolHTTP && parsed.Scheme != ProtocolHTTPS {
-			return nil, fmt.Errorf("unsupported upstream scheme %q", upstream)
+			return nil, fmt.Errorf("upstream %q scheme %q is not supported", upstream, parsed.Scheme)
 		}
 		if parsed.Host == "" {
 			return nil, fmt.Errorf("upstream %q is missing host", upstream)
@@ -47,11 +47,11 @@ func parseTargetHost(upstream string) (*Target, error) {
 			return nil, fmt.Errorf("upstream %q is missing host", upstream)
 		}
 		if !validPort(port) {
-			return nil, fmt.Errorf("invalid upstream %q: port must be 1-65535", upstream)
+			return nil, fmt.Errorf("upstream %q port must be 1-65535", upstream)
 		}
 		remote.Host = upstream
 	} else if strings.Contains(upstream, ":") {
-		return nil, fmt.Errorf("invalid upstream %q: use host or [host]:port", upstream)
+		return nil, fmt.Errorf("upstream %q is malformed, use host or [host]:port", upstream)
 	} else {
 		remote.Host = upstream
 	}

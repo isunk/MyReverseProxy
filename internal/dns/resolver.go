@@ -72,7 +72,7 @@ func (r *Resolver) Update(entries []string) (bool, error) {
 	r.current.Store(&state{addresses: addresses, resolvers: r.buildResolvers(addresses)})
 	r.cache.Clear()
 	// 变化详情用 Debug 级：启动时 main 已打 Info 级 nameservers 日志，热加载由上层总日志覆盖
-	log.Debug("dns nameservers changed to %s", strings.Join(addresses, ","))
+	log.Debug("nameservers updated addresses=%s", strings.Join(addresses, ","))
 	return true, nil
 }
 
@@ -161,7 +161,7 @@ func (r *Resolver) resolve(ctx context.Context, host, port string) ([]string, er
 		// 兜底防御：err 为 nil 却无地址时不能向上返回 (nil, nil)，
 		// 否则调用链会产出 nil 连接与 nil 错误，击穿 transport 的错误处理
 		if err == nil {
-			err = fmt.Errorf("no addresses returned for %q", host)
+			err = fmt.Errorf("dns lookup %q returned no addresses", host)
 		}
 		lastError = err
 	}
@@ -235,11 +235,11 @@ func normalizeNameserver(entry string) (string, error) {
 		port = parsedPort
 	}
 	if ip := net.ParseIP(host); ip == nil {
-		return "", fmt.Errorf("dns nameserver %q is not an IP literal", entry)
+		return "", fmt.Errorf("dns nameserver %q is not an ip address", entry)
 	}
 	numericPort, err := strconv.Atoi(port)
 	if err != nil || numericPort < 1 || numericPort > 65535 {
-		return "", fmt.Errorf("dns nameserver %q has an invalid port", entry)
+		return "", fmt.Errorf("dns nameserver %q port must be 1-65535", entry)
 	}
 	return net.JoinHostPort(host, port), nil
 }

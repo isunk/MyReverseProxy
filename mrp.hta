@@ -325,7 +325,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             return;
           }
           try { queues[i][j](); }
-          catch (ex) { report('update: ' + (ex && ex.message ? ex.message : ex)); }
+          catch (ex) { report('update failed: ' + (ex && ex.message ? ex.message : ex)); }
           _depth--;
         }
       }
@@ -563,20 +563,20 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       name: 'Windows',
       data: { filesOK: true, miss: [], cert: 'NONE', run: false, proxy: false },
       states: [
-        { name: 'Files', get: function(s) { return s.filesOK ? cell('ok', 'OK') : cell('err', s.miss.length ? 'Missing: ' + s.miss.join(', ') : 'Missing files', 'Locate files'); } },
+        { name: 'Files', get: function(s) { return s.filesOK ? cell('ok', 'OK') : cell('err', 'Missing: ' + s.miss.join(', '), 'Check files'); } },
         { name: 'CA certificate', get: function(s) { return s.cert === 'NONE' ? cell('warn', 'Not imported', 'Import CA') : cell('ok', 'Imported [' + s.cert + ']', 'Remove', true); } },
         { name: 'mrp process', get: function(s) { return s.run ? cell('ok', 'Running', 'Stop') : cell('warn', 'Stopped', 'Start'); } },
         { name: 'Proxy', get: function(s) { return s.proxy ? cell('ok', 'Configured (127.0.0.1:' + PORT + ')', 'Clear') : cell('warn', 'Not set', 'Set'); } }
       ],
       actions: [
-        { name: 'Locate files', run: function(s) {
+        { name: 'Check files', run: function(s) {
             ensureCA(); checkFiles(s);
             if (s.filesOK) { host.log('Files ready.', 'ok'); return; }
-            host.log('Missing: ' + s.miss.join(', ') + ' in ' + host.workdir + '. Download from GitHub Releases.', 'err');
+            host.log('Missing ' + s.miss.join(', ') + ' in ' + host.workdir + ' - download from GitHub Releases.', 'err');
           } },
         { name: 'Import CA', run: function(s) {
             ensureCA(); var cs = certState();
-            if (cs !== 'NONE') { host.log('Already imported - ' + cs + '.', 'ok'); return; }
+            if (cs !== 'NONE') { host.log('Already imported [' + cs + '].', 'ok'); return; }
             var code = host.run('certutil -user -addstore Root "' + host.workdir + CRT + '"');
             if (code === 0) { s.cert = 'USER'; host.log('CA imported into the user Root store.', 'ok'); }
             else host.log('CA import failed.', 'err');
@@ -591,12 +591,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         { name: 'Set', run: function(s) {
             var ok = setProxy('netsh winhttp set proxy 127.0.0.1:' + PORT, true);
             s.proxy = true;
-            host.log(ok ? 'System proxy set to 127.0.0.1:' + PORT + '.' : 'Warning: proxy not applied.', ok ? 'ok' : 'warn');
+            host.log(ok ? 'System proxy set to 127.0.0.1:' + PORT + '.' : 'Proxy not applied.', ok ? 'ok' : 'warn');
           } },
         { name: 'Clear', run: function(s) {
             var ok = setProxy('netsh winhttp reset proxy', false);
             s.proxy = false;
-            host.log(ok ? 'System proxy cleared.' : 'Warning: proxy not cleared.', ok ? 'ok' : 'warn');
+            host.log(ok ? 'System proxy cleared.' : 'Proxy not cleared.', ok ? 'ok' : 'warn');
           } },
         { name: 'Static HTTP :' + HTTP_PORT, tool: true, run: function(s, vm) {
             vm.prompt('Static HTTP server', 'Directory to serve', host.workdir, function(dir) {
@@ -604,7 +604,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               if (dir === '') return;
               if (/["]/.test(dir)) { host.log('Path must not contain double quotes.', 'warn'); return; }
               host.runRaw('cmd /k python -m http.server ' + HTTP_PORT + ' --directory "' + dir + '"', 1, false);
-              host.log('Static server http://127.0.0.1:' + HTTP_PORT + ' serving ' + dir, 'ok');
+              host.log('Static server serving ' + dir + ' at http://127.0.0.1:' + HTTP_PORT + '.', 'ok');
             });
           } }
       ],
@@ -613,11 +613,11 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       summary: function() { return ''; },
       uninstall: function(s) {
         if (!setProxy('netsh winhttp reset proxy', false)) {
-          host.log('Warning: system proxy may still be set; clear it manually.', 'warn');
+          host.log('System proxy may still be set - clear it manually.', 'warn');
         }
         stopProc(); removeUserCA();
         host.deleteFiles([MRP_EXE, CRT, KEY]);
-        s.filesOK = false; s.cert = 'NONE'; s.run = false; s.proxy = false;
+        s.filesOK = false; s.miss = [MRP_EXE, CRT, KEY]; s.cert = 'NONE'; s.run = false; s.proxy = false;
         host.log('Windows module uninstalled.', 'ok');
       }
     };
@@ -684,7 +684,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       name: cfg.name,
       data: { ready: false, desc: '', bin: false, cert: false, run: false, proxy: false },
       states: [
-        { name: 'Device', get: function(s) { return s.ready ? cell('ok', s.desc, 'Sync config') : cell('idle', s.desc || 'Not probed yet; click Refresh to check.'); } },
+        { name: 'Device', get: function(s) { return s.ready ? cell('ok', s.desc, 'Sync config') : cell('idle', s.desc || 'Not probed.'); } },
         { name: 'Files', get: function(s) { if (!s.ready) return null; return s.bin ? cell('ok', 'Installed') : cell('warn', 'Not installed', 'Install files'); } },
         { name: 'CA certificate', get: function(s) { if (!s.ready) return null; return s.cert ? cell('ok', 'Installed', 'Remove', true) : cell('warn', 'Not installed', 'Install CA'); } },
         { name: 'mrp process', get: function(s) { if (!s.ready) return null; if (!s.bin) return cell('err', 'Not installed'); return s.run ? cell('ok', 'Running', 'Stop') : cell('warn', 'Stopped', 'Start'); } },
@@ -694,26 +694,26 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         { name: 'Sync config', run: function(s) {
             if (!host.fileExists(DEV_CFG)) { host.log(DEV_CFG + ' not found next to this script.', 'err'); return; }
             ensureDevDir();
-            if (pushDev(DEV_CFG) !== 0) { host.log('Sync failed; check device connection.', 'err'); return; }
+            if (pushDev(DEV_CFG) !== 0) { host.log('Config sync failed - check the device connection.', 'err'); return; }
             host.log(DEV_CFG + ' synced - mrp hot reloads it automatically.', 'ok');
           } },
         { name: 'Install files', run: function(s) {
             ensureCA(); ensureDevDir();
             var rc = pushDev(DEV_BIN);
-            if (rc !== 0) { host.log(DEV_BIN + ' push failed (rc=' + rc + '). Download it from GitHub Releases into ' + host.workdir, 'err'); return; }
+            if (rc !== 0) { host.log('Binary push failed rc=' + rc + ' - download ' + DEV_BIN + ' into ' + host.workdir + ' from GitHub Releases.', 'err'); return; }
             if (host.fileExists(DEV_CFG)) pushDev(DEV_CFG);
             var bad = [];
             if (pushDev(CRT) !== 0) bad.push(CRT);
             if (pushDev(KEY) !== 0) bad.push(KEY);
             host.run(cfg.tool + ' shell chmod +x ' + devDir + '/' + DEV_BIN);
             s.bin = true;
-            host.log(bad.length ? 'Binary installed, but push failed for: ' + bad.join(', ') + '.' : 'Device files installed.', bad.length ? 'warn' : 'ok');
+            host.log(bad.length ? 'Binary installed, CA push failed for ' + bad.join(', ') + '.' : 'Device files installed.', bad.length ? 'warn' : 'ok');
           } },
         { name: 'Install CA', run: function(s) {
             ensureCA(); installCert();
             var ok = devFileExists(certPath);
             if (ok) s.cert = true;
-            host.log(ok ? 'CA installed.' : 'Warning: cert install may have failed; ensure the device is rooted or in developer mode.', ok ? 'ok' : 'warn');
+            host.log(ok ? 'CA installed.' : 'CA install may have failed - ensure the device is rooted or in developer mode.', ok ? 'ok' : 'warn');
           } },
         { name: 'Remove', danger: true, run: function(s) {
             remountForCert();
@@ -721,7 +721,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             s.cert = false; host.log('CA removed.', 'ok');
           } },
         { name: 'Start', run: function(s) {
-            if (binRunning()) { host.log('mrp already running on device.', 'ok'); return; }
+            if (binRunning()) { host.log('mrp already running on the device.', 'ok'); return; }
             var consoleCmd = 'cmd /k ' + cfg.tool + ' shell "cd ' + devDir + '; ./' + DEV_BIN + '"';
             host.log('> ' + consoleCmd, 'dim');
             try { host.runRaw(consoleCmd, 1, false); }
@@ -729,25 +729,25 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             var up = false, i;
             for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (binRunning()) { up = true; break; } }
             s.run = up;
-            host.log(up ? 'mrp is now running on device - Ctrl+C in the new window to stop.' : 'Warning: mrp did not start within 5 seconds.', up ? 'ok' : 'err');
+            host.log(up ? 'mrp is now running on the device - Ctrl+C in the new window to stop.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
           } },
         { name: 'Stop', run: function(s) { stopBin(); s.run = false; host.log('mrp stopped.', 'ok'); } }
       ], cfg.known ? [
         { name: 'Set', run: function(s) { host.run(cfg.tool + ' ' + cfg.proxySet); s.proxy = true; host.log('Device global proxy set to 127.0.0.1:' + PORT + '.', 'ok'); } },
         { name: 'Clear', run: function(s) { host.run(cfg.tool + ' ' + cfg.proxyClear); s.proxy = false; host.log('Device global proxy cleared.', 'ok'); } }
       ] : [], [
-        { name: 'Port reverse :' + HTTP_PORT, tool: true, run: function(s) { host.run(cfg.tool + ' ' + cfg.reverseCmd); host.log('Port reverse :' + HTTP_PORT + ' active.', 'ok'); } },
+        { name: 'Port reverse :' + HTTP_PORT, tool: true, run: function(s) { host.run(cfg.tool + ' ' + cfg.reverseCmd); host.log('Reverse port :' + HTTP_PORT + ' active.', 'ok'); } },
         { name: 'Open browser', tool: true, run: function(s, vm) {
             vm.prompt('Open browser', 'URL to open on the device', 'http://127.0.0.1:' + HTTP_PORT + '/', function(url) {
               url = String(url == null ? '' : url).replace(/^\s+|\s+$/g, '');
               if (url === '') return;
-              if (/[&|^<>"'%\s]/.test(url)) { host.log('URL contains shell-hostile characters; skipped.', 'warn'); return; }
+              if (/[&|^<>"'%\s]/.test(url)) { host.log('URL contains shell-hostile characters - skipped.', 'warn'); return; }
               host.run((cfg.tool + ' ' + cfg.openUrl).replace(/\{URL\}/g, url), true);
             });
           } },
         { name: 'DevTools', tool: true, run: function(s) {
             var rc = host.runRaw(devtoolsForward(), 0, true);
-            host.log(rc === 0 ? 'DevTools port forwarded.' : 'DevTools forward failed (rc=' + rc + ').', rc === 0 ? 'ok' : 'err');
+            host.log(rc === 0 ? 'DevTools port forwarding active.' : 'DevTools port forwarding failed rc=' + rc + '.', rc === 0 ? 'ok' : 'err');
           } }
       ]),
       probe: function(s) {
@@ -775,7 +775,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         host.run(cfg.tool + ' shell rm -f ' + certPath);
         host.run(cfg.tool + ' shell rm -rf ' + devDir);
         s.bin = false; s.cert = false; s.run = false; s.proxy = false;
-        host.log(cfg.name + ' uninstall finished.', 'ok');
+        host.log(cfg.name + ' uninstalled.', 'ok');
       }
     };
   }
@@ -868,7 +868,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         if (!r || !r.act) return;
         var list = this.cur.actions, j;
         for (j = 0; j < list.length; j++) if (list[j].name === r.act) { this.runAction(list[j]); return; }
-        log('"' + r.act + '" is not available on ' + this.cur.name + '.', 'warn');
+        log('Action "' + r.act + '" is unavailable on ' + this.cur.name + '.', 'warn');
       },
       refresh: function() {
         if (this.busy) return;
@@ -890,7 +890,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     },
     mounted: function() {
       var self = this;
-      win.onerror = function(msg, url, line) { log('window error: ' + msg + ' @' + (line || '?'), 'err'); return false; };
+      win.onerror = function(msg, url, line) { log('window error: ' + msg + ' (line ' + (line || '?') + ')', 'err'); return false; };
       var keyfn = function(e) {
         e = e || win.event;
         var c = e.keyCode || e.which || e.charCode;
@@ -904,7 +904,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       };
       if (doc.addEventListener) doc.addEventListener('keydown', keyfn, false);
       else doc.attachEvent('onkeydown', keyfn);
-      log(hasShell ? 'mshta host - workdir: ' + WORKDIR + '. Click Refresh to probe modules.' : 'Browser host - no shell, actions will fail here.');
+      log(hasShell ? 'host=mshta workdir=' + WORKDIR + ' - click Refresh to probe modules.' : 'host=browser - no shell available, actions will fail.');
     }
   });
 

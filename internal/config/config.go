@@ -84,7 +84,7 @@ func buildTable(config *Config) (*route.Table, error) {
 	for _, server := range config.Servers {
 		name := strings.ToLower(strings.TrimSpace(server.Domain))
 		if name == "" {
-			return nil, errors.New("domain must not be empty")
+			return nil, errors.New("domain is required")
 		}
 		entry, err := buildServerEntry(server)
 		if err != nil {
@@ -108,11 +108,11 @@ func buildServerEntry(server Server) (*route.Entry, error) {
 	switch protocol {
 	case "", route.ProtocolHTTP, route.ProtocolHTTPS:
 	default:
-		return nil, fmt.Errorf("domain %q: unsupported protocol %q", server.Domain, server.Protocol)
+		return nil, fmt.Errorf("domain %q protocol %q is not supported", server.Domain, server.Protocol)
 	}
 	port := server.Port
 	if port != 0 && (port < 1 || port > 65535) {
-		return nil, fmt.Errorf("domain %q: invalid port %d", server.Domain, server.Port)
+		return nil, fmt.Errorf("domain %q port %d must be 1-65535", server.Domain, server.Port)
 	}
 	return &route.Entry{Protocol: protocol, Port: port}, nil
 }
@@ -130,24 +130,24 @@ func buildRoutes(server Server) ([]*route.Route, error) {
 			return nil, fmt.Errorf("domain %q: prefix is required", server.Domain)
 		}
 		if !strings.HasPrefix(prefix, "/") {
-			return nil, fmt.Errorf("domain %q: prefix %q must start with /", server.Domain, prefix)
+			return nil, fmt.Errorf("domain %q prefix %q must start with /", server.Domain, prefix)
 		}
 		if status != 0 && upstream != "" {
-			return nil, fmt.Errorf("domain %q: prefix %q: status and upstream are mutually exclusive", server.Domain, prefix)
+			return nil, fmt.Errorf("domain %q prefix %q status and upstream are mutually exclusive", server.Domain, prefix)
 		}
 		if status == 0 && upstream == "" {
-			return nil, fmt.Errorf("domain %q: prefix %q: status or upstream is required", server.Domain, prefix)
+			return nil, fmt.Errorf("domain %q prefix %q status or upstream is required", server.Domain, prefix)
 		}
 		// 1xx 在 net/http 里是 informational 响应，status 路由配了拿不到最终响应，直接拒绝
 		if status != 0 && (status < 200 || status > 599) {
-			return nil, fmt.Errorf("domain %q: prefix %q: status %d out of range (200-599)", server.Domain, prefix, status)
+			return nil, fmt.Errorf("domain %q prefix %q status %d must be 200-599", server.Domain, prefix, status)
 		}
 		// 204/304 按协议不得携带消息体，Go 服务端会静默丢弃 body，配置了也无效
 		if configured.Body != "" && (status == 204 || status == 304) {
-			return nil, fmt.Errorf("domain %q: prefix %q: status %d must not carry a body", server.Domain, prefix, status)
+			return nil, fmt.Errorf("domain %q prefix %q status %d must not carry a body", server.Domain, prefix, status)
 		}
 		if seen[prefix] {
-			return nil, fmt.Errorf("domain %q: duplicate prefix %q", server.Domain, prefix)
+			return nil, fmt.Errorf("domain %q prefix %q is duplicated", server.Domain, prefix)
 		}
 		seen[prefix] = true
 		r := &route.Route{
@@ -185,6 +185,6 @@ func Ensure(path string) error {
 	if err := os.WriteFile(path, defaultConfig, 0o644); err != nil {
 		return err
 	}
-	log.Info("created default config file path=%s", path)
+	log.Info("config created path=%s", path)
 	return nil
 }

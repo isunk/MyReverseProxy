@@ -62,16 +62,31 @@ func New(configPath string, transport *http.Transport, tlsConfig *tls.Config, au
 func newPassthroughProxy(transport *http.Transport) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
-			scheme := "http"
-			if request.In.TLS != nil {
-				scheme = "https"
-			}
-			request.SetURL(&url.URL{Scheme: scheme, Host: request.In.Host})
+			request.Out.URL = passthroughURL(request.In)
 			request.Out.Host = request.In.Host
 		},
 		Transport:    transport,
 		ErrorHandler: route.UpstreamErrorHandler,
 	}
+}
+
+// passthroughURL 给出未命中路由时的转发目标：完整 URL 原样转发，
+// 隧道内层收到的源形式请求按连接协议与 Host 头补齐 scheme 与端口。
+func passthroughURL(inbound *http.Request) *url.URL {
+	if inbound.URL.Scheme != "" {
+		outbound := *inbound.URL
+		return &outbound
+	}
+	protocol := "http"
+	if inbound.TLS != nil {
+		protocol = "https"
+	}
+	outbound := *inbound.URL
+	parsed, err := url.Parse(protocol + "://" + inbound.Host + inbound.URL.RequestURI())
+	if err == nil {
+		outbound = *parsed
+	}
+	return &outbound
 }
 
 // reload 重载配置：路由与 DNS 服务器无变化时保留现状，任一项变化则替换并清理派生状态。
@@ -90,7 +105,7 @@ func (p *Proxy) reload() error {
 		return err
 	}
 	if !routesChanged && !nameserversChanged {
-		log.Debug("config parsed but routes and nameservers unchanged, keeping current pool")
+		log.Debug("config unchanged")
 		return nil
 	}
 	if routesChanged {
@@ -118,17 +133,23 @@ func (p *Proxy) Handler() http.Handler {
 }
 
 // routeHandler 选出本次请求的处理器：命中路由走该路由，否则透传原始目标。
+// Debug 级日志一行呈现路由结果：入站完整 URL 与改写后实际发出的 URL。
 func (p *Proxy) routeHandler(request *http.Request, protocol string, port int, domain string) http.Handler {
 	targetRoute, matched := p.table.Load().Pick(protocol, port, domain, request.URL.Path)
+	inbound := absoluteTarget(protocol, port, domain, request.URL)
 	if !matched {
-		log.Debug("no route matched, passing through to original target domain=%s protocol=%s port=%d", domain, protocol, port)
+		log.Debug("route %s -> passthrough", inbound)
 		return p.passthrough
 	}
 	if targetRoute.Status != 0 {
-		log.Debug("route matched domain=%s protocol=%s port=%d prefix=%s status=%d", domain, protocol, port, targetRoute.Prefix, targetRoute.Status)
-	} else {
-		log.Debug("route matched domain=%s protocol=%s port=%d prefix=%s upstream=%s", domain, protocol, port, targetRoute.Prefix, targetRoute.Target.Summary)
+		log.Debug("route %s -> status %d", inbound, targetRoute.Status)
+		return targetRoute.Handler()
 	}
+	if targetRoute.Target.Root != "" {
+		log.Debug("route %s -> %s", inbound, targetRoute.Target.Summary)
+		return targetRoute.Handler()
+	}
+	log.Debug("route %s -> %s", inbound, targetRoute.OutboundURL(request.URL, request.URL.RawQuery).String())
 	return targetRoute.Handler()
 }
 
@@ -143,7 +164,7 @@ func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) 
 	recorder := &frontend.StatusRecorder{ResponseWriter: writer, Status: http.StatusOK}
 	handler := p.routeHandler(request, protocol, port, domain)
 	defer func() {
-		log.Info("request domain=%s protocol=%s port=%d path=%s status=%d elapsed=%s", domain, protocol, port, request.URL.Path, recorder.Status, time.Since(start))
+		log.Info("request domain=%s protocol=%s port=%d method=%s path=%s status=%d elapsed=%s", domain, protocol, port, request.Method, request.URL.Path, recorder.Status, time.Since(start))
 	}()
 	handler.ServeHTTP(recorder, request)
 }
@@ -170,7 +191,7 @@ func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 				// 文件缺失（被删除）期间只提示一次，避免每轮轮询刷屏；恢复后照常比对重载
 				if !statFailed {
 					statFailed = true
-					log.Warn("failed to stat routing config: %v", err)
+					log.Warn("stat config failed config=%s: %v", p.configPath, err)
 				}
 				continue
 			}
@@ -181,10 +202,10 @@ func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 			}
 			previousSize, previousModTime, previousKnown = info.Size(), info.ModTime(), true
 			if err := p.reload(); err != nil {
-				log.Error("config reload failed, keeping previous config: %v", err)
+				log.Error("reload failed, keeping previous config: %v", err)
 				continue
 			}
-			log.Info("config changed, hot reloaded")
+			log.Info("config reloaded")
 		}
 	}
 }

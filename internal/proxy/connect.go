@@ -27,7 +27,7 @@ func (p *Proxy) handleConnect(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	// serveConnect 未接管（transferred=false）的连接仍在本函数手里，由这里关闭收尾
-	if transferred := p.serveConnect(client, request, protocol, port, domain); !transferred {
+	if transferred := p.serveConnect(client, protocol, port, domain); !transferred {
 		client.Close()
 	}
 }
@@ -49,20 +49,20 @@ func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
 
 // serveConnect 按 CONNECT 目标分发：命中虚拟服务器走 MITM，否则透传隧道；
 // transferred 为 true 表示连接已移交内层 HTTP 服务（hijack 链），调用方不得再关闭
-func (p *Proxy) serveConnect(client net.Conn, request *http.Request, protocol string, port int, domain string) (transferred bool) {
+func (p *Proxy) serveConnect(client net.Conn, protocol string, port int, domain string) (transferred bool) {
 	if !p.table.Load().Has(protocol, port, domain) {
-		log.Info("connect target=%s mode=tunnel", request.Host)
+		log.Info("tunnel started domain=%s port=%d", domain, port)
 		// 隧道按规范化目标拨号：Host 缺端口（老式 CONNECT/1.0）时补协议默认端口，
 		// IPv6 裸地址补括号，否则 net.SplitHostPort 直接报错使目标必然不可达
-		p.tunnel(client, net.JoinHostPort(domain, strconv.Itoa(port)))
+		p.tunnel(client, domain, port)
 		return false
 	}
 	if p.tlsConfig == nil {
-		log.Warn("connect domain=%s matched but no ca certificate configured, cannot mitm", domain)
+		log.Warn("mitm skipped domain=%s port=%d: no ca certificate configured", domain, port)
 		_, _ = client.Write([]byte(connectBadGateway))
 		return false
 	}
-	log.Info("connect domain=%s port=%d mode=mitm", domain, port)
+	log.Info("mitm started domain=%s port=%d", domain, port)
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return false
 	}
@@ -88,12 +88,12 @@ func mitmTLSConfig(template *tls.Config, authority *ca.Authority, domain string)
 }
 
 // tunnel 在客户端与目标之间双向搬运字节，不做任何内容检查或改写。
-func (p *Proxy) tunnel(client net.Conn, target string) {
+func (p *Proxy) tunnel(client net.Conn, domain string, port int) {
 	ctx, cancel := context.WithTimeout(context.Background(), tunnelDialTimeout)
 	defer cancel()
-	upstream, err := p.nameservers.DialContext(ctx, "tcp", target)
+	upstream, err := p.nameservers.DialContext(ctx, "tcp", net.JoinHostPort(domain, strconv.Itoa(port)))
 	if err != nil {
-		log.Error("tunnel target connection failed target=%s: %v", target, err)
+		log.Error("upstream dial failed domain=%s port=%d: %v", domain, port, err)
 		_, _ = client.Write([]byte(connectBadGateway))
 		return
 	}

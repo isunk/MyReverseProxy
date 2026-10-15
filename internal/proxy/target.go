@@ -35,6 +35,11 @@ func targetOf(request *http.Request) (string, int, string) {
 	return request.URL.Scheme, effectivePort(request.URL), hostOnly(request.URL.Host)
 }
 
+// absoluteTarget 把协议、域名、端口与请求 URL 拼成完整形式 URL，供路由日志与透传共用。
+func absoluteTarget(protocol string, port int, domain string, requestURL *url.URL) string {
+	return protocol + "://" + net.JoinHostPort(domain, strconv.Itoa(port)) + requestURL.RequestURI()
+}
+
 // hostAndPort 拆分 Host 为名称与端口，端口缺失或非法时补 fallback。
 // 无端口的 [::1] 括号形态剥掉括号，使域名键与配置写法（::1）及 JoinHostPort 语义对齐。
 func hostAndPort(host string, fallback int) (string, int) {

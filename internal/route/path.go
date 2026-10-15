@@ -5,39 +5,26 @@ import (
 	"strings"
 )
 
-// trimEncodedPrefix 在原始编码路径上剥掉指定字节数的解码前缀：EscapedPath 的
-// 每一段（%XX 或单字节）恰好解码为 1 字节，与 Path 字节序列一一对应，
-// 按字节数逐段消费即可，避免把 %2F 重新转义成 %252F。
-func trimEncodedPrefix(escaped string, skip int) string {
-	for ; skip > 0 && escaped != ""; skip-- {
-		if escaped[0] == '%' && len(escaped) >= 3 {
-			escaped = escaped[3:]
-			continue
-		}
-		escaped = escaped[1:]
-	}
-	return escaped
-}
-
-// joinOutPath 按斜杠边界拼接上游基路径与入站剩余路径，语义与 httputil 内部
-// joinURLPath 一致：Path 与 RawPath（完整路径编码）按同一斜杠规则同步拼接，
-// RawPath 的 base 段取 base 的完整转义、rest 段取传入的编码剩余路径；
-// 结果无编码差异时 RawPath 置空，回归默认转义。
-func joinOutPath(base *url.URL, restPath, restRawPath string) (string, string) {
-	baseRaw := base.EscapedPath()
-	restRaw := restRawPath
-	if restRaw == "" {
-		restRaw = (&url.URL{Path: restPath}).EscapedPath()
-	}
+// buildOutPath 按斜杠边界把上游基路径与入站剩余路径拼成 (Path, RawPath)，
+// 语义与 httputil 内部的 joinURLPath 一致。剩余路径取入站请求的原始编码形态，
+// %2F 等不会被重新转义；无编码差异时 RawPath 置空，回归默认转义。
+func buildOutPath(inboundURL *url.URL, prefix string, base *url.URL) (string, string) {
+	restPath := strings.TrimPrefix(inboundURL.Path, prefix)
+	restRawPath := strings.TrimPrefix(inboundURL.EscapedPath(), prefix)
 	baseSlash := strings.HasSuffix(base.Path, "/")
 	restSlash := strings.HasPrefix(restPath, "/")
 	path := singleJoiningSlash(base.Path, restPath)
-	raw := baseRaw + restRaw
+	if restRawPath == "" {
+		return path, ""
+	}
+	raw := base.EscapedPath()
 	switch {
 	case baseSlash && restSlash:
-		raw = baseRaw + restRaw[1:]
+		raw = raw + restRawPath[1:]
 	case !baseSlash && !restSlash:
-		raw = baseRaw + "/" + restRaw
+		raw = raw + "/" + restRawPath
+	default:
+		raw = raw + restRawPath
 	}
 	if raw == (&url.URL{Path: path}).EscapedPath() {
 		raw = ""

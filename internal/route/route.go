@@ -90,7 +90,7 @@ func NewTable() *Table {
 func (t *Table) Add(domain string, entry *Entry, routes []*Route) error {
 	for _, existing := range t.byDomain[domain] {
 		if existing.Protocol == entry.Protocol && existing.Port == entry.Port {
-			return fmt.Errorf("domain %q: duplicate server entry protocol=%s port=%d", domain, protocolLabel(entry.Protocol), entry.Port)
+			return fmt.Errorf("domain %q server entry is duplicated protocol=%s port=%d", domain, protocolLabel(entry.Protocol), entry.Port)
 		}
 	}
 	entry.routes = routes

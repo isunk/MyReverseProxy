@@ -73,7 +73,7 @@ func New(cert *x509.Certificate, key crypto.Signer) *Authority {
 func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certificate, err error) {
 	serverName := strings.ToLower(hello.ServerName)
 	if serverName == "" {
-		return nil, errors.New("missing SNI, cannot sign certificate for domain")
+		return nil, errors.New("sni is missing, cannot sign certificate")
 	}
 	if cached, ok := a.cache.Get(serverName); ok {
 		return cached, nil
@@ -165,27 +165,27 @@ func Load(certPath, keyPath string, explicitPair bool) (*tls.Config, *Authority,
 		certExists := fileExists(certPath)
 		keyExists := fileExists(keyPath)
 		if !certExists && !keyExists {
-			log.Warn("no default certificate found, serving HTTP and CONNECT tunnel only cert=%s key=%s", certPath, keyPath)
+			log.Warn("ca certificate not found cert=%s: serving http and tunnel only", certPath)
 			return nil, nil, nil
 		}
 		if certExists != keyExists {
-			return nil, nil, fmt.Errorf("certificate and key must exist as a pair: %s / %s", certPath, keyPath)
+			return nil, nil, fmt.Errorf("cert and key must exist as a pair cert=%s key=%s", certPath, keyPath)
 		}
 	}
 	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load key pair: %v", err)
+		return nil, nil, err
 	}
 	caCert, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse certificate: %w", err)
+		return nil, nil, err
 	}
 	if !caCert.IsCA {
-		return nil, nil, errors.New("certificate is not a CA, cannot sign certificates for SNI")
+		return nil, nil, errors.New("ca certificate is not a ca, cannot sign certificates")
 	}
 	signer, ok := pair.PrivateKey.(crypto.Signer)
 	if !ok {
-		return nil, nil, errors.New("unsupported private key type")
+		return nil, nil, errors.New("private key type is not supported")
 	}
 	authority := New(caCert, signer)
 	return &tls.Config{

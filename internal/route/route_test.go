@@ -38,6 +38,15 @@ func TestPick_LongestPrefix(t *testing.T) {
 	if _, ok := table.Pick("", 0, "other", "/"); ok {
 		t.Fatal("unknown domain should not match")
 	}
+	blocked := &Table{byDomain: map[string][]*Entry{
+		"b": {{Protocol: "https", Port: 443, routes: []*Route{{Prefix: "/"}}}},
+	}}
+	if _, ok := blocked.Pick("http", 80, "b", "/"); ok {
+		t.Fatal("protocol and port mismatch should not match")
+	}
+	if got, ok := blocked.Pick("https", 443, "b", "/"); !ok || got.Prefix != "/" {
+		t.Fatalf("exact protocol and port should match, got %v ok=%v", got, ok)
+	}
 }
 
 func TestSingleJoiningSlash(t *testing.T) {
@@ -93,6 +102,36 @@ func TestRewriteRequest_PreservesEscapedPath(t *testing.T) {
 		if request.Out.URL.Path != tc.wantPath || request.Out.URL.EscapedPath() != tc.wantEscaped {
 			t.Fatalf("rewrite %q prefix %q: path = %q, escaped = %q, want %q / %q",
 				tc.inURL, tc.prefix, request.Out.URL.Path, request.Out.URL.EscapedPath(), tc.wantPath, tc.wantEscaped)
+		}
+	}
+}
+
+// TestOutboundURL 验证改写后发往上游的完整 URL：上游 scheme 与 host、
+// 前缀剥离与基路径拼接、查询串保留。路由日志与真实转发共用该实现。
+func TestOutboundURL(t *testing.T) {
+	cases := []struct {
+		prefix, upstream, inbound string
+		want                      string
+	}{
+		{"/api", "http://up-a/v1", "http://a.local/api/users", "http://up-a/v1/users"},
+		{"/api", "http://up-a/v1/", "http://a.local/api/users", "http://up-a/v1/users"},
+		{"/api", "http://up-a:8080", "http://a.local/api", "http://up-a:8080/"},
+		{"/api/v1", "http://up-a/v1", "http://a.local/api-v2/x", "http://up-a/v1/api-v2/x"},
+		{"/api", "http://up-a/v1", "http://a.local/api/a%2Fb", "http://up-a/v1/a%2Fb"},
+		{"/api", "http://up-a/v1?q=1", "http://a.local/api/x?a=1", "http://up-a/v1/x?q=1&a=1"},
+	}
+	for _, tc := range cases {
+		target, err := ParseTarget(tc.upstream)
+		if err != nil {
+			t.Fatalf("ParseTarget(%q): %v", tc.upstream, err)
+		}
+		inbound, err := url.Parse(tc.inbound)
+		if err != nil {
+			t.Fatalf("url.Parse(%q): %v", tc.inbound, err)
+		}
+		r := &Route{Prefix: tc.prefix, Target: target}
+		if got := r.OutboundURL(inbound, inbound.RawQuery).String(); got != tc.want {
+			t.Fatalf("OutboundURL(%q, %q) = %q, want %q", tc.prefix, tc.inbound, got, tc.want)
 		}
 	}
 }

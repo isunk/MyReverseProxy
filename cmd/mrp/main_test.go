@@ -243,7 +243,7 @@ func TestE2E_ConfigNameserversTakeEffect(t *testing.T) {
 		t.Fatalf("configured nameserver received no dns query\nlog:\n%s", logs.String())
 	}
 	// 启动日志必须显示配置文件生效的 nameservers，而非 dns.New 的初始默认值
-	wantNameservers := "dns nameservers=127.0.0.1:" + refusedPort + "," + stub.Address() + " dns-ttl="
+	wantNameservers := "dns configured nameservers=127.0.0.1:" + refusedPort + "," + stub.Address() + " ttl="
 	if !strings.Contains(logs.String(), wantNameservers) {
 		t.Fatalf("startup log must show effective nameservers %q\nlog:\n%s", wantNameservers, logs.String())
 	}
@@ -267,7 +267,7 @@ func TestBuildProxy_LogsConfiguredNameservers(t *testing.T) {
 	if _, err := buildProxy(opts); err != nil {
 		t.Fatalf("buildProxy: %v", err)
 	}
-	wantNameservers := "dns nameservers=" + stub.Address() + " dns-ttl="
+	wantNameservers := "dns configured nameservers=" + stub.Address() + " ttl="
 	if !strings.Contains(out.String(), wantNameservers) {
 		t.Fatalf("startup log must show configured nameserver %q, got %q", wantNameservers, out.String())
 	}

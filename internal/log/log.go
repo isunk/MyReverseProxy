@@ -1,3 +1,6 @@
+// Package log 输出「时间\t级别\t消息」三段式控制台日志，按级别过滤并按级别着色。
+// 消息以小写事件名开头，上下文以内嵌 key=value 表达，键名统一 snake_case，
+// 失败原因置于末尾并以前置冒号与原因正文分隔。
 package log
 
 import (
@@ -109,5 +112,5 @@ func ParseLevel(text string) (Level, error) {
 			return level, nil
 		}
 	}
-	return InfoLevel, fmt.Errorf("unknown log level %q", text)
+	return InfoLevel, fmt.Errorf("--log %q: must be debug, info, warn or error", text)
 }

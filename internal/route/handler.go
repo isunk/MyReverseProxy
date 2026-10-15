@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -53,14 +54,27 @@ func (r *Route) buildProxy(transport *http.Transport) *httputil.ReverseProxy {
 	return proxy
 }
 
-// rewriteRequest 换上游 scheme/host 并按配置剥掉路径前缀。SetURL 会把上游基路径
-// 与完整入站路径拼接，剥前缀后必须重写 Path；RawPath 同步重建，
-// 保证 %2F 等编码语义原样转发到上游而非被重新转义。
+// OutboundURL 给出入站请求改写后发往上游的完整 URL：换上游 scheme 与 host、
+// 剥掉本路由前缀、按斜杠边界拼接上游基路径，rawQuery 沿用已清理的查询串。
+// 转发与路由日志共用，保证日志与真实转发一致。
+func (r *Route) OutboundURL(inboundURL *url.URL, rawQuery string) *url.URL {
+	base := r.Target.URL
+	outbound := *inboundURL
+	outbound.Scheme = base.Scheme
+	outbound.Host = base.Host
+	if base.RawQuery == "" || rawQuery == "" {
+		outbound.RawQuery = base.RawQuery + rawQuery
+	} else {
+		outbound.RawQuery = base.RawQuery + "&" + rawQuery
+	}
+	outbound.Path, outbound.RawPath = buildOutPath(inboundURL, r.Prefix, base)
+	return &outbound
+}
+
+// rewriteRequest 换上游 scheme/host 并按配置剥掉路径前缀，
+// RawPath 同步重建，保证 %2F 等编码语义原样转发到上游而非被重新转义。
 func (r *Route) rewriteRequest(request *httputil.ProxyRequest) {
-	request.SetURL(r.Target.URL)
-	restPath := strings.TrimPrefix(request.In.URL.Path, r.Prefix)
-	restRawPath := trimEncodedPrefix(request.In.URL.EscapedPath(), len(request.In.URL.Path)-len(restPath))
-	request.Out.URL.Path, request.Out.URL.RawPath = joinOutPath(r.Target.URL, restPath, restRawPath)
+	request.Out.URL = r.OutboundURL(request.In.URL, request.Out.URL.RawQuery)
 	if r.Host != "" {
 		request.Out.Host = r.Host
 	}
@@ -68,9 +82,10 @@ func (r *Route) rewriteRequest(request *httputil.ProxyRequest) {
 }
 
 // UpstreamErrorHandler 上游不可达时回 502，不向客户端透出传输层错误细节。
+// 入参是被改写的出站请求，故按实际拨号目标记录，与 DEBUG 路由日志的行尾一致。
 // 供本包的路由代理与 proxy 包的透传代理共用。
 func UpstreamErrorHandler(writer http.ResponseWriter, request *http.Request, err error) {
-	log.Error("upstream request failed host=%s path=%s: %v", request.Host, request.URL.Path, err)
+	log.Error("upstream request failed upstream=%s: %v", request.URL.String(), err)
 	writer.WriteHeader(http.StatusBadGateway)
 	_, _ = io.WriteString(writer, "502 Bad Gateway")
 }

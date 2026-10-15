@@ -70,13 +70,13 @@ func parseStartupOptions() (startupOptions, error) {
 	}
 	opts.logLevel = level
 	if opts.port < 1 || opts.port > 65535 {
-		return opts, fmt.Errorf("invalid --port %d: must be between 1 and 65535", opts.port)
+		return opts, fmt.Errorf("--port %d: must be 1-65535", opts.port)
 	}
 	if opts.dnsTimeout <= 0 {
-		return opts, fmt.Errorf("invalid --dns-timeout %v: must be positive", opts.dnsTimeout)
+		return opts, fmt.Errorf("--dns-timeout %v: must be > 0", opts.dnsTimeout)
 	}
 	if opts.dnsTTL < 0 {
-		return opts, fmt.Errorf("invalid --dns-ttl %v: must be zero or positive", opts.dnsTTL)
+		return opts, fmt.Errorf("--dns-ttl %v: must be >= 0", opts.dnsTTL)
 	}
 	return opts, nil
 }
@@ -85,7 +85,7 @@ func parseStartupOptions() (startupOptions, error) {
 func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 	if !opts.configSpecified {
 		if err := config.Ensure(opts.configPath); err != nil {
-			return nil, fmt.Errorf("initialize routing config: %w", err)
+			return nil, fmt.Errorf("ensure config: %w", err)
 		}
 	}
 	if opts.certSpecified != opts.keySpecified {
@@ -93,36 +93,36 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 	}
 	nameservers, err := dns.New(opts.dnsTimeout, opts.dnsTTL, dns.DefaultNameservers)
 	if err != nil {
-		return nil, fmt.Errorf("initialize dns nameservers: %w", err)
+		return nil, err
 	}
 	transport := proxy.NewTransport(nameservers.DialContext)
 	tlsConfig, authority, err := ca.Load(opts.certPath, opts.keyPath, opts.certSpecified)
 	if err != nil {
-		return nil, fmt.Errorf("tls certificate configuration: %w", err)
+		return nil, fmt.Errorf("load tls config: %w", err)
 	}
 	proxyInstance, err := proxy.New(opts.configPath, transport, tlsConfig, authority, nameservers)
 	if err != nil {
 		return nil, err
 	}
 	// 首次 reload 已让配置文件里的 nameservers 生效，此处打印实际生效列表而非初始默认值
-	log.Info("dns nameservers=%s dns-ttl=%s", strings.Join(nameservers.Addresses(), ","), opts.dnsTTL)
+	log.Info("dns configured nameservers=%s ttl=%s", strings.Join(nameservers.Addresses(), ","), opts.dnsTTL)
 	return proxyInstance, nil
 }
 
 func main() {
 	opts, err := parseStartupOptions()
 	if err != nil {
-		log.Fatal("invalid flags: %v", err)
+		log.Fatal("flag parsing failed: %v", err)
 	}
 	log.Init(opts.logLevel)
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", opts.port))
 	if err != nil {
-		log.Fatal("listen addr=:%d failed: %v", opts.port, err)
+		log.Fatal("listen failed addr=:%d: %v", opts.port, err)
 	}
 	log.Info("listening addr=:%d", opts.port)
 	proxyInstance, err := buildProxy(opts)
 	if err != nil {
-		log.Fatal("startup failed: %v", err)
+		log.Fatal("build proxy failed: %v", err)
 	}
 	run(listener, proxyInstance)
 }
@@ -148,23 +148,23 @@ func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy, connections
 	for sig := range sigCh {
 		if sig == syscall.SIGHUP {
 			if err := proxyInstance.Reload(); err != nil {
-				log.Error("hot reload failed, keeping current config: %v", err)
+				log.Error("reload failed, keeping previous config: %v", err)
 				continue
 			}
-			log.Info("routing config reloaded")
+			log.Info("config reloaded")
 			continue
 		}
 		log.Info("shutdown signal received, draining connections")
 		if err := listener.Close(); err != nil {
-			log.Debug("listener close during shutdown: %v", err)
+			log.Debug("listener close failed: %v", err)
 		}
 		// 等 Serve 退出 accept 循环：保证所有 Add 都已发生在随后的 Wait 之前。
 		<-serveDone
 		if drainConnections(connections, shutdownGracePeriod) {
-			log.Info("shutdown complete: all connections drained")
+			log.Info("shutdown complete")
 			return
 		}
-		log.Warn("shutdown grace period elapsed, forcing exit")
+		log.Warn("shutdown grace period expired, forcing exit")
 		return
 	}
 }
