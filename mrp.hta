@@ -602,7 +602,6 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             vm.prompt('Static HTTP server', 'Directory to serve', host.workdir, function(dir) {
               dir = String(dir == null ? '' : dir).replace(/^\s+|\s+$/g, '');
               if (dir === '') return;
-              if (/["]/.test(dir)) { host.log('Path must not contain double quotes.', 'warn'); return; }
               host.runRaw('cmd /k python -m http.server ' + HTTP_PORT + ' --directory "' + dir + '"', 1, false);
               host.log('Static server serving ' + dir + ' at http://127.0.0.1:' + HTTP_PORT + '.', 'ok');
             });
@@ -741,7 +740,6 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             vm.prompt('Open browser', 'URL to open on the device', 'http://127.0.0.1:' + HTTP_PORT + '/', function(url) {
               url = String(url == null ? '' : url).replace(/^\s+|\s+$/g, '');
               if (url === '') return;
-              if (/[&|^<>"'%\s]/.test(url)) { host.log('URL contains shell-hostile characters - skipped.', 'warn'); return; }
               host.run((cfg.tool + ' ' + cfg.openUrl).replace(/\{URL\}/g, url), false);
             });
           } },
