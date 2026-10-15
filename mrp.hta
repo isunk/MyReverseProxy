@@ -742,7 +742,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               url = String(url == null ? '' : url).replace(/^\s+|\s+$/g, '');
               if (url === '') return;
               if (/[&|^<>"'%\s]/.test(url)) { host.log('URL contains shell-hostile characters - skipped.', 'warn'); return; }
-              host.run((cfg.tool + ' ' + cfg.openUrl).replace(/\{URL\}/g, url), true);
+              host.run((cfg.tool + ' ' + cfg.openUrl).replace(/\{URL\}/g, url), false);
             });
           } },
         { name: 'DevTools', tool: true, run: function(s) {
