@@ -1,6 +1,7 @@
 package ca
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
@@ -223,5 +224,84 @@ func TestLoad_ExplicitPairRequiresBothFiles(t *testing.T) {
 	cfg, _, err := Load(certPath, "/nonexistent/ca.key", true)
 	if err == nil {
 		t.Fatalf("want error when the explicit key file is missing, got %v", cfg)
+	}
+}
+
+// mitmHandshake 用 net.Pipe 完成一次真实 TLS 握手：服务端由 authority 动态签发
+// 证书，客户端仅信任 trust 一张证书，返回客户端侧连接状态供链结构断言。
+func mitmHandshake(t *testing.T, authority *Authority, trust *x509.Certificate, serverName string) tls.ConnectionState {
+	t.Helper()
+	roots := x509.NewCertPool()
+	roots.AddCert(trust)
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	var clientState tls.ConnectionState
+	var clientErr error
+	go func() {
+		defer close(done)
+		conn := tls.Client(client, &tls.Config{RootCAs: roots, ServerName: serverName})
+		defer client.Close()
+		if clientErr = conn.HandshakeContext(t.Context()); clientErr != nil {
+			return
+		}
+		clientState = conn.ConnectionState()
+	}()
+	serverConn := tls.Server(server, &tls.Config{
+		GetCertificate: authority.GetCertificate,
+		NextProtos:     []string{"http/1.1"},
+		MinVersion:     tls.VersionTLS12,
+	})
+	err := serverConn.HandshakeContext(t.Context())
+	serverConn.Close()
+	if err != nil {
+		t.Fatalf("server handshake: %v", err)
+	}
+	<-done
+	if clientErr != nil {
+		t.Fatalf("client handshake: %v", clientErr)
+	}
+	return clientState
+}
+
+// TestAuthority_CertChainCompleteness 验证动态签发证书链完整性：签发链为
+// [叶子, CA] 两张，叶子由 CA 签发；真实 TLS 握手中客户端仅信任 CA 根即可
+// 验证通过，证明签发者证书随链发送、客户端视角链完整可用。
+func TestAuthority_CertChainCompleteness(t *testing.T) {
+	caCert, caKey := testutil.AuthorityCA(t)
+	authority := New(caCert, caKey)
+
+	cert, err := authority.GetCertificate(&tls.ClientHelloInfo{ServerName: "api.example.com"})
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+	if len(cert.Certificate) != 2 {
+		t.Fatalf("签发链应含叶子与 CA 两张，got %d", len(cert.Certificate))
+	}
+	if !bytes.Equal(cert.Certificate[1], caCert.Raw) {
+		t.Fatal("链第二张应为签发 CA 证书本身")
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leaf.IsCA {
+		t.Fatal("叶子证书不应携带 CA 标志")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "api.example.com"}); err != nil {
+		t.Fatalf("叶子证书应可验证到根: %v", err)
+	}
+
+	state := mitmHandshake(t, authority, caCert, "api.example.com")
+	if len(state.PeerCertificates) != 2 {
+		t.Fatalf("客户端应收[叶子, CA]两张证书，got %d", len(state.PeerCertificates))
+	}
+	if len(state.VerifiedChains) == 0 {
+		t.Fatal("客户端握手应验证出完整信任链")
+	}
+	verified := state.VerifiedChains[0]
+	if len(verified) != 2 || !verified[1].Equal(caCert) {
+		t.Fatalf("验证链应为 叶子->根，got %d 张", len(verified))
 	}
 }
