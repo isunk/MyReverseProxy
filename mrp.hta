@@ -632,7 +632,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     function pushDev(file, dest) { return host.run(cfg.tool + ' ' + cfg.pushCmd + ' "' + host.workdir + file + '" ' + (dest || devDir)); }
     function devFileExists(path) { return host.exec(cfg.tool + ' shell "test -f ' + path + ' && echo Y" 2>nul') !== ''; }
     function binRunning() { return host.exec(cfg.tool + ' shell pidof ' + DEV_BIN + ' 2>nul') !== ''; }
-    function stopBin() { host.run(cfg.tool + ' shell pkill -f ' + DEV_BIN + ' >nul 2>&1'); }
+    function stopBin() { host.run(cfg.tool + ' shell "kill -9 $(pidof ' + DEV_BIN + ')" >nul 2>&1'); }
 
     function remount() {
       host.run(cfg.tool + ' root');
