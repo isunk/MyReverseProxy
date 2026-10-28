@@ -1,40 +1,26 @@
 # My Reverse Proxy
 
-Go 实现的本地反向代理。只监听一个端口（`--port`，默认 8000）：HTTP 请求按 Host 头与路径前缀路由转发，HTTPS 经 CONNECT 进入，命中配置的域名时做 MITM 解密后按同样规则路由，未命中的域名直接透传隧道。用于把移动 App 固定访问的域名劫持转发到自有服务器联调。
+Go 实现的本地反向代理，只监听一个端口（`--port`，默认 8000）。明文 HTTP 按 Host 头与路径前缀路由转发；HTTPS 经 CONNECT 进入，命中配置的域名做 MITM 解密后按同样规则路由，未命中的域名透传隧道。典型用途：
 
-## 功能特性
-
-### HTTPS 解密
-
-- 按域名实时签发证书，无需预先登记要拦截的域名
-- 支持 IP 型 HTTPS 路由：客户端对 IP 直连不发 SNI，mrp 回退到 CONNECT 目标签发 IP SAN 证书，客户端按 IP 校验通过
-- 未提供 CA 时无法解密：命中配置域名的 CONNECT 返回 502，其余域名仍走透传隧道
-
-### 路由
-
-- 多域名虚拟服务器，按域名、协议、端口匹配
-- 按路径前缀匹配，未命中的域名透传到原目标
-- 可改写 Host 头与请求、响应头
-- 支持 `status` 短路响应：命中前缀直接返回指定状态码与 `body`，不转发上游
-- 路径中的编码字符（如 `%2F`）原样转发到上游，不被二次转义
-
-### 上游
-
-- 可指向完整地址或 `host:port` 简写，也可直接指向本地目录托管静态页面
-
-### DNS 查询
-
-- 上游域名由 mrp 代为解析，使用配置的 DNS 服务器，不依赖设备系统 DNS
-
-### 配置热加载
-
-- 修改配置文件自动生效，无需重启
+- 把移动 App 固定访问的域名劫持转发到自有服务器联调：可改写 Host 与请求/响应头，支持 `status` 短路响应与本地静态目录托管
+- PC 无法直连部分地址时借道设备网络出口：mrp 跑在 Android / HarmonyOS 设备上，PC 经端口转发把代理指向设备
+- 上游域名由 mrp 代为解析：配置了 `nameservers` 用配置的服务器，未配置按系统默认 DNS；配置文件修改自动热加载
 
 ## 原理
 
-目标 App 通过 HTTPS 访问固定域名（如 `api.target-app.com`）。mrp 持有一张自签 CA，在 TLS 握手时按客户端 SNI 实时签发对应域名的服务端证书，把 CA 导入设备信任后，将设备代理指向 mrp——HTTPS 走 CONNECT 隧道，mrp 在其中完成 MITM；也可以把域名解析重定向到 mrp，直接以明文 HTTP 形式到达。
+mrp 在 `--port` 上监听明文连接，协议由请求内容推导：绝对形式 HTTP 请求取 URL 主机、源形式请求取 Host 头；HTTPS 经 CONNECT 进入，目标是否命中 `servers` 配置的域名决定两种模式（日志标记 `mitm started` / `tunnel started`）：
 
-核心是 MITM：客户端经 CONNECT 建立隧道后发来带 SNI 的 TLS ClientHello，mrp 用 CA 即时签发一张 SAN 为该 SNI 的服务端证书，代替目标域名完成握手；客户端因信任本地 CA 而验证通过，mrp 由此获得解密后的明文 HTTP：
+| | MITM 模式（命中配置域名） | tunnel 模式（未命中配置域名） |
+|------|------|------|
+| TLS 握手 | mrp 用自签 CA 按目标域名现场签发证书，代替目标与客户端握手 | 客户端与目标服务器端到端握手，mrp 全程只搬运字节 |
+| 客户端看到的证书链 | mrp 动态签发的证书链，需先导入并信任 `ca.crt` | 目标服务器的原始证书链，逐字节保持原样 |
+| 请求内容可见性 | 可见可改：解密后按域名与路径前缀路由，可改写 Host 与消息头 | 不可见：mrp 仅知目标域名与端口，无法读取或改写内容 |
+| 上游证书校验 | mrp 跳过，信任交由设备端信任的 CA 链路完成 | 无需 mrp 参与，证书校验本就发生在客户端与目标之间 |
+| 未提供 CA 时 | 命中域名的 CONNECT 返回 502，无法解密 | 不受影响，仍正常透传 |
+
+两种模式靠配置切换：`config.yaml` 的 `servers` 登记域名即对该域名走 MITM，删掉即回落 tunnel 透传，热加载即时生效；留空 `servers` 即全量 tunnel。
+
+MITM 的关键在动态签发：客户端经 CONNECT 发来带 SNI 的 TLS ClientHello，mrp 用自签 CA 现场签发一张 SAN 为该 SNI 的服务端证书代替目标完成握手；客户端因信任导入的 CA 校验通过，mrp 由此得到明文 HTTP 再做路由转发，因此 CA 无需预登记拦截域名：
 
 ```mermaid
 sequenceDiagram
@@ -49,10 +35,11 @@ sequenceDiagram
     App->>mrp: "TCP 连接 + CONNECT api.target-app.com:443"
     mrp->>mrp: 查配置里是否有该域名
 
-    alt 命中配置域名，走 MITM 解密
+    alt MITM 模式：命中配置域名，解密后路由转发
         mrp->>App: "200 Connection Established"
         App->>mrp: "TLS 握手（SNI: api.target-app.com）"
         mrp->>mrp: 用自签 CA 现场签发该域名证书
+        Note over App,mrp: 客户端拿到的是 mrp 动态签发的证书链
         mrp-->>App: TLS 握手完成
         App->>mrp: "HTTP 请求（已被 mrp 解密）"
         mrp->>mrp: 按域名与路径前缀匹配路由
@@ -62,9 +49,10 @@ sequenceDiagram
         Up-->>mrp: HTTP 响应
         mrp-->>App: 加密回传响应
 
-    else 未命中配置域名，字节隧道透传
+    else tunnel 模式：未命中配置域名，字节隧道透传
         mrp->>Tgt: 建立 TCP 连接（失败回 502）
         mrp->>App: "200 Connection Established"
+        Note over App,Tgt: TLS 由客户端与目标端到端协商，证书链保持原始，mrp 只搬运字节
         App->>mrp: 目标域名的加密流量
         mrp->>Tgt: 原样搬运字节，不解密、不改写
         Tgt-->>mrp: 字节流回传
@@ -81,13 +69,11 @@ sequenceDiagram
     end
 ```
 
-随后按域名与路径前缀匹配路由，转发到真实上游，未匹配的域名透传原目标；上游为 HTTPS 时 mrp 跳过其证书校验，校验交由设备端信任的 CA 链路完成。明文 HTTP 连接（域名解析到 mrp 或经代理的 HTTP 请求）不做 TLS 握手，直接按 Host 头路由；显式代理的 CONNECT 未命中配置域名时同样返回「200 Connection Established」，但只搬运字节不做解密。
-
 ## 使用流程
 
-### 1. 准备 CA 证书和私钥
+### 1. 生成并导入 CA
 
-生成一张自签 CA，mrp 会用它按 SNI 动态签发各域名的服务端证书，因此 CA 本身无需预写拦截域名：
+生成一张自签 CA，mrp 用它按客户端 SNI 动态签发各域名的服务端证书：
 
 ```bash
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
@@ -97,9 +83,7 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
   -addext "keyUsage=critical,keyCertSign,digitalSignature"
 ```
 
-### 2. 导入 CA 证书
-
-把 `ca.crt` 导入客户端设备，使其信任 mrp 签发的证书。
+把 `ca.crt` 导入客户端，使其信任 mrp 签发的证书。仅 MITM 模式需要，纯 tunnel 透传可跳过。
 
 #### Android
 
@@ -147,12 +131,12 @@ sudo update-ca-certificates
 
 也可以用 `curl --cacert ca.crt` 临时信任，无需系统导入。
 
-### 3. 初始化配置文件
+### 2. 编写配置
 
 mrp 首次运行会自动在当前目录创建 `config.yaml`（含注释模板），按需编辑：
 
 ```yaml
-# 上游域名解析用的 DNS 服务器，缺省 114.114.114.114 与 8.8.8.8
+# 上游域名解析用的 DNS 服务器（首启模板自带这两组）；删除本字段按系统默认 DNS 解析
 nameservers:
   - "114.114.114.114"
   - "8.8.8.8"
@@ -189,8 +173,8 @@ servers:
 | 字段 | 说明 |
 |------|------|
 | `servers[].domain` | 按域名匹配（大小写不敏感），HTTPS 用 CONNECT 目标主机、HTTP 用 Host 头 |
-| `servers[].protocol` | 可选，请求协议 `http` 或 `https`，省略匹配任意协议；不参与监听，mrp 始终在 `--port` 上监听明文连接 |
-| `servers[].port` | 可选，请求目标端口，省略匹配任意端口；不参与监听，mrp 始终在 `--port` 上监听 |
+| `servers[].protocol` | 可选，`http` 或 `https`，省略匹配任意协议 |
+| `servers[].port` | 可选，请求目标端口，省略匹配任意端口 |
 | `routes[].prefix` | 最长路径前缀匹配，必须以 `/` 开头 |
 | `routes[].upstream` | 上游地址，路径前缀自动映射；也支持本地目录路径（相对进程工作目录，托起静态文件，目录命中回退 `index.html`）；与 `status` 互斥 |
 | `routes[].status` | 可选，直接返回该状态码，不转发到 `upstream`；取值 200-599，其中 204/304 不得携带 `body`；与 `upstream` 互斥 |
@@ -198,13 +182,13 @@ servers:
 | `routes[].host` | 可选，改写转发时的 Host 头 |
 | `routes[].headers.request` | 可选，改写发往上游的请求头（Set 语义，覆盖同名已有值） |
 | `routes[].headers.response` | 可选，覆盖下游返回的响应头（如跨域校验头 `Access-Control-Allow-*`） |
-| `nameservers` | 顶层字段，上游域名解析用的 DNS 服务器列表；支持裸 IP（默认 53 端口）与 `host:port`、`[::1]:5353` 写法，按顺序故障切换，单次尝试超时由 `--dns-timeout` 控制。解析结果按 `host:port` 缓存 `--dns-ttl` 时长，避免每条新上游连接重复发查询；`nameservers` 或路由变更时缓存整体清空。缺省 `114.114.114.114` 与 `8.8.8.8` |
+| `nameservers` | 上游域名解析的 DNS 服务器列表；支持裸 IP（默认 53 端口）与 `host:port`、`[::1]:5353` 写法，按顺序故障切换，单次尝试超时由 `--dns-timeout` 控制；解析结果按 `--dns-ttl` 缓存，`nameservers` 或路由变更时清空。省略或留空时按系统默认 DNS 解析（读 `/etc/resolv.conf`） |
 
-Android / HarmonyOS 设备上的 `/etc/resolv.conf` 常把 nameserver 指向 `[::1]` 或网关等非标准地址（解析交给 netd 等守护进程完成），mrp 自带的 Go DNS 解析器读不到有效服务器时上游域名会解析失败，报 `read udp ...->[::1]:53: connection refused`。因此设备部署时必须显式配置 `nameservers`。
+Android / HarmonyOS 设备上的 `/etc/resolv.conf` 常把 nameserver 指向 `[::1]` 或网关等非标准地址（解析交给 netd 等守护进程完成），走系统默认 DNS 时上游域名解析会失败，报 `read udp ...->[::1]:53: connection refused`。首启模板已自带 `114.114.114.114` 与 `8.8.8.8`，设备部署应保留显式配置。
 
-未匹配的域名透传原目标。修改 `config.yaml` 后自动热加载（轮询文件变更，`SIGHUP` 手动触发亦可），无需重启；只有路由或 `nameservers` 真正变化时才重建转发、拆掉旧的上游连接并清空 DNS 解析缓存与已签发证书缓存，改注释不会打断已有连接。CA 证书在启动时加载一次，热加载不重载证书。
+修改 `config.yaml` 后自动热加载（轮询文件变更，`SIGHUP` 手动触发亦可）：路由或 `nameservers` 变化时重建转发、清空 DNS 解析缓存与已签发证书缓存，改注释不打断已有连接；CA 证书仅在启动时加载一次。
 
-### 4. 启动服务
+### 3. 启动
 
 从 GitHub Releases 下载对应平台的静态二进制，免本地编译（`latest` 为每次构建自动发布的预发布包，`v*` 为正式版）：
 
@@ -215,11 +199,11 @@ wget https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp-linux-
 # Windows（amd64）
 curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp-windows-amd64.exe
 
-# Windows 可视化部署面板（可选，内置固定 CA，无需 openssl；支持提权导入与设备安装）
+# Windows 可视化部署面板（可选，内置固定 CA，无需 openssl）
 curl -LO https://github.com/isunk/MyReverseProxy/releases/download/latest/mrp.hta
 ```
 
-在 `--port` 指定的端口（默认 8000）监听，加载 `ca.crt` / `ca.key`：
+在 `--port` 指定的端口（默认 8000）监听，加载工作目录下的 `ca.crt` / `ca.key`：
 
 ```bash
 # Linux / HarmonyOS / Android 设备本机
@@ -227,20 +211,20 @@ chmod +x mrp-linux-arm64
 ./mrp-linux-arm64
 ```
 
-Windows 下命令行运行 `mrp-windows-amd64.exe` 即可，或下载 `mrp.hta` 双击运行（MRP Helper 部署面板）：内置一份固定 CA（`ca.crt` 哈希 `d6cd00d8`，无需 openssl），Windows 侧提供文件定位、导入/移除 CA（支持提权）、启停进程、设置/清除系统代理与卸载；Android(adb)/HarmonyOS(hdc) 设备侧工作目录统一为 `/data/local/mrp`，提供 install（推文件+装 CA）、start（运行+设代理）、sync config（把本地 config.yaml 同步到设备，mrp 自动热加载）、stop（杀进程+清代理）、uninstall（卸载+删 CA+删整个工作目录）。面板统一展示设备/文件/证书/应用/代理状态（hdc 因无可验证命令，代理状态显示 Unknown）。
+Windows 命令行运行 `mrp-windows-amd64.exe` 即可；也可双击 `mrp.hta`（MRP Helper 部署面板）：内置固定 CA 免 openssl，提供 Windows 侧 CA 导入、进程启停、系统代理设置，以及 Android(adb) / HarmonyOS(hdc) 设备的安装、启动、配置同步与卸载，设备工作目录统一为 `/data/local/mrp`。
 
 命令行参数：
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--port` | `8000` | 唯一监听端口，1-65535；须与设备代理端口一致；默认值在 1024 以上，无需管理员或 root 权限 |
+| `--port` | `8000` | 唯一监听端口 1-65535，须与客户端代理端口一致；默认值无需管理员或 root 权限 |
 | `--config` | `config.yaml` | 路由配置文件路径；未指定时缺失则自动创建 |
-| `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书/私钥，成对提供；mrp 按客户端 SNI 动态签发服务端证书；缺省时无法 MITM，命中配置的 CONNECT 目标返回 502，其余域名仍走透传隧道 |
+| `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书/私钥，成对提供；缺省时无法 MITM，命中配置的 CONNECT 返回 502 |
 | `--log` | `info` | debug / info / warn / error |
 | `--dns-timeout` | `1s` | 单个 DNS 服务器的解析尝试超时，超时后切到下一个 `nameservers` |
 | `--dns-ttl` | `30s` | 上游 `host:port` 解析结果的缓存时长，`0` 关闭缓存改为每次连接都解析 |
 
-### 5. 测试验证
+### 4. 验证
 
 ```bash
 # 显式代理：CONNECT 命中配置域名则 MITM 后路由转发
@@ -255,17 +239,9 @@ curl --resolve api.target-app.com:8000:127.0.0.1 \
   http://api.target-app.com:8000/v1/hello
 ```
 
-观察 mrp 日志确认路由命中与转发结果：每条请求打印 `domain` / `protocol` / `port` / `path` / `status` / `elapsed`，CONNECT 打印 `target` 与 `mode`（`mitm` 或 `tunnel`）；上游不可达时返回 502。
+观察 mrp 日志确认路由命中与转发结果：每条请求打印 `domain` / `protocol` / `port` / `path` / `status` / `elapsed`，CONNECT 额外打印 `mitm started` 或 `tunnel started domain=... port=...`；上游不可达时返回 502。日志格式为 `MM-dd HH:mm:ss.SSS\t级别\t消息+参数`，按级别着色，重定向到文件时为纯文本。
 
-日志格式为 `MM-dd HH:mm:ss.SSS\t级别\t消息+参数`，例如：
-
-```text
-09-28 09:21:36.865	INFO	created default config file path=config.yaml
-```
-
-整行按级别着色（仅终端输出时着色，重定向到文件为纯文本）：DEBUG 灰、INFO 普通色、WARN 黄、ERROR 红。
-
-### 6. 各平台设备对接代理
+### 5. 设备对接代理
 
 mrp 可跑在设备本机（代理地址填 `127.0.0.1`，免局域网依赖），也可跑在 PC 上（代理地址填 PC 的局域网 IP）。监听端口由 `--port` 指定（默认 8000），须与代理地址端口一致。
 
@@ -276,25 +252,15 @@ mrp 可跑在设备本机（代理地址填 `127.0.0.1`，免局域网依赖）�
 adb shell mkdir -p /data/local/mrp
 adb push mrp-linux-arm64 /data/local/mrp/
 
-# 路由配置，按需推送
-adb push config.yaml /data/local/mrp/
+# MITM 所需 CA 文件与路由配置，按需推送
+adb push ca.key ca.crt config.yaml /data/local/mrp/
 adb shell chmod +x /data/local/mrp/mrp-linux-arm64
 
 # 前台输出日志，Ctrl+C 结束
 adb shell "cd /data/local/mrp && ./mrp-linux-arm64"
 
-# 全局代理指向本机
+# 全局代理指向本机（mrp 跑在 PC 上时换成 PC 的局域网 IP）
 adb shell settings put global http_proxy 127.0.0.1:8000
-
-# 取消代理
-adb shell settings put global http_proxy :0
-```
-
-也可以让 mrp 跑在 PC 上，设备代理填 PC 的局域网 IP：
-
-```bash
-# 设置全局 HTTP 代理（IP 换成 mrp 所在机器的局域网地址）
-adb shell settings put global http_proxy 192.168.1.100:8000
 
 # 取消代理
 adb shell settings put global http_proxy :0
@@ -335,9 +301,7 @@ rem 取消代理
 netsh winhttp reset proxy
 ```
 
-浏览器与多数桌面应用走 WinINET（GUI）：设置 → 网络和 Internet → 代理 → 手动设置代理，填入 `192.168.1.100:8000`（端口取 `--port`，默认 8000），关闭时切回「自动检测」。
-
-也可以只让单个 Chrome 实例走代理（不影响系统设置，关闭窗口即结束）：
+浏览器与多数桌面应用走 WinINET：设置 → 网络和 Internet → 代理 → 手动设置代理，填入 `192.168.1.100:8000`，关闭时切回「自动检测」。也可以只让单个 Chrome 实例走代理（不影响系统设置，关闭窗口即结束）：
 
 ```bash
 "C:\Program Files\Google\Chrome\Application\chrome.exe" --proxy-server="http://127.0.0.1:8000" "https://api.target-app.com/v1/"
@@ -352,6 +316,38 @@ export http_proxy=http://192.168.1.100:8000 https_proxy=http://192.168.1.100:800
 # 取消代理
 unset http_proxy https_proxy
 ```
+
+### 6. PC 借道设备网络出口（端口转发）
+
+PC 所在网络访问不了部分地址、设备可直连时，把 mrp 跑在设备上，用端口转发把 PC 本地端口映射到设备端口，PC 应用把代理指向 `127.0.0.1:<端口>`，请求即改从设备网络出口发出，上游域名解析（`nameservers`）也在设备侧完成。
+
+```bash
+# --- Android（adb）：PC 本地端口 -> 设备端口 ---
+adb forward tcp:8000 tcp:8000
+
+# 查看已建立的转发
+adb forward --list
+
+# 移除
+adb forward --remove tcp:8000
+
+# --- HarmonyOS（hdc）---
+hdc fport tcp:8000 tcp:8000
+
+# 查看已建立的转发
+hdc fport ls
+
+# 移除
+hdc fport rm tcp:8000 tcp:8000
+```
+
+设备侧推文件与启动见上一节 Android / HarmonyOS 小节；PC 侧代理指向 `127.0.0.1:8000`，设置方式与上文 Windows / Linux 小节相同（地址换成 `127.0.0.1`）。
+
+使用要点：
+
+- `config.yaml` 初始留空 `servers` 即全量 tunnel：PC 侧无需导入 CA；仅命中路由的域名才做 MITM
+- 转发随设备连接存活，USB 断开或设备重连后需重新执行
+- 无视系统代理的应用需 Proxifier 类工具强制接管；PC 侧改 hosts / DNS 对此场景无效，出口流量仍需经代理从设备发出
 
 ## 从源码构建
 
@@ -386,7 +382,7 @@ internal/
   config/       YAML 配置结构与解析
   route/        路由表、前缀匹配、路径改写（含编码保真）
   proxy/        反向代理核心：请求转发、CONNECT 隧道、MITM 编排、热加载
-   frontend/     单端口明文监听、单连接复用（MITM 内层服务）
+  frontend/     单端口明文监听、单连接复用（MITM 内层服务）
   ca/           自签 CA 按名字现场签发证书（域名 SAN / IP SAN），并发合并
   dns/          上游 DNS 解析与故障切换、结果缓存
   cache/        通用并发缓存
