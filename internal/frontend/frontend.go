@@ -21,8 +21,7 @@ const (
 	acceptBackoffMax = time.Second
 )
 
-// oneConnListener 把已建立的连接包装为 Listener，让 http.Server 直接服务该连接，
-// 从而拿到 ConnState 回调判断是否发生 hijack。
+// oneConnListener 把已建立的连接包装为 Listener，让 http.Server 直接服务该连接，从而拿到 ConnState 回调判断是否发生 hijack。
 type oneConnListener struct {
 	conn  net.Conn
 	taken atomic.Bool
@@ -49,8 +48,7 @@ func (l *oneConnListener) Close() error { return nil }
 
 func (l *oneConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
 
-// BufferedConn 把 http.Server 内部的 bufio.Reader 预读数据接回连接，
-// 供 hijack 后读取紧跟 CONNECT 的字节。
+// BufferedConn 把 http.Server 内部的 bufio.Reader 预读数据接回连接，供 hijack 后读取紧跟 CONNECT 的字节。
 type BufferedConn struct {
 	net.Conn
 	Reader *bufio.Reader
@@ -58,11 +56,7 @@ type BufferedConn struct {
 
 func (c *BufferedConn) Read(p []byte) (int, error) { return c.Reader.Read(p) }
 
-// Serve 接受连接并逐条服务：单条连接服务结束（未发生 hijack）时关闭该连接。
-// 监听器已关闭即返回；其余 Accept 错误退避重试，设备上 fd 短暂耗尽（EMFILE）
-// 属临时故障，停止重试会让代理在进程存活的情况下静默拒绝一切连接。
-// connections 为每条仍被服务的连接计数，退出前可 Wait 完成 drain；Serve 返回后
-// 不再新增计数，但已接受连接的结束仍需等待其对应 Done。
+// Serve 接受连接并逐条服务：单条连接服务结束（未发生 hijack）时关闭该连接；监听器已关闭即返回，其余 Accept 错误退避重试，避免 fd 短暂耗尽（EMFILE）等临时故障让代理静默拒绝连接；connections 为在服务连接计数以供退出前 drain。
 func Serve(listener net.Listener, handler http.Handler, connections *sync.WaitGroup) error {
 	backoff := 5 * time.Millisecond
 	for {
@@ -118,8 +112,7 @@ func New(handler http.Handler) *http.Server {
 	}
 }
 
-// StatusRecorder 记录响应状态码供请求日志使用，其余能力透传给底层 writer；
-// 提供 Unwrap，使包装链上的 flusher/hijacker 等接口继续可用。
+// StatusRecorder 记录响应状态码供请求日志使用，其余能力透传给底层 writer；Unwrap 使 flusher/hijacker 等接口继续可用。
 type StatusRecorder struct {
 	http.ResponseWriter
 	Status int

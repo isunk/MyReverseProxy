@@ -27,8 +27,7 @@ type Server struct {
 	Routes   []Route `yaml:"routes"`
 }
 
-// Route 一条路径前缀到上游的映射，命中最长前缀时生效。
-// Status 非零时直接返回该状态码与 Body，不转发到 upstream。
+// Route 一条路径前缀到上游的映射，按最长前缀匹配；Status 非零时直接返回该状态码与 Body，不转发上游。
 type Route struct {
 	Prefix   string  `yaml:"prefix"`
 	Upstream string  `yaml:"upstream"`
@@ -38,8 +37,7 @@ type Route struct {
 	Headers  Headers `yaml:"headers"`
 }
 
-// Headers 在转发时改写消息头：Request 写入发往上游的请求头，
-// Response 覆盖下游返回的响应头（如跨域校验头）。Set 语义，覆盖同名已有值。
+// Headers 转发时改写的消息头：Request 写入发往上游，Response 覆盖下游返回（如跨域校验头），Set 语义覆盖同名。
 type Headers struct {
 	Request  map[string]string `yaml:"request"`
 	Response map[string]string `yaml:"response"`
@@ -77,8 +75,7 @@ func Parse(data []byte) (*Config, error) {
 	return &config, nil
 }
 
-// buildTable 把配置构建为按域名索引的虚拟服务器表：(domain, protocol, port)
-// 组合唯一，同一域名可声明多个条目分别匹配不同协议与端口。
+// buildTable 把配置构建为按域名索引的虚拟服务器表，同一域名可按 (protocol, port) 组合声明多条。
 func buildTable(config *Config) (*route.Table, error) {
 	table := route.NewTable()
 	for _, server := range config.Servers {
@@ -101,8 +98,7 @@ func buildTable(config *Config) (*route.Table, error) {
 	return table, nil
 }
 
-// buildServerEntry 归一 server 条目的协议与端口：protocol 省略留空匹配任意协议，
-// port 为 0 表示匹配任意端口，显式取值须在 1-65535。
+// buildServerEntry 归一 server 条目的协议与端口：protocol 省略匹配任意协议，port 为 0 匹配任意端口，显式取值须 1-65535。
 func buildServerEntry(server Server) (*route.Entry, error) {
 	protocol := strings.ToLower(strings.TrimSpace(server.Protocol))
 	switch protocol {
@@ -117,8 +113,7 @@ func buildServerEntry(server Server) (*route.Entry, error) {
 	return &route.Entry{Protocol: protocol, Port: port}, nil
 }
 
-// buildRoutes 构建单个虚拟服务器的路由条目：前缀必填且以 / 开头，条目内不可重复。
-// status 与 upstream 互斥：status 非零时直接返回状态码，不解析 upstream。
+// buildRoutes 构建单个虚拟服务器的路由：前缀必填且以 / 开头、条目内不可重复，status 与 upstream 互斥。
 func buildRoutes(server Server) ([]*route.Route, error) {
 	seen := map[string]bool{}
 	entries := make([]*route.Route, 0, len(server.Routes))

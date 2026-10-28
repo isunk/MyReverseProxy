@@ -38,8 +38,7 @@ type Proxy struct {
 	passthrough *httputil.ReverseProxy
 	nameservers *dns.Resolver
 
-	// reloadMu 串行化 reload：WatchFile 轮询与 SIGHUP 可并发触发，
-	// 不加锁时两个 reload 的 Load→Store 交错会让旧配置覆盖新配置
+	// reloadMu 串行化 reload：WatchFile 轮询与 SIGHUP 可并发触发，不加锁时两个 reload 的 Load→Store 交错会让旧配置覆盖新配置
 	reloadMu sync.Mutex
 }
 
@@ -70,8 +69,7 @@ func newPassthroughProxy(transport *http.Transport) *httputil.ReverseProxy {
 	}
 }
 
-// passthroughURL 给出未命中路由时的转发目标：完整 URL 原样转发，
-// 隧道内层收到的源形式请求按连接协议与 Host 头补齐 scheme 与端口。
+// passthroughURL 给出未命中路由时的转发目标：完整 URL 原样转发，隧道内层收到的源形式请求按连接协议与 Host 头补齐 scheme 与端口。
 func passthroughURL(inbound *http.Request) *url.URL {
 	if inbound.URL.Scheme != "" {
 		outbound := *inbound.URL
@@ -89,8 +87,7 @@ func passthroughURL(inbound *http.Request) *url.URL {
 	return &outbound
 }
 
-// reload 重载配置：路由与 DNS 服务器无变化时保留现状，任一项变化则替换并清理派生状态。
-// 加锁串行化：读文件、比指纹、换表、清缓存是一个决策整体，并发重载必须保持顺序一致。
+// reload 重载配置：路由与 DNS 服务器无变化时保留现状，任一项变化则替换并清理派生状态；加锁串行化保证读文件、比指纹、换表、清缓存的顺序一致。
 func (p *Proxy) reload() error {
 	p.reloadMu.Lock()
 	defer p.reloadMu.Unlock()
@@ -132,8 +129,7 @@ func (p *Proxy) Handler() http.Handler {
 	})
 }
 
-// routeHandler 选出本次请求的处理器：命中路由走该路由，否则透传原始目标。
-// Debug 级日志一行呈现路由结果：入站完整 URL 与改写后实际发出的 URL。
+// routeHandler 选出本次请求的处理器：命中路由走该路由，否则透传原始目标；Debug 级日志一行呈现入站 URL 与改写后实际发出的 URL。
 func (p *Proxy) routeHandler(request *http.Request, protocol string, port int, domain string) http.Handler {
 	targetRoute, matched := p.table.Load().Pick(protocol, port, domain, request.URL.Path)
 	inbound := absoluteTarget(protocol, port, domain, request.URL)
@@ -169,8 +165,7 @@ func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) 
 	handler.ServeHTTP(recorder, request)
 }
 
-// WatchFile 轮询配置文件元数据，size 与 mtime 都未变化时跳过整份读取，
-// 内容变化才触发重载，失败保留旧配置。stop 为 nil 时常驻运行。
+// WatchFile 轮询配置文件元数据，size 与 mtime 都未变化时跳过整份读取，内容变化才触发重载，失败保留旧配置；stop 为 nil 时常驻运行。
 func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 	var previousSize int64
 	var previousModTime time.Time
@@ -215,8 +210,7 @@ func (p *Proxy) Reload() error {
 	return p.reload()
 }
 
-// NewTransport 构建上游连接池：关闭环境代理防回环、放宽同主机连接复用，
-// 并开启 TLS 会话复用，避免每条新上游连接重跑完整握手。
+// NewTransport 构建上游连接池：关闭环境代理防回环、放宽同主机连接复用，并开启 TLS 会话复用，避免每条新上游连接重跑完整握手。
 func NewTransport(dialContext func(context.Context, string, string) (net.Conn, error)) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil // 禁用环境代理，避免代理流量经上游代理回环到自身

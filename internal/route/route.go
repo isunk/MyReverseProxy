@@ -15,8 +15,7 @@ const (
 	ProtocolHTTPS = "https"
 )
 
-// Route 一条路径前缀到转发目标的映射。handler 在加载配置时构建完毕，
-// 运行期只做前缀匹配，不再区分远程上游与本地目录。
+// Route 一条路径前缀到转发目标的映射；handler 加载配置时构建完毕，运行期只做前缀匹配。
 type Route struct {
 	Prefix  string
 	Host    string
@@ -59,8 +58,7 @@ func headerFingerprint(headers map[string]string) string {
 	return buffer.String()
 }
 
-// Entry 一个虚拟服务器：按 protocol 与 port 筛选请求，
-// 命中的条目内路由按最长前缀匹配。Protocol 留空匹配任意协议，Port 为 0 匹配任意端口。
+// Entry 一个虚拟服务器：按 protocol 与 port 筛选请求，条目内路由按最长前缀匹配；Protocol 留空匹配任意协议，Port 为 0 匹配任意端口。
 type Entry struct {
 	Protocol string
 	Port     int
@@ -75,8 +73,7 @@ func (e *Entry) matches(protocol string, port int) bool {
 	return e.Port == 0 || e.Port == port
 }
 
-// Table 按域名索引的虚拟服务器表。表在加载配置时一次性构建完毕，
-// 运行期只读，热加载以整体替换实现。
+// Table 按域名索引的虚拟服务器表，加载配置时一次性构建、运行期只读，热加载以整体替换实现。
 type Table struct {
 	byDomain map[string][]*Entry
 }
@@ -85,8 +82,7 @@ func NewTable() *Table {
 	return &Table{byDomain: map[string][]*Entry{}}
 }
 
-// Add 把归一后的虚拟服务器条目挂入对应域名的列表，同一域名下
-// (protocol, port) 组合唯一，重复时直接报错。
+// Add 把归一后的虚拟服务器条目挂入对应域名，同一域名下 (protocol, port) 组合唯一，重复报错。
 func (t *Table) Add(domain string, entry *Entry, routes []*Route) error {
 	for _, existing := range t.byDomain[domain] {
 		if existing.Protocol == entry.Protocol && existing.Port == entry.Port {
@@ -135,9 +131,7 @@ func (t *Table) InstallHandlers(transport *http.Transport) {
 	}
 }
 
-// Fingerprint 生成路由表的稳定指纹，用于判断热加载后的配置是否真正变化：
-// 无变化时跳过重建处理器与拆掉存量连接。端口与协议纳入指纹，
-// 使端口/协议调整同样触发重建。
+// Fingerprint 生成路由表稳定指纹用于判断热加载是否变化：无变化跳过重建处理器与拆存量连接，端口与协议也纳入以触发重建。
 func (t *Table) Fingerprint() string {
 	var buffer strings.Builder
 	for _, domain := range slices.Sorted(maps.Keys(t.byDomain)) {

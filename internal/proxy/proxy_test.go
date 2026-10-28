@@ -524,8 +524,7 @@ func TestProxy_HTTPSViaConnect(t *testing.T) {
 	}
 }
 
-// protocol 只作为虚拟服务器匹配条件：声明 protocol: https 的条目只接 CONNECT，
-// 同域名的明文 GET 不命中该条目而走透传
+// protocol 只作为虚拟服务器匹配条件：声明 protocol: https 的条目只接 CONNECT，同域名的明文 GET 不命中该条目而走透传
 func TestProxy_ProtocolMatchesConnectOnly(t *testing.T) {
 	up := recordingServer(t, "MATCHED")
 	content := "servers:\n" +

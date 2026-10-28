@@ -11,8 +11,7 @@ import (
 	"mrp/internal/log"
 )
 
-// HeaderRewrite 转发时改写的消息头：Request 写入发往上游的请求头，
-// Response 覆盖下游返回的响应头。Set 语义，覆盖同名已有值。
+// HeaderRewrite 转发时改写的消息头：Request 写入发往上游，Response 覆盖下游返回，Set 语义覆盖同名。
 type HeaderRewrite struct {
 	Request  map[string]string
 	Response map[string]string
@@ -54,9 +53,7 @@ func (r *Route) buildProxy(transport *http.Transport) *httputil.ReverseProxy {
 	return proxy
 }
 
-// OutboundURL 给出入站请求改写后发往上游的完整 URL：换上游 scheme 与 host、
-// 剥掉本路由前缀、按斜杠边界拼接上游基路径，rawQuery 沿用已清理的查询串。
-// 转发与路由日志共用，保证日志与真实转发一致。
+// OutboundURL 给出入站请求改写后发往上游的完整 URL：换 scheme/host、剥前缀拼接上游基路径，转发与路由日志共用保证一致。
 func (r *Route) OutboundURL(inboundURL *url.URL, rawQuery string) *url.URL {
 	base := r.Target.URL
 	outbound := *inboundURL
@@ -71,8 +68,7 @@ func (r *Route) OutboundURL(inboundURL *url.URL, rawQuery string) *url.URL {
 	return &outbound
 }
 
-// rewriteRequest 换上游 scheme/host 并按配置剥掉路径前缀，
-// RawPath 同步重建，保证 %2F 等编码语义原样转发到上游而非被重新转义。
+// rewriteRequest 换上游 scheme/host 并按配置剥前缀，RawPath 同步重建保证 %2F 等编码原样转发。
 func (r *Route) rewriteRequest(request *httputil.ProxyRequest) {
 	request.Out.URL = r.OutboundURL(request.In.URL, request.Out.URL.RawQuery)
 	if r.Host != "" {
@@ -81,9 +77,7 @@ func (r *Route) rewriteRequest(request *httputil.ProxyRequest) {
 	r.Headers.rewriteRequest(request.Out.Header)
 }
 
-// UpstreamErrorHandler 上游不可达时回 502，不向客户端透出传输层错误细节。
-// 入参是被改写的出站请求，故按实际拨号目标记录，与 DEBUG 路由日志的行尾一致。
-// 供本包的路由代理与 proxy 包的透传代理共用。
+// UpstreamErrorHandler 上游不可达时回 502，不向客户端透出传输层错误；按实际拨号目标记录，供本包路由代理与 proxy 包透传代理共用。
 func UpstreamErrorHandler(writer http.ResponseWriter, request *http.Request, err error) {
 	log.Error("upstream request failed upstream=%s: %v", request.URL.String(), err)
 	writer.WriteHeader(http.StatusBadGateway)
@@ -100,8 +94,7 @@ func newStaticHandler(root, prefix string, responseHeaders map[string]string) *s
 	return &staticHandler{root: http.Dir(root), prefix: prefix, responseHeaders: responseHeaders}
 }
 
-// ServeHTTP 以本地目录为根托起静态文件：目录命中时回退 index.html，
-// 不生成目录列表；路径解析交由 http.Dir 以阻断路径穿越。
+// ServeHTTP 以本地目录为根托管静态文件：目录命中回退 index.html，不生成目录列表，路径解析交给 http.Dir 阻断穿越。
 func (h *staticHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	for name, value := range h.responseHeaders {
 		writer.Header().Set(name, value)

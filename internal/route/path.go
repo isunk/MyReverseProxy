@@ -5,9 +5,7 @@ import (
 	"strings"
 )
 
-// buildOutPath 按斜杠边界把上游基路径与入站剩余路径拼成 (Path, RawPath)，
-// 语义与 httputil 内部的 joinURLPath 一致。剩余路径取入站请求的原始编码形态，
-// %2F 等不会被重新转义；无编码差异时 RawPath 置空，回归默认转义。
+// buildOutPath 按斜杠边界把上游基路径与入站剩余路径拼成 (Path, RawPath)，剩余路径取原始编码形态避免 %2F 被重新转义。
 func buildOutPath(inboundURL *url.URL, prefix string, base *url.URL) (string, string) {
 	restPath := strings.TrimPrefix(inboundURL.Path, prefix)
 	restRawPath := strings.TrimPrefix(inboundURL.EscapedPath(), prefix)

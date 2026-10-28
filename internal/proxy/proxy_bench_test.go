@@ -35,8 +35,7 @@ type benchEnv struct {
 	upstreamCA  *x509.Certificate
 }
 
-// newBenchEnv 搭一条真实的 MITM 链路：客户端 CONNECT 到虚拟域名，代理解密后
-// 转发到需经 DNS 解析的 HTTPS 上游，客户端对 mrp 签发证书做真实校验。
+// newBenchEnv 搭一条真实的 MITM 链路：客户端 CONNECT 到虚拟域名，代理解密后转发到需经 DNS 解析的 HTTPS 上游，客户端对 mrp 签发证书做真实校验。
 func newBenchEnv(t testing.TB) *benchEnv {
 	t.Helper()
 
@@ -156,9 +155,7 @@ func BenchmarkDirect_Warm(b *testing.B) {
 	}
 }
 
-// BenchmarkTransport_POST_ExpectContinue 客户端带 Expect: 100-continue 的上行请求。
-// Go 服务端读请求体会自动回 100，所以正常配置下这项保持在毫秒级；
-// 若上游读取 body 却不回 100，Transport 会白等满 ExpectContinueTimeout。
+// BenchmarkTransport_POST_ExpectContinue 客户端带 Expect: 100-continue 的上行请求。Go 服务端读请求体会自动回 100，所以正常配置下这项保持在毫秒级；若上游读取 body 却不回 100，Transport 会白等满 ExpectContinueTimeout。
 func BenchmarkTransport_POST_ExpectContinue(b *testing.B) {
 	b.ReportAllocs()
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -196,8 +193,7 @@ func postExpectContinue(t testing.TB, client *http.Client, target string, payloa
 	return string(body)
 }
 
-// TestMITM_ColdLatency 量化首次请求的代价：证书未签发、DNS 未解析、上游连接为冷。
-// 只跑一次，用来判断启动预热是否值得做。
+// TestMITM_ColdLatency 量化首次请求的代价：证书未签发、DNS 未解析、上游连接为冷。只跑一次，用来判断启动预热是否值得做。
 func TestMITM_ColdLatency(t *testing.T) {
 	env := newBenchEnv(t)
 
@@ -228,8 +224,7 @@ func TestMITM_ColdLatency(t *testing.T) {
 	t.Logf("单次签发证书平均: %s", time.Since(signStart)/10)
 }
 
-// BenchmarkTunnel_Copy 未命中域名的透传搬运速率：mrp 只搬字节，不做解密不改写。
-// 报告每秒搬运字节数，用来判断隧道缓冲是否需要加大。
+// BenchmarkTunnel_Copy 未命中域名的透传搬运速率：mrp 只搬字节，不做解密不改写。报告每秒搬运字节数，用来判断隧道缓冲是否需要加大。
 func BenchmarkTunnel_Copy(b *testing.B) {
 	target := testutil.EchoServer(b)
 
@@ -250,9 +245,7 @@ func BenchmarkTunnel_Copy(b *testing.B) {
 	}
 }
 
-// tunnelCopy 经代理建一条 CONNECT 隧道，写入 payload 并读回等量字节，返回读回字节数。
-// 用 ReadFull 而非读到 EOF：mrp 的隧道在客户端关闭写端后会立刻关掉上游连接，
-// 半关闭场景下上游回传的字节会被截断，不代表正常请求路径。
+// tunnelCopy 经代理建一条 CONNECT 隧道，写入 payload 并读回等量字节，返回读回字节数。用 ReadFull 而非读到 EOF：mrp 的隧道在客户端关闭写端后会立刻关掉上游连接，半关闭场景下上游回传的字节会被截断，不代表正常请求路径。
 func tunnelCopy(b *testing.B, proxyURL, target string, payload []byte) int64 {
 	conn, err := net.Dial("tcp", strings.TrimPrefix(proxyURL, "http://"))
 	if err != nil {
@@ -285,8 +278,7 @@ func tunnelCopy(b *testing.B, proxyURL, target string, payload []byte) int64 {
 	return moved
 }
 
-// TestDNS_FallbackLatency 量化首台 DNS 服务器不可用时冷解析的代价：
-// 解析按配置顺序逐台尝试，前一台要等满单次超时才切换。
+// TestDNS_FallbackLatency 量化首台 DNS 服务器不可用时冷解析的代价：解析按配置顺序逐台尝试，前一台要等满单次超时才切换。
 func TestDNS_FallbackLatency(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		io.WriteString(writer, "ok")

@@ -70,8 +70,7 @@ func TestSingleJoiningSlash(t *testing.T) {
 	}
 }
 
-// TestRewriteRequest_PreservesEscapedPath 验证含编码字符（%2F、%20）的路径转发后
-// 编码语义原样保留，前缀按解码字节对齐剥离，前缀不匹配时整段原样转发。
+// TestRewriteRequest_PreservesEscapedPath 验证含编码字符（%2F、%20）的路径转发后编码语义原样保留，前缀按解码字节对齐剥离，前缀不匹配时整段原样转发。
 func TestRewriteRequest_PreservesEscapedPath(t *testing.T) {
 	cases := []struct {
 		prefix      string
@@ -106,8 +105,7 @@ func TestRewriteRequest_PreservesEscapedPath(t *testing.T) {
 	}
 }
 
-// TestOutboundURL 验证改写后发往上游的完整 URL：上游 scheme 与 host、
-// 前缀剥离与基路径拼接、查询串保留。路由日志与真实转发共用该实现。
+// TestOutboundURL 验证改写后发往上游的完整 URL：上游 scheme 与 host、前缀剥离与基路径拼接、查询串保留。路由日志与真实转发共用该实现。
 func TestOutboundURL(t *testing.T) {
 	cases := []struct {
 		prefix, upstream, inbound string

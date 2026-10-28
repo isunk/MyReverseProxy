@@ -38,9 +38,7 @@ func readConnectResponse(t *testing.T, reader *bufio.Reader) int {
 	return code
 }
 
-// CONNECT 目标缺端口时隧道必须按补齐后的 host:port 拨号（老式 CONNECT/1.0 客户端），
-// 而非把原始 Host 字符串直接交给拨号链路。在 443 上起回显服务验证可达性，
-// 特权端口不可绑定的环境跳过；IPv6 括号规范化由 target 层单测覆盖。
+// CONNECT 目标缺端口时隧道必须按补齐后的 host:port 拨号（老式 CONNECT/1.0 客户端），从而暴露把原始 Host 直接交给拨号链路的问题。在 443 上起回显服务验证可达性，特权端口不可绑定的环境跳过。
 func TestConnect_NoPortTargetDialsDefaultPort(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:443")
 	if err != nil {
@@ -130,9 +128,7 @@ func TestConnect_PipelinedDataPreserved(t *testing.T) {
 	}
 }
 
-// TestMITMConfig_FallsBackToConnectTarget 验证每连接 TLS 配置的回退逻辑：
-// SNI 缺失（IP 直连客户端惯例）以 CONNECT 目标回退签发 IP SAN 证书；
-// SNI 存在按 SNI 签发；静态证书或无 CA 的构造原样返回。
+// TestMITMConfig_FallsBackToConnectTarget 验证每连接 TLS 配置的回退逻辑：SNI 缺失（IP 直连客户端惯例）以 CONNECT 目标回退签发 IP SAN 证书，SNI 存在按 SNI 签发，静态证书或无 CA 的构造原样返回。
 func TestMITMConfig_FallsBackToConnectTarget(t *testing.T) {
 	caCert, caKey := testutil.AuthorityCA(t)
 	authority := ca.New(caCert, caKey)
@@ -169,9 +165,7 @@ func TestMITMConfig_FallsBackToConnectTarget(t *testing.T) {
 	}
 }
 
-// 配置 domain 为 IP 的 HTTPS 路由：CONNECT 命中后 MITM 按 CONNECT 目标签发 IP SAN
-// 证书（客户端对 IP 直连不发 SNI），客户端按 IP 校验通过，内层请求照常路由转发
-// （改动前该场景必 502）。
+// 配置 domain 为 IP 的 HTTPS 路由：CONNECT 命中后 MITM 按 CONNECT 目标签发 IP SAN 证书（客户端对 IP 直连不发 SNI），客户端按 IP 校验通过，内层请求照常路由转发（改动前该场景必 502）。
 func TestConnect_IPDomainMITM(t *testing.T) {
 	upstream := recordingServer(t, "ip")
 	caCert, caKey := testutil.AuthorityCA(t)
@@ -201,8 +195,7 @@ func TestConnect_IPDomainMITM(t *testing.T) {
 	if code := readConnectResponse(t, bufio.NewReader(proxyConn)); code != 200 {
 		t.Fatalf("CONNECT: want 200, got %d", code)
 	}
-	// Go 客户端对 IP 型 ServerName 不发 SNI，证书须由 CONNECT 目标回退签发；
-	// 客户端按 IP 校验证书的 IPAddresses
+	// Go 客户端对 IP 型 ServerName 不发 SNI，证书须由 CONNECT 目标回退签发，客户端按 IP 校验证书的 IPAddresses
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 	innerConn := tls.Client(proxyConn, &tls.Config{RootCAs: roots, ServerName: "127.0.0.1"})

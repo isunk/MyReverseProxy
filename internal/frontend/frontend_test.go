@@ -36,8 +36,7 @@ func (l *scriptedListener) Addr() net.Addr {
 	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
 }
 
-// Accept 先失败两次再恢复供连，验证瞬时错误后退避重试且连接被正常服务；
-// 监听器关闭后 Serve 以 net.ErrClosed 返回。
+// Accept 先失败两次再恢复供连，验证瞬时错误后退避重试且连接被正常服务；监听器关闭后 Serve 以 net.ErrClosed 返回。
 func TestServe_RetriesTransientAcceptErrors(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	state := 0
@@ -117,8 +116,7 @@ func TestServe_ReturnsOnListenerClose(t *testing.T) {
 	}
 }
 
-// TestServe_TracksInFlightConnections 验证退出前可通过 connections.Wait 等待仍在服务的连接：
-// 监听关闭后 Serve 立即返回，但阻塞中的 handler 会令 Wait 持续阻塞，直到 handler 释放为止。
+// TestServe_TracksInFlightConnections 验证退出前可通过 connections.Wait 等待仍在服务的连接：监听关闭后 Serve 立即返回，但阻塞中的 handler 会令 Wait 持续阻塞，直到 handler 释放为止。
 func TestServe_TracksInFlightConnections(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

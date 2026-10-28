@@ -231,8 +231,7 @@ func TestWatch_HotReload(t *testing.T) {
 	}
 }
 
-// 并发触发 reload（对应 WatchFile ticker 与 SIGHUP 并发的真实场景）：
-// reload 串行化后不互相覆盖，全部结束后再 reload 一次，生效表必须收敛到文件当前内容。
+// 并发触发 reload（对应 WatchFile ticker 与 SIGHUP 并发的真实场景）：reload 串行化后不互相覆盖，全部结束后再 reload 一次，生效表必须收敛到文件当前内容。
 func TestReload_ConcurrentReloadsConverge(t *testing.T) {
 	upA := recordingServer(t, "A")
 	upB := recordingServer(t, "B")

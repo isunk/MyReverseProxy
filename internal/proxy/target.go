@@ -16,9 +16,7 @@ const (
 	defaultHTTPSPort = 443
 )
 
-// targetOf 从请求提取转发目标的协议、端口与域名：CONNECT 按 https 处理；
-// 代理绝对形式请求取 URL 的 scheme 与目标主机；隧道内层收到的源形式请求
-// 取 Host 头并按连接是否为 TLS 判定协议。省略端口时按协议补默认端口。
+// targetOf 从请求提取转发目标的协议、端口与域名：CONNECT 按 https 处理；代理绝对形式取 URL 的 scheme 与主机；隧道内层源形式取 Host 头并按 TLS 判定协议；省略端口按协议补默认。
 func targetOf(request *http.Request) (string, int, string) {
 	if request.Method == http.MethodConnect {
 		host, port := hostAndPort(request.Host, defaultHTTPSPort)
@@ -40,8 +38,7 @@ func absoluteTarget(protocol string, port int, domain string, requestURL *url.UR
 	return protocol + "://" + net.JoinHostPort(domain, strconv.Itoa(port)) + requestURL.RequestURI()
 }
 
-// hostAndPort 拆分 Host 为名称与端口，端口缺失或非法时补 fallback。
-// 无端口的 [::1] 括号形态剥掉括号，使域名键与配置写法（::1）及 JoinHostPort 语义对齐。
+// hostAndPort 拆分 Host 为名称与端口，端口缺失或非法时补 fallback；无端口的 [::1] 括号形态剥掉括号，使域名键与配置写法及 JoinHostPort 语义对齐。
 func hostAndPort(host string, fallback int) (string, int) {
 	name, port, err := net.SplitHostPort(host)
 	if err != nil || name == "" {

@@ -47,8 +47,7 @@ func (c *certCall) deliver(cert *tls.Certificate, err error) {
 	close(c.done)
 }
 
-// Authority 按握手目标名（客户端 SNI 或调用方构造的 ClientHelloInfo）
-// 用持有的 CA 现场签发服务端证书，签发结果按域名缓存。
+// Authority 按握手目标名（SNI 或构造的 hello）用持有的 CA 现场签发服务端证书，结果按域名缓存。
 type Authority struct {
 	cert     *x509.Certificate
 	key      crypto.Signer
@@ -66,10 +65,7 @@ func New(cert *x509.Certificate, key crypto.Signer) *Authority {
 	}
 }
 
-// GetCertificate 供标准 TLS 握手按 ClientHelloInfo 取证书：ServerName 通常来自
-// 客户端 SNI，也可由调用方构造 hello 填入显式名字（如 CONNECT 目标回退，客户端
-// 对 IP 直连不发 SNI）。命中缓存即返回；未命中时同名字并发握手合并为一次签发。
-// ECDSA 密钥生成与签名耗时较长，须在锁外执行，避免串行化所有域名的握手。
+// GetCertificate 按客户端 SNI 取证书：命中缓存即返回，同域名并发握手合并为一次签发。ECDSA 生成与签名耗时，须在锁外执行。
 func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certificate, err error) {
 	serverName := strings.ToLower(hello.ServerName)
 	if serverName == "" {
@@ -82,8 +78,7 @@ func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certif
 	if !leader {
 		return call.wait()
 	}
-	// end 用 defer 兜底：sign 意外 panic 时 net/http 连接层会 recover，进程存活，
-	// 若不注销 inflight，该域名的所有后续握手将永久阻塞在 wait 上
+	// defer 兜底：sign panic 被 net/http 层 recover 后若不注销 inflight，该域名的握手会永久阻塞在 wait 上
 	defer func() { a.end(serverName, call, cert, err) }()
 	// 双检：Get 未命中到取得 leader 之间，可能已有上一轮签发完成并写入缓存
 	if cached, ok := a.cache.Get(serverName); ok {
@@ -96,8 +91,7 @@ func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certif
 	return cert, err
 }
 
-// begin 登记一次进行中的签发，返回的第二个值表示调用方是否为首个等待者。
-// 首个等待者负责签发，其余等待者复用同一结果。
+// begin 登记一次进行中的签发，第二个返回值表示调用方是否为负责签发的首个等待者。
 func (a *Authority) begin(serverName string) (*certCall, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -122,8 +116,7 @@ func (a *Authority) ClearCache() {
 	a.cache.Clear()
 }
 
-// sign 现场签发单个域名的证书：每次生成独立密钥不复用，NotBefore 回拨一小时容忍时钟偏移，
-// 证书链带上 CA 根证书使客户端无需额外安装即可信任。
+// sign 现场签发单个域名的证书：密钥不复用，NotBefore 回拨一小时容忍时钟偏移，证书链带 CA 根证书。
 func (a *Authority) sign(serverName string) (*tls.Certificate, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -157,9 +150,7 @@ func (a *Authority) sign(serverName string) (*tls.Certificate, error) {
 	}, nil
 }
 
-// Load 加载 CA 证书与私钥并构建现场签发能力。explicitPair 为 true 时
-// 跳过文件存在性检查（调用方已确认 --cert/--key 同时指定）；为 false 时，
-// 两个文件都不存在则返回 nil 配置进入纯 HTTP/隧道模式，只存在一个则报错。
+// Load 加载 CA 证书与私钥并构建签发能力。explicitPair 为 true 跳过存在性检查；为 false 时两个文件都不存在则返回 nil 进入纯 HTTP/隧道模式，只存在一个则报错。
 func Load(certPath, keyPath string, explicitPair bool) (*tls.Config, *Authority, error) {
 	if !explicitPair {
 		certExists := fileExists(certPath)

@@ -47,13 +47,11 @@ func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
 	return &frontend.BufferedConn{Conn: client, Reader: bufioRW.Reader}, true
 }
 
-// serveConnect 按 CONNECT 目标分发：命中虚拟服务器走 MITM，否则透传隧道；
-// transferred 为 true 表示连接已移交内层 HTTP 服务（hijack 链），调用方不得再关闭
+// serveConnect 按 CONNECT 目标分发：命中虚拟服务器走 MITM，否则透传隧道；transferred 为 true 表示连接已移交内层服务，调用方不得再关闭。
 func (p *Proxy) serveConnect(client net.Conn, protocol string, port int, domain string) (transferred bool) {
 	if !p.table.Load().Has(protocol, port, domain) {
 		log.Info("tunnel started domain=%s port=%d", domain, port)
-		// 隧道按规范化目标拨号：Host 缺端口（老式 CONNECT/1.0）时补协议默认端口，
-		// IPv6 裸地址补括号，否则 net.SplitHostPort 直接报错使目标必然不可达
+		// 隧道按规范化目标拨号：Host 缺端口补协议默认端口，IPv6 裸地址补括号，否则 SplitHostPort 报错使目标不可达
 		p.tunnel(client, domain, port)
 		return false
 	}
@@ -69,10 +67,7 @@ func (p *Proxy) serveConnect(client net.Conn, protocol string, port int, domain 
 	return frontend.ServeSingleConn(frontend.New(p.Handler()), tls.Server(client, mitmTLSConfig(p.tlsConfig, p.authority, domain)))
 }
 
-// mitmTLSConfig 为单条 MITM 隧道构造 TLS 配置：客户端对 IP 直连不发 SNI，
-// 握手回调拿不到目标，故在按名字签发的配置上（GetCertificate 与 CA 均可用时）
-// 将 SNI 缺失的请求回退到 CONNECT 目标签名，使 IP 型 HTTPS 路由同样能 MITM。
-// 静态证书或无 CA 的构造原样返回，SNI 缺失时维持原行为。
+// mitmTLSConfig 为单条 MITM 隧道构造 TLS 配置：客户端对 IP 直连不发 SNI，握手回调拿不到目标，故在按名字签发的配置上把 SNI 缺失请求回退到 CONNECT 目标签名；静态证书或无 CA 的构造原样返回。
 func mitmTLSConfig(template *tls.Config, authority *ca.Authority, domain string) *tls.Config {
 	if template.GetCertificate == nil || authority == nil {
 		return template
@@ -101,8 +96,7 @@ func (p *Proxy) tunnel(client net.Conn, domain string, port int) {
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return
 	}
-	// 双向拷贝：client→upstream 起协程，主协程跑 upstream→client。任一方向结束后
-	// tunnel 返回，由调用方关闭 client，进而打断对端读取使协程退出。
+	// 双向拷贝：client→upstream 起协程，主协程跑 upstream→client。任一方向结束后 tunnel 返回，由调用方关闭 client 打断对端读取使协程退出。
 	go func() {
 		io.Copy(upstream, client)
 		upstream.Close()

@@ -8,16 +8,14 @@ import (
 	"strings"
 )
 
-// Target 转发目标：URL 与 Root 互斥，非空者生效。
-// Summary 预计算目标描述，日志直接打印，避免请求热路径重复格式化。
+// Target 转发目标：URL 与 Root 互斥非空者生效；Summary 预计算目标描述供日志直接打印。
 type Target struct {
 	URL     *url.URL
 	Root    string
 	Summary string
 }
 
-// ParseTarget 解析上游：带 scheme 前缀的按 URL（仅 http/https）远程转发，
-// 含路径分隔符的按本地静态目录托管，其余按 host[:port] 简写以 http 转发。
+// ParseTarget 解析上游：带 scheme 的按 URL（仅 http/https）远程转发，含路径分隔符的按本地目录托管，其余按 host[:port] 简写以 http 转发。
 func ParseTarget(upstream string) (*Target, error) {
 	if strings.Contains(upstream, "://") {
 		parsed, err := url.Parse(upstream)
@@ -38,8 +36,7 @@ func ParseTarget(upstream string) (*Target, error) {
 	return parseTargetHost(upstream)
 }
 
-// parseTargetHost 解析省略 scheme 的 host[:port] 简写，统一按 http 转发。
-// 支持 host、host:port、[IPv6]:port 写法；裸 IPv6 须用括号并显式端口。
+// parseTargetHost 解析省略 scheme 的 host[:port] 简写统一按 http 转发，支持 host、host:port、[IPv6]:port 写法。
 func parseTargetHost(upstream string) (*Target, error) {
 	remote := url.URL{Scheme: ProtocolHTTP}
 	if host, port, err := net.SplitHostPort(upstream); err == nil {
@@ -64,11 +61,7 @@ func validPort(port string) bool {
 	return err == nil && strconv.Itoa(number) == port && number >= 1 && number <= 65535
 }
 
-// isLocalPath 判断 upstream 是否为本地目录路径：含路径分隔符（/ 或 \）即视为目录，
-// 覆盖 ./dist、/var/www、\\server\share 与 Windows 盘符路径 C:\web；
-// "." 与 ".." 不含分隔符但同指当前/父目录，也按本地目录处理，
-// 否则会被当作主机名远程代理。
-// 其余裸词（如 example.com 或 192.168.1.50）按远程上游解析。
+// isLocalPath 判断 upstream 是否为本地目录：含 / 或 \ 分隔符即视为目录（覆盖盘符、UNC 路径），"." 与 ".." 也按目录处理，其余裸词按远程上游解析。
 func isLocalPath(upstream string) bool {
 	return upstream == "." || upstream == ".." || strings.ContainsAny(upstream, "/\\")
 }

@@ -5,9 +5,7 @@ import (
 	"time"
 )
 
-// Cache 有界、按过期时间惰性淘汰的并发缓存。
-// 条目过期即在读取时清除，避免死条目长期占满容量；容量用尽时整体重建，
-// 固定代价低于逐条淘汰的实现复杂度。ttl 为零或负值时缓存失效，Put 不写入。
+// Cache 有界、按过期时间惰性淘汰的并发缓存：过期条目读取时清除，容量用尽整体重建，ttl 非正时 Put 不写入。
 type Cache[V any] struct {
 	mu       sync.Mutex
 	entries  map[string]entry[V]

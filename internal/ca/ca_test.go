@@ -64,9 +64,7 @@ func TestAuthority_SignsForSNI(t *testing.T) {
 	}
 }
 
-// TestAuthority_SignsForIP 验证 IP 字面量目标按 IP SAN 签发：IPv4/IPv6 均可
-// 通过客户端 hostname 校验，IP 与域名走同一缓存；显式名字由调用方构造
-// ClientHelloInfo 表达，与真实 SNI 走同一条 GetCertificate 路径。
+// TestAuthority_SignsForIP 验证 IP 字面量目标按 IP SAN 签发：IPv4/IPv6 均可通过客户端 hostname 校验，IP 与域名走同一缓存；显式名字由调用方构造 ClientHelloInfo 表达，与真实 SNI 走同一条 GetCertificate 路径。
 func TestAuthority_SignsForIP(t *testing.T) {
 	caCert, caKey := testutil.AuthorityCA(t)
 	authority := New(caCert, caKey)
@@ -227,8 +225,7 @@ func TestLoad_ExplicitPairRequiresBothFiles(t *testing.T) {
 	}
 }
 
-// mitmHandshake 用 net.Pipe 完成一次真实 TLS 握手：服务端由 authority 动态签发
-// 证书，客户端仅信任 trust 一张证书，返回客户端侧连接状态供链结构断言。
+// mitmHandshake 用 net.Pipe 完成一次真实 TLS 握手：服务端由 authority 动态签发证书，客户端仅信任 trust 一张证书，返回客户端侧连接状态供链结构断言。
 func mitmHandshake(t *testing.T, authority *Authority, trust *x509.Certificate, serverName string) tls.ConnectionState {
 	t.Helper()
 	roots := x509.NewCertPool()
@@ -263,9 +260,7 @@ func mitmHandshake(t *testing.T, authority *Authority, trust *x509.Certificate, 
 	return clientState
 }
 
-// TestAuthority_CertChainCompleteness 验证动态签发证书链完整性：签发链为
-// [叶子, CA] 两张，叶子由 CA 签发；真实 TLS 握手中客户端仅信任 CA 根即可
-// 验证通过，证明签发者证书随链发送、客户端视角链完整可用。
+// TestAuthority_CertChainCompleteness 验证动态签发证书链完整性：签发链为 [叶子, CA] 两张，叶子由 CA 签发；真实 TLS 握手中客户端仅信任 CA 根即可验证通过，证明签发者证书随链发送、客户端视角链完整可用。
 func TestAuthority_CertChainCompleteness(t *testing.T) {
 	caCert, caKey := testutil.AuthorityCA(t)
 	authority := New(caCert, caKey)

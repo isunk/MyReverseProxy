@@ -147,11 +147,12 @@ This file records user instructions, preferences, and teachings for reference in
   - 改动后自检三件事：UTF-8 无 BOM、JS 字符串字面量全 ASCII、括号配平。渲染路径零非 ASCII（中文只允许出现在 HTML 注释和 `//` 注释里），自检方式是解析出 `<script>` 内所有字符串字面量再扫 ord>127。
 
 [User Instruction Summary]
-- Date: 2026-10-10
-- Context: User reviewing comment style in the rewritten mrp.hta ("不要在注释中写思考过程和其他一些流水账记录")
+- Date: 2026-10-28
+- Context: User reviewing comment style in mrp.hta ("不要在注释中写思考过程和其他一些流水账记录")，后扩展到 Go 源码（"注释不要换行""继续"全仓库扫尾）
 - Instructions:
   - 注释只保留两种：简短的"为什么"说明，或一行功能/职责描述。禁止在注释中写思考过程、多行推理叙述（如"否则会……导致……"式推演）。
   - 禁止流水账式记录：改动来源、修复历史、方案取舍过程（如"沿用已验证逻辑""不做占位""Proxy 换 defineProperty""与旧版相比"）。变更背景写在对话回复里，注释只描述当前代码的事实。
+  - Go 注释不换行：每个多行注释块压缩成单行，内容套用「是什么 / 为什么 + `key1: ...; key2: ...`」压缩句式，删掉叙述性连词与重复段；单行保留的小段注释合规不再动。命中的有包 doc、导出类型/函数 doc、函数内缩进注释，YAML 模板顶部字段文档列表除外（该列表每条本已成行，仅 nameserver 段单行化）。
 
 [Project Knowledge Summary]
 - Date: 2026-10-14
