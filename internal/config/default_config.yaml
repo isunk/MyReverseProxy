@@ -19,9 +19,7 @@
 #   request:  发往上游的请求头
 #   response: 覆盖下游返回的响应头（如跨域校验 Access-Control-Allow-*）
 #
-# nameservers: 顶层字段，上游域名解析用的 DNS 服务器，支持裸 IP（默认 53 端口）与 host:port 写法，按顺序故障切换
-#   设备上的 /etc/resolv.conf 常指向 [::1]:53 等守护进程地址，mrp 读不到可用服务器时上游域名会解析失败，
-#   部署到设备时必须显式配置
+# nameservers: 顶层字段，上游域名解析用的 DNS 服务器，支持裸 IP（默认 53 端口）与 host:port 写法，按顺序故障切换；省略或留空按系统默认 DNS 解析，设备上 resolv.conf 常不可用，建议显式配置
 #
 # 示例：
 # servers:
@@ -49,4 +47,6 @@
 #   - "[2001:4860:4860::8888]:5353"
 
 servers: []
-nameservers: []
+nameservers:
+  - "114.114.114.114"
+  - "8.8.8.8"

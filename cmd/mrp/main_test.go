@@ -242,7 +242,7 @@ func TestE2E_ConfigNameserversTakeEffect(t *testing.T) {
 	if stub.QueryCount() == 0 {
 		t.Fatalf("configured nameserver received no dns query\nlog:\n%s", logs.String())
 	}
-	// 启动日志必须显示配置文件生效的 nameservers，而非 dns.New 的初始默认值
+	// 启动日志必须显示配置文件生效的 nameservers，而非未配置时的 system 占位
 	wantNameservers := "dns configured nameservers=127.0.0.1:" + refusedPort + "," + stub.Address() + " ttl="
 	if !strings.Contains(logs.String(), wantNameservers) {
 		t.Fatalf("startup log must show effective nameservers %q\nlog:\n%s", wantNameservers, logs.String())

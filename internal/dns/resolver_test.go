@@ -64,14 +64,38 @@ func TestNormalizeNameserver(t *testing.T) {
 	}
 }
 
-func TestNormalizeNameservers_Defaults(t *testing.T) {
+func TestNormalizeNameservers_EmptyKeepsSystemMode(t *testing.T) {
 	addresses, err := normalizeNameservers(nil)
 	if err != nil {
 		t.Fatalf("normalizeNameservers: %v", err)
 	}
-	want := []string{"114.114.114.114:53", "8.8.8.8:53"}
-	if !slices.Equal(addresses, want) {
-		t.Fatalf("defaults = %v, want %v", addresses, want)
+	if len(addresses) != 0 {
+		t.Fatalf("empty entries should stay empty for system resolver, got %v", addresses)
+	}
+}
+
+// 未配置 nameservers 时走系统默认解析：地址列表为空，解析器回退到系统 resolver
+func TestResolver_SystemMode(t *testing.T) {
+	set := testNameservers(t)
+	if addresses := set.Addresses(); len(addresses) != 0 {
+		t.Fatalf("Addresses() = %v, want empty", addresses)
+	}
+	state := set.current.Load()
+	if len(state.resolvers) != 1 || state.resolvers[0] != set.system {
+		t.Fatalf("system mode should use the system resolver, got %v", state.resolvers)
+	}
+	// 热加载配置服务器后切到固定列表，再清空配置应切回系统解析
+	if _, err := set.Update([]string{"127.0.0.1:53"}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if addresses := set.Addresses(); !slices.Equal(addresses, []string{"127.0.0.1:53"}) {
+		t.Fatalf("after Update Addresses() = %v", addresses)
+	}
+	if _, err := set.Update(nil); err != nil {
+		t.Fatalf("Update(nil): %v", err)
+	}
+	if resolvers := set.current.Load().resolvers; len(resolvers) != 1 || resolvers[0] != set.system {
+		t.Fatalf("Update(nil) should fall back to the system resolver, got %v", resolvers)
 	}
 }
 

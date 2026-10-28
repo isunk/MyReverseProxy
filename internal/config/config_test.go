@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -215,13 +216,24 @@ func TestDefaultConfig_Parses(t *testing.T) {
 	if table.Fingerprint() != "" {
 		t.Fatalf("default table should be empty, got %q", table.Fingerprint())
 	}
-	if len(nameservers) != 0 {
-		t.Fatalf("default nameservers = %v", nameservers)
+	// 模板默认自带两组公共 DNS；代码不内置默认，删除该字段后按系统默认 DNS 解析
+	want := []string{"114.114.114.114", "8.8.8.8"}
+	if !slices.Equal(nameservers, want) {
+		t.Fatalf("default nameservers = %v, want %v", nameservers, want)
 	}
 }
 
 func TestDefaultConfig_DocumentsNameservers(t *testing.T) {
-	for _, line := range []string{"# nameservers:", "#   - \"114.114.114.114\"", "nameservers: []"} {
+	for _, line := range []string{
+		"# nameservers: 顶层字段",
+		"省略或留空按系统默认 DNS 解析",
+		"# nameservers:",
+		"#   - \"223.5.5.5\"",
+		"#   - \"[2001:4860:4860::8888]:5353\"",
+		"nameservers:",
+		"  - \"114.114.114.114\"",
+		"  - \"8.8.8.8\"",
+	} {
 		if !strings.Contains(string(defaultConfig), line) {
 			t.Fatalf("defaultConfig missing %q", line)
 		}

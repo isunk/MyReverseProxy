@@ -23,8 +23,7 @@ import (
 const (
 	defaultListenPort = 8000
 
-	// shutdownGracePeriod 是收到退出信号后，等待 in-flight 连接自行结束的时间窗口；
-	// 超时后强制退出。长连接（隧道、空闲 keep-alive）通常不会在此窗口内自然结束。
+	// shutdownGracePeriod 是收到退出信号后等待 in-flight 连接自行结束的时间窗口，超时强制退出；长连接（隧道、空闲 keep-alive）通常不会在此窗口内自然结束。
 	shutdownGracePeriod = 10 * time.Second
 )
 
@@ -91,7 +90,7 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 	if opts.certSpecified != opts.keySpecified {
 		return nil, errors.New("--cert and --key must be set together")
 	}
-	nameservers, err := dns.New(opts.dnsTimeout, opts.dnsTTL, dns.DefaultNameservers)
+	nameservers, err := dns.New(opts.dnsTimeout, opts.dnsTTL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -104,8 +103,12 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 首次 reload 已让配置文件里的 nameservers 生效，此处打印实际生效列表而非初始默认值
-	log.Info("dns configured nameservers=%s ttl=%s", strings.Join(nameservers.Addresses(), ","), opts.dnsTTL)
+	// 首次 reload 已让配置文件里的 nameservers 生效；未配置时为空，按系统默认 DNS 解析
+	nameserverLabel := "system"
+	if addresses := nameservers.Addresses(); len(addresses) > 0 {
+		nameserverLabel = strings.Join(addresses, ",")
+	}
+	log.Info("dns configured nameservers=%s ttl=%s", nameserverLabel, opts.dnsTTL)
 	return proxyInstance, nil
 }
 
@@ -127,9 +130,7 @@ func main() {
 	run(listener, proxyInstance)
 }
 
-// run 在唯一代理端口上常驻服务：监听不随配置热加载变化，
-// 此后仅轮询配置热加载并等待信号。退出信号先关闭监听停止接收新连接，
-// 再等待 in-flight 连接在宽限期内 drain 后返回。
+// run 在唯一代理端口上常驻服务：监听不随配置热加载变化，仅轮询配置热加载并等待信号；退出信号先关闭监听停止新连接，再等待 in-flight 连接在宽限期内 drain 后返回。
 func run(listener net.Listener, proxyInstance *proxy.Proxy) {
 	var connections sync.WaitGroup
 	serveDone := make(chan struct{})
