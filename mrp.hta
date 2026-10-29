@@ -565,7 +565,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       states: [
         { name: 'Files', get: function(s) { return s.filesOK ? cell('ok', 'OK') : cell('err', 'Missing: ' + s.miss.join(', '), 'Check files'); } },
         { name: 'CA certificate', get: function(s) { return s.cert === 'NONE' ? cell('warn', 'Not imported', 'Import CA') : cell('ok', 'Imported [' + s.cert + ']', 'Remove', true); } },
-        { name: 'mrp process', get: function(s) { return s.run ? cell('ok', 'Running', 'Stop') : cell('warn', 'Stopped', 'Start'); } },
+        { name: 'MRP Process', get: function(s) { return s.run ? cell('ok', 'Running', 'Stop') : cell('warn', 'Stopped', 'Start'); } },
         { name: 'Proxy', get: function(s) { return s.proxy ? cell('ok', 'Configured (127.0.0.1:' + PORT + ')', 'Clear') : cell('warn', 'Not set', 'Set'); } }
       ],
       actions: [
@@ -686,7 +686,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         { name: 'Device', get: function(s) { return s.ready ? cell('ok', s.desc, 'Sync config') : cell('idle', s.desc || 'Not probed.'); } },
         { name: 'Files', get: function(s) { if (!s.ready) return null; return s.bin ? cell('ok', 'Installed') : cell('warn', 'Not installed', 'Install files'); } },
         { name: 'CA certificate', get: function(s) { if (!s.ready) return null; return s.cert ? cell('ok', 'Installed', 'Remove', true) : cell('warn', 'Not installed', 'Install CA'); } },
-        { name: 'mrp process', get: function(s) { if (!s.ready) return null; if (!s.bin) return cell('err', 'Not installed'); return s.run ? cell('ok', 'Running', 'Stop') : cell('warn', 'Stopped', 'Start'); } },
+        { name: 'MRP Process', get: function(s) { if (!s.ready) return null; if (!s.bin) return cell('err', 'Not installed'); return s.run ? cell('ok', 'Running', 'Stop') : cell('warn', 'Stopped', 'Start'); } },
         { name: 'Proxy', get: function(s) { if (!s.ready) return null; return s.proxy ? cell('ok', 'Configured (127.0.0.1:' + PORT + ')', 'Clear') : cell('warn', 'Not set', 'Set'); } }
       ],
       actions: [].concat([
@@ -745,6 +745,11 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         { name: 'DevTools', tool: true, run: function(s) {
             var rc = host.runRaw(devtoolsForward(), 0, true);
             host.log(rc === 0 ? 'DevTools port forwarding active.' : 'DevTools port forwarding failed rc=' + rc + '.', rc === 0 ? 'ok' : 'err');
+          } },
+        { name: 'Tail log', tool: true, run: function(s) {
+            if (!devFileExists(devDir + '/mrp.log')) { host.log('mrp.log not found on the device.', 'warn'); return; }
+            host.runRaw('cmd /k ' + cfg.tool + ' shell "tail -n 200 -f ' + devDir + '/mrp.log"', 1, false);
+            host.log('mrp.log tailing in a new window.', 'ok');
           } }
       ]),
       probe: function(s) {
