@@ -159,7 +159,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     try {
       var sh = new win.ActiveXObject('WScript.Shell'),
           fso = new win.ActiveXObject('Scripting.FileSystemObject'),
-          tmp = WORKDIR + '_mrp_out.txt';
+          tmp = WORKDIR + '.hta.output';
       sh.Run('%comspec% /c (' + cmd + ') > "' + tmp + '"', 0, true);
       var out = '';
       if (fso.FileExists(tmp)) {
@@ -194,7 +194,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   }
 
   // ---- 输入持久化 ----
-  var inputCache = {}, INPUT_FILE = WORKDIR + '_mrp_inputs.txt';
+  var inputCache = {}, INPUT_FILE = WORKDIR + '.hta.input';
 
   (function() {
     if (!hasShell) return;
@@ -721,20 +721,19 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           } },
         { name: 'Start', run: function(s) {
             if (binRunning()) { host.log('mrp already running on the device.', 'ok'); return; }
-            var consoleCmd = 'cmd /k ' + cfg.tool + ' shell "cd ' + devDir + '; ./' + DEV_BIN + '"';
-            host.log('> ' + consoleCmd, 'dim');
-            try { host.runRaw(consoleCmd, 1, false); }
-            catch (ex) { host.log('Failed to open device console window.', 'err'); return; }
+            // nohup 后台运行：adb/hdc 会话断开（拔 USB）不终止 mrp，输出落设备侧日志
+            host.run(cfg.tool + ' shell "cd ' + devDir + '; nohup ./' + DEV_BIN + ' >mrp.log 2>&1 &"');
             var up = false, i;
             for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (binRunning()) { up = true; break; } }
             s.run = up;
-            host.log(up ? 'mrp is now running on the device - Ctrl+C in the new window to stop.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
+            host.log(up ? 'mrp started in the background on the device - output in ' + devDir + '/mrp.log.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
           } },
         { name: 'Stop', run: function(s) { stopBin(); s.run = false; host.log('mrp stopped.', 'ok'); } }
       ], cfg.known ? [
         { name: 'Set', run: function(s) { host.run(cfg.tool + ' ' + cfg.proxySet); s.proxy = true; host.log('Device global proxy set to 127.0.0.1:' + PORT + '.', 'ok'); } },
         { name: 'Clear', run: function(s) { host.run(cfg.tool + ' ' + cfg.proxyClear); s.proxy = false; host.log('Device global proxy cleared.', 'ok'); } }
       ] : [], [
+        { name: 'Port forward :' + PORT, tool: true, run: function(s) { host.run(cfg.tool + ' ' + cfg.fwdCmd + ' tcp:' + PORT + ' tcp:' + PORT); host.log('Forward port :' + PORT + ' active - PC proxy target 127.0.0.1:' + PORT + '.', 'ok'); } },
         { name: 'Port reverse :' + HTTP_PORT, tool: true, run: function(s) { host.run(cfg.tool + ' ' + cfg.reverseCmd); host.log('Reverse port :' + HTTP_PORT + ' active.', 'ok'); } },
         { name: 'Open browser', tool: true, run: function(s, vm) {
             vm.prompt('Open browser', 'URL to open on the device', 'http://127.0.0.1:' + HTTP_PORT + '/', function(url) {
