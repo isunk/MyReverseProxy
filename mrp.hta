@@ -1091,7 +1091,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         setTimeout(function() {
           try {
             self.render();
-            host.log('Probed ' + m.name + ': ' + self.tones[self.tab] + '.');
+            host.log('Probed ' + m.name + ': ' + ({ ok: 'ok', warn: 'partial', err: 'not ready', dim: 'no device' })[self.tones[self.tab]] + '.');
           } finally {
             self.busy = false;
           }
