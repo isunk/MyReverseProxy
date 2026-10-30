@@ -41,7 +41,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 <div id="app">
   <nav id="nav">
     <a v-for="t in tabs" v-class="{act: t.act}" @click="switchTab(t.key)">
-      <span>{{ t.label }}</span> <i v-class="dotCls(t.tone)">{{ dot }}</i>
+      <span>{{ t.label }}</span> <i v-class="toVClass(t.tone)">{{ dot }}</i>
     </a>
   </nav>
   <main id="main">
@@ -51,7 +51,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         <table>
           <tr v-for="r in rows">
             <td width="120">{{ r.name }}</td>
-            <td><i v-class="dotCls(r.tone)">{{ dot }}</i> {{ r.text }}</td>
+            <td><i v-class="toVClass(r.tone)">{{ dot }}</i> {{ r.text }}</td>
             <td align="right"><a v-if="r.act" v-class="{err: r.danger}" @click="rowAct(r)">{{ r.act }}</a></td>
           </tr>
         </table>
@@ -112,117 +112,109 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     '-----END PRIVATE KEY-----'
   ];
 
-  // ---- 环境检测 ----
-  var hasShell = false;
-  try {
-    hasShell = !!new win.ActiveXObject('WScript.Shell');
-  } catch (ex) {}
-
-  var WORKDIR = (function() {
-    var s = unescape(location.href).replace(/\+/g, ' ').replace(/^file:\/\/\//i, '').replace(/\//g, '\\');
-    return s.substring(0, s.lastIndexOf('\\') + 1);
-  })();
-
   // ---- 日志 ----
   var logBox = null;
-  function pad2(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
-
-  function log(text, lv) {
-    var box = logBox || (logBox = doc.getElementById('log'));
-    if (!box) return;
-    var d = doc.createElement('div');
-    if (lv) d.className = lv;
-    var t = new Date();
-    d.innerHTML = '<i class="dim">[' + pad2(t.getHours()) + ':' + pad2(t.getMinutes()) + ':' + pad2(t.getSeconds()) + ']</i> ' +
-      String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    box.appendChild(d);
-    while (box.children.length > 300) box.removeChild(box.firstChild);
-    box.scrollTop = box.scrollHeight;
+  function pad2(n) {
+    n = String(n);
+    return n.length < 2 ? '0' + n : n;
   }
 
   function logClear() {
     if (logBox) logBox.innerHTML = '';
   }
 
-  // ---- Shell 操作 ----
-  function runRaw(cmd, show, wait) {
-    try { return new win.ActiveXObject('WScript.Shell').Run(cmd, show, wait); }
-    catch (ex) { return 1; }
-  }
-
-  function runWait(cmd, show) {
-    if (cmd.indexOf('timeout ') !== 0) log('> ' + cmd, 'dim');
-    return runRaw('%comspec% /c "' + cmd + '"', show ? 1 : 0, true);
-  }
-
-  function execText(cmd) {
-    try {
-      var sh = new win.ActiveXObject('WScript.Shell'),
-          fso = new win.ActiveXObject('Scripting.FileSystemObject'),
-          tmp = WORKDIR + '.hta.output';
-      sh.Run('%comspec% /c (' + cmd + ') > "' + tmp + '"', 0, true);
-      var out = '';
-      if (fso.FileExists(tmp)) {
-        var f = fso.OpenTextFile(tmp, 1, false, 0);
-        if (!f.AtEndOfStream) out = f.ReadAll();
-        f.Close();
-        try { fso.DeleteFile(tmp); } catch (ex) {}
-      }
+  // ---- 宿主接口 ----
+  var host = {
+    workdir: (function() {
+      var s = unescape(location.href).replace(/\+/g, ' ').replace(/^file:\/\/\//i, '').replace(/\//g, '\\');
+      return s.substring(0, s.lastIndexOf('\\') + 1);
+    })(),
+    log: function(text, lv) {
+      var box = logBox || (logBox = doc.getElementById('log'));
+      if (!box) return;
+      var d = doc.createElement('div');
+      if (lv) d.className = lv;
+      var t = new Date();
+      d.innerHTML = '<i class="dim">[' + pad2(t.getHours()) + ':' + pad2(t.getMinutes()) + ':' + pad2(t.getSeconds()) + ']</i> ' +
+        String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      box.appendChild(d);
+      while (box.children.length > 300) box.removeChild(box.firstChild);
+      box.scrollTop = box.scrollHeight;
+    },
+    run: function(cmd, show, wait) {
+      if (cmd.indexOf('timeout ') !== 0) host.log('> ' + cmd, 'dim');
+      try { return new win.ActiveXObject('WScript.Shell').Run('%comspec% /c "' + cmd + '"', show ? 1 : 0, wait !== false); }
+      catch (ex) { return 1; }
+    },
+    exec: function(cmd) {
+      var tmp = host.workdir + '.hta.output';
+      try { new win.ActiveXObject('WScript.Shell').Run('%comspec% /c (' + cmd + ') > "' + tmp + '"', 0, true); }
+      catch (ex) { return ''; }
+      var out = host.file.read('.hta.output');
+      host.file.remove(['.hta.output']);
       return out;
-    } catch (ex) { return ''; }
-  }
-
-  function fileExists(name) {
-    return hasShell ? new win.ActiveXObject('Scripting.FileSystemObject').FileExists(WORKDIR + name) : false;
-  }
-
-  function writeFileText(name, lines) {
-    try {
-      var f = new win.ActiveXObject('Scripting.FileSystemObject').CreateTextFile(WORKDIR + name, true, false);
-      for (var i = 0; i < lines.length; i++) f.WriteLine(lines[i]);
-      f.Close();
-    } catch (ex) {}
-  }
-
-  function deleteFiles(names) {
-    try {
-      var fso = new win.ActiveXObject('Scripting.FileSystemObject'), i;
-      for (i = 0; i < names.length; i++) {
-        if (fso.FileExists(WORKDIR + names[i])) fso.DeleteFile(WORKDIR + names[i], true);
+    },
+    file: {
+      exists: function(name) {
+        try { return new win.ActiveXObject('Scripting.FileSystemObject').FileExists(host.workdir + name); }
+        catch (ex) { return false; }
+      },
+      read: function(name) {
+        var out = '';
+        try {
+          var f = new win.ActiveXObject('Scripting.FileSystemObject').OpenTextFile(host.workdir + name, 1, false, 0);
+          if (!f.AtEndOfStream) out = f.ReadAll();
+          f.Close();
+        } catch (ex) {}
+        return out;
+      },
+      write: function(name, lines) {
+        try {
+          var f = new win.ActiveXObject('Scripting.FileSystemObject').CreateTextFile(host.workdir + name, true, false);
+          for (var i = 0; i < lines.length; i++) f.WriteLine(lines[i]);
+          f.Close();
+        } catch (ex) {}
+      },
+      remove: function(names) {
+        try {
+          var fso = new win.ActiveXObject('Scripting.FileSystemObject'), i;
+          for (i = 0; i < names.length; i++) {
+            if (fso.FileExists(host.workdir + names[i])) fso.DeleteFile(host.workdir + names[i], true);
+          }
+        } catch (ex) {}
       }
-    } catch (ex) {}
+    }
+  };
+
+  // ---- 环境检测 ----
+  try {
+    new win.ActiveXObject('WScript.Shell');
+  } catch (ex) {
+    host.log('host=browser - no shell available, actions will fail.', 'err');
   }
 
   // ---- 输入持久化 ----
-  var inputCache = {}, INPUT_FILE = WORKDIR + '.hta.input';
+  var inputCache = {}, INPUT_FILE = '.hta.input';
 
   (function() {
-    if (!hasShell) return;
-    try {
-      var fso = new win.ActiveXObject('Scripting.FileSystemObject');
-      if (!fso.FileExists(INPUT_FILE)) return;
-      var lines = fso.OpenTextFile(INPUT_FILE, 1, false, 0).ReadAll().split('\r\n');
-      for (var i = 0; i < lines.length; i++) {
-        var idx = lines[i].indexOf('\t');
-        if (idx > 0) inputCache[lines[i].substring(0, idx)] = lines[i].substring(idx + 1);
-      }
-    } catch (ex) {}
+    var lines = host.file.read(INPUT_FILE).split('\r\n');
+    for (var i = 0; i < lines.length; i++) {
+      var idx = lines[i].indexOf('\t');
+      if (idx > 0) inputCache[lines[i].substring(0, idx)] = lines[i].substring(idx + 1);
+    }
   })();
 
   function flushInput() {
-    if (!hasShell) return;
-    try {
-      var f = new win.ActiveXObject('Scripting.FileSystemObject').CreateTextFile(INPUT_FILE, true, false);
-      for (var k in inputCache) {
-        if (Object.prototype.hasOwnProperty.call(inputCache, k)) {
-          f.WriteLine(k + '\t' + inputCache[k]);
-        }
-      }
-      f.Close();
-    } catch (ex) {}
+    var lines = [];
+    for (var k in inputCache) {
+      if (Object.prototype.hasOwnProperty.call(inputCache, k)) lines.push(k + '\t' + inputCache[k]);
+    }
+    host.file.write(INPUT_FILE, lines);
   }
 
-  function loadInput(key) { return inputCache[key] || ''; }
+  function loadInput(key) {
+    return inputCache[key] || '';
+  }
 
   var flushTimer = null;
   function scheduleFlush() {
@@ -231,20 +223,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   }
   function saveInput(key, value) {
     inputCache[key] = value;
-    if (hasShell) scheduleFlush();
+    scheduleFlush();
   }
-
-  // ---- 宿主接口 ----
-  var host = {
-    workdir: WORKDIR,
-    log: log,
-    run: runWait,
-    runRaw: runRaw,
-    exec: execText,
-    fileExists: fileExists,
-    writeText: writeFileText,
-    deleteFiles: deleteFiles
-  };
 
   // ---- MyVue 响应式引擎 ----
   // 核心：defineProperty 劫持 + 依赖追踪 + 模板编译
@@ -461,7 +441,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       }
       var modelKey = el.getAttribute('v-model');
       if (modelKey) {
-        var h = function() { setPath(modelKey, el.value); };
+        var h = function() {
+          setPath(modelKey, el.value);
+        };
         on(el, 'input', h); on(el, 'change', h);
         track(function() {
           var v = getPath(modelKey), s2 = v == null ? '' : String(v);
@@ -491,8 +473,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     walk(this.$data, '');
     each(this.$data, function(v, k) {
       Object.defineProperty(self._ctx, k, {
-        get: function() { return self.$data[k]; },
-        set: function(nv) { self.$data[k] = nv; }
+        get: function() {
+          return self.$data[k];
+        },
+        set: function(nv) {
+          self.$data[k] = nv;
+        }
       });
     });
     each(options.methods || {}, function(fn, k) { self._ctx[k] = fn.bind(self._ctx); });
@@ -502,8 +488,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   }
 
   // ---- CA 证书管理 ----
-  if (!host.fileExists(CRT)) host.writeText(CRT, CA_CERT);
-  if (!host.fileExists(KEY)) host.writeText(KEY, CA_KEY);
+  if (!host.file.exists(CRT)) host.file.write(CRT, CA_CERT);
+  if (!host.file.exists(KEY)) host.file.write(KEY, CA_KEY);
 
   // ---- 模块定义 ----
   // states: get(data) 实时探测返回 [状态标识, 文案, 颜色]；state 按标识映射按钮 [文案, 事件, 危险]；tools 固定工具；health 页签圆点；uninstall 顶部卸载
@@ -511,21 +497,23 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     {
       name: 'Windows',
       data: { filesOK: true, miss: [], cert: 'NONE', run: false },
-      health: function(data) { return data.filesOK && data.cert !== 'NONE' && data.run ? 'ok' : 'warn'; },
+      health: function(data) {
+        return data.filesOK && data.cert !== 'NONE' && data.run ? 'ok' : 'warn';
+      },
       states: [
         {
           name: 'Files',
           get: function(data) {
             var want = [MRP_EXE, CRT, KEY], i;
             data.miss = [];
-            for (i = 0; i < want.length; i++) if (!host.fileExists(want[i])) data.miss.push(want[i]);
+            for (i = 0; i < want.length; i++) if (!host.file.exists(want[i])) data.miss.push(want[i]);
             data.filesOK = data.miss.length === 0;
             return [data.filesOK ? 'TRUE' : 'FALSE', data.filesOK ? 'OK' : 'Missing: ' + data.miss.join(', '), data.filesOK ? 'ok' : 'err'];
           },
           state: {
             FALSE: ['Check files', function(data, vm) {
               var want = [MRP_EXE, CRT, KEY], lacking = [], i;
-              for (i = 0; i < want.length; i++) if (!host.fileExists(want[i])) lacking.push(want[i]);
+              for (i = 0; i < want.length; i++) if (!host.file.exists(want[i])) lacking.push(want[i]);
               if (lacking.length === 0) { host.log('Files ready.', 'ok'); return; }
               host.log('Missing ' + lacking.join(', ') + ' in ' + host.workdir + ' - download from GitHub Releases.', 'err');
             }],
@@ -535,7 +523,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           name: 'CA certificate',
           get: function(data) {
             data.cert = 'NONE';
-            if (host.fileExists(CRT)) {
+            if (host.file.exists(CRT)) {
               var dump = host.exec('certutil -dump "' + host.workdir + CRT + '"').toLowerCase();
               var found = dump.match(/cn=([^,\r\n]+)/);
               if (found) {
@@ -590,7 +578,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               if (host.exec('net session >nul 2>&1 && echo OK') === '') {
                 var ps = 'powershell -NoProfile -Command "Start-Process -FilePath cmd.exe -Verb RunAs -Wait -ArgumentList \'/c ' + cmd.replace(/'/g, "''") + "'\"";
                 host.log('> ' + cmd + ' [runas]', 'dim');
-                host.runRaw(ps, 0, true);
+                host.run(ps, 0, true);
               } else host.run(cmd);
               var ok = host.exec('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) < 0;
               host.log(ok ? 'System proxy cleared.' : 'Proxy not cleared.', ok ? 'ok' : 'warn');
@@ -600,7 +588,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               if (host.exec('net session >nul 2>&1 && echo OK') === '') {
                 var ps = 'powershell -NoProfile -Command "Start-Process -FilePath cmd.exe -Verb RunAs -Wait -ArgumentList \'/c ' + cmd.replace(/'/g, "''") + "'\"";
                 host.log('> ' + cmd + ' [runas]', 'dim');
-                host.runRaw(ps, 0, true);
+                host.run(ps, 0, true);
               } else host.run(cmd);
               var ok = host.exec('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0;
               host.log(ok ? 'System proxy set to 127.0.0.1:' + PORT + '.' : 'Proxy not applied.', ok ? 'ok' : 'warn');
@@ -615,7 +603,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             vm.prompt('Static HTTP server', 'Directory to serve', host.workdir, function(dir) {
               dir = String(dir == null ? '' : dir).replace(/^\s+|\s+$/g, '');
               if (dir === '') return;
-              host.runRaw('cmd /k python -m http.server ' + HTTP_PORT + ' --directory "' + dir + '"', 1, false);
+              host.run('cmd /k python -m http.server ' + HTTP_PORT + ' --directory "' + dir + '"', 1, false);
               host.log('Static server serving ' + dir + ' at http://127.0.0.1:' + HTTP_PORT + '.', 'ok');
             });
           },
@@ -626,12 +614,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         if (host.exec('net session >nul 2>&1 && echo OK') === '') {
           var ps = 'powershell -NoProfile -Command "Start-Process -FilePath cmd.exe -Verb RunAs -Wait -ArgumentList \'/c ' + cmd.replace(/'/g, "''") + "'\"";
           host.log('> ' + cmd + ' [runas]', 'dim');
-          host.runRaw(ps, 0, true);
+          host.run(ps, 0, true);
         } else host.run(cmd);
         if (host.exec('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0) host.log('System proxy may still be set - clear it manually.', 'warn');
         if (host.exec('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase().indexOf(MRP_EXE.toLowerCase()) >= 0) host.run('taskkill /im "' + MRP_EXE + '" /f');
         host.run('powershell -NoProfile -Command "Get-ChildItem Cert:\\CurrentUser\\Root | Where-Object {$_.Subject -eq \'CN=' + CA_CN + '\' } | Remove-Item -Force" >nul 2>&1');
-        host.deleteFiles([MRP_EXE, CRT, KEY]);
+        host.file.remove([MRP_EXE, CRT, KEY]);
         host.log('Windows module uninstalled.', 'ok');
       },
     },
@@ -642,7 +630,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         certPath: '/system/etc/security/cacerts/' + CA_HASH + '.0',
         ready: false, desc: '', bin: false, cert: false, run: false,
       },
-      health: function(data) { return !data.ready ? 'dim' : (data.cert && data.bin && data.run ? 'ok' : (data.cert || data.bin ? 'warn' : 'err')); },
+      health: function(data) {
+        return !data.ready ? 'dim' : (data.cert && data.bin && data.run ? 'ok' : (data.cert || data.bin ? 'warn' : 'err'));
+      },
       states: [
         {
           name: 'Device',
@@ -662,7 +652,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           },
           state: {
             TRUE: ['Sync config', function(data, vm) {
-              if (!host.fileExists(DEV_CFG)) { host.log(DEV_CFG + ' not found next to this script.', 'err'); return; }
+              if (!host.file.exists(DEV_CFG)) { host.log(DEV_CFG + ' not found next to this script.', 'err'); return; }
               host.run('adb shell mkdir -p ' + data.devDir);
               if (host.run('adb push "' + host.workdir + DEV_CFG + '" ' + data.devDir) !== 0) { host.log('Config sync failed - check the device connection.', 'err'); return; }
               host.log(DEV_CFG + ' synced - mrp hot reloads it automatically.', 'ok');
@@ -681,7 +671,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               host.run('adb shell mkdir -p ' + data.devDir);
               var rc = host.run('adb push "' + host.workdir + DEV_BIN + '" ' + data.devDir);
               if (rc !== 0) { host.log('Binary push failed rc=' + rc + ' - download ' + DEV_BIN + ' into ' + host.workdir + ' from GitHub Releases.', 'err'); return; }
-              if (host.fileExists(DEV_CFG)) host.run('adb push "' + host.workdir + DEV_CFG + '" ' + data.devDir);
+              if (host.file.exists(DEV_CFG)) host.run('adb push "' + host.workdir + DEV_CFG + '" ' + data.devDir);
               var bad = [];
               if (host.run('adb push "' + host.workdir + CRT + '" ' + data.devDir) !== 0) bad.push(CRT);
               if (host.run('adb push "' + host.workdir + KEY + '" ' + data.devDir) !== 0) bad.push(KEY);
@@ -790,7 +780,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           name: 'DevTools',
           run: function(data, vm) {
             var probe = 'adb shell \'cat /proc/net/unix | grep devtools | head -n 1 | cut -d @ -f2\'';
-            var rc = host.runRaw('powershell -Command "adb forward tcp:9222 localabstract:$(' + probe + ')"', 0, true);
+            var rc = host.run('powershell -Command "adb forward tcp:9222 localabstract:$(' + probe + ')"', 0, true);
             host.log(rc === 0 ? 'DevTools port forwarding active.' : 'DevTools port forwarding failed rc=' + rc + '.', rc === 0 ? 'ok' : 'err');
           },
         },
@@ -798,7 +788,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           name: 'Tail log',
           run: function(data, vm) {
             if (host.exec('adb shell "test -f ' + data.devDir + '/mrp.log && echo Y" 2>nul') === '') { host.log('mrp.log not found on the device.', 'warn'); return; }
-            host.runRaw('cmd /k adb shell "tail -n 200 -f ' + data.devDir + '/mrp.log"', 1, false);
+            host.run('cmd /k adb shell "tail -n 200 -f ' + data.devDir + '/mrp.log"', 1, false);
             host.log('mrp.log tailing in a new window.', 'ok');
           },
         },
@@ -822,7 +812,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         certPath: '/etc/security/certificates/' + CA_HASH + '.0',
         ready: false, desc: '', bin: false, cert: false, run: false, proxy: false,
       },
-      health: function(data) { return !data.ready ? 'dim' : (data.cert && data.bin && data.run ? 'ok' : (data.cert || data.bin ? 'warn' : 'err')); },
+      health: function(data) {
+        return !data.ready ? 'dim' : (data.cert && data.bin && data.run ? 'ok' : (data.cert || data.bin ? 'warn' : 'err'));
+      },
       states: [
         {
           name: 'Device',
@@ -844,7 +836,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           },
           state: {
             TRUE: ['Sync config', function(data, vm) {
-              if (!host.fileExists(DEV_CFG)) { host.log(DEV_CFG + ' not found next to this script.', 'err'); return; }
+              if (!host.file.exists(DEV_CFG)) { host.log(DEV_CFG + ' not found next to this script.', 'err'); return; }
               host.run('hdc shell mkdir -p ' + data.devDir);
               if (host.run('hdc file send "' + host.workdir + DEV_CFG + '" ' + data.devDir) !== 0) { host.log('Config sync failed - check the device connection.', 'err'); return; }
               host.log(DEV_CFG + ' synced - mrp hot reloads it automatically.', 'ok');
@@ -863,7 +855,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               host.run('hdc shell mkdir -p ' + data.devDir);
               var rc = host.run('hdc file send "' + host.workdir + DEV_BIN + '" ' + data.devDir);
               if (rc !== 0) { host.log('Binary push failed rc=' + rc + ' - download ' + DEV_BIN + ' into ' + host.workdir + ' from GitHub Releases.', 'err'); return; }
-              if (host.fileExists(DEV_CFG)) host.run('hdc file send "' + host.workdir + DEV_CFG + '" ' + data.devDir);
+              if (host.file.exists(DEV_CFG)) host.run('hdc file send "' + host.workdir + DEV_CFG + '" ' + data.devDir);
               var bad = [];
               if (host.run('hdc file send "' + host.workdir + CRT + '" ' + data.devDir) !== 0) bad.push(CRT);
               if (host.run('hdc file send "' + host.workdir + KEY + '" ' + data.devDir) !== 0) bad.push(KEY);
@@ -967,7 +959,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           name: 'DevTools',
           run: function(data, vm) {
             var probe = 'hdc shell \'cat /proc/net/unix | grep devtools | head -n 1 | cut -d @ -f2\'';
-            var rc = host.runRaw('powershell -Command "hdc fport tcp:9222 localabstract:$(' + probe + ')"', 0, true);
+            var rc = host.run('powershell -Command "hdc fport tcp:9222 localabstract:$(' + probe + ')"', 0, true);
             host.log(rc === 0 ? 'DevTools port forwarding active.' : 'DevTools port forwarding failed rc=' + rc + '.', rc === 0 ? 'ok' : 'err');
           },
         },
@@ -975,7 +967,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           name: 'Tail log',
           run: function(data, vm) {
             if (host.exec('hdc shell "test -f ' + data.devDir + '/mrp.log && echo Y" 2>nul') === '') { host.log('mrp.log not found on the device.', 'warn'); return; }
-            host.runRaw('cmd /k hdc shell "tail -n 200 -f ' + data.devDir + '/mrp.log"', 1, false);
+            host.run('cmd /k hdc shell "tail -n 200 -f ' + data.devDir + '/mrp.log"', 1, false);
             host.log('mrp.log tailing in a new window.', 'ok');
           },
         },
@@ -1003,8 +995,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       dot: String.fromCharCode(9679)
     },
     computed: {
-      cur: function() { return this.modules[this.tab]; },
-      tools: function() { return this.cur.tools; },
+      cur: function() {
+        return this.modules[this.tab];
+      },
+      tools: function() {
+        return this.cur.tools;
+      },
       tabs: function() {
         var out = [], j;
         for (j = 0; j < this.modules.length; j++) {
@@ -1015,7 +1011,11 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       }
     },
     methods: {
-      dotCls: function(t) { var o = {}; o[t] = true; return o; },
+      toVClass: function(t) {
+        var o = {};
+        o[t] = true;
+        return o;
+      },
       switchTab: function(k) {
         k = Number(k);
         if (isNaN(k) || k === this.tab) return;
@@ -1028,26 +1028,43 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       prompt: function(title, text, def, cb) {
         var self = this;
         this.draft = loadInput(title) || def;
-        this.modal = { title: title, text: text, input: true, okText: 'OK', onOk: function() { saveInput(title, self.draft); cb(self.draft); } };
+        this.modal = {
+          title: title,
+          text: text,
+          input: true,
+          okText: 'OK',
+          onOk: function() {
+            saveInput(title, self.draft);
+            cb(self.draft);
+          }
+        };
       },
       askUninstall: function() {
         var self = this, m = this.cur;
         this.confirm('Confirm', 'Remove all files and reset ' + m.name + '?\n\nThis cannot be undone.', 'Uninstall', function() {
-          log('>> Uninstall', 'dim');
+          host.log('>> Uninstall', 'dim');
           m.uninstall(m.data);
           self.render();
         });
       },
       runAction: function(a) {
         var self = this, m = this.cur;
-        var go = function() { log('>> ' + a.name, 'dim'); a.run(m.data, self); self.render(); };
+        var go = function() {
+          host.log('>> ' + a.name, 'dim');
+          a.run(m.data, self);
+          self.render();
+        };
         if (a.danger) this.confirm('Confirm', 'Run "' + a.name + '" on ' + m.name + '?', a.name, go);
         else go();
       },
       rowAct: function(r) {
         if (!r || !r.fn) return;
         var self = this, m = this.cur;
-        var go = function() { log('>> ' + r.act, 'dim'); r.fn(m.data, self); self.render(); };
+        var go = function() {
+          host.log('>> ' + r.act, 'dim');
+          r.fn(m.data, self);
+          self.render();
+        };
         if (r.danger) this.confirm('Confirm', 'Run "' + r.act + '" on ' + m.name + '?', r.act, go);
         else go();
       },
@@ -1066,23 +1083,34 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         if (this.busy) return;
         var self = this, m = this.cur;
         this.busy = true;
-        log('Refreshing ' + m.name + '...', 'dim');
+        host.log('Refreshing ' + m.name + '...', 'dim');
         setTimeout(function() {
           try {
             self.render();
-            log('Probed ' + m.name + ': ' + self.tones[self.tab] + '.');
+            host.log('Probed ' + m.name + ': ' + self.tones[self.tab] + '.');
           } finally {
             self.busy = false;
           }
         }, 50);
       },
-      clearLog: function() { logClear(); },
-      modalOk: function() { var m = this.modal; this.modal = null; if (m && m.onOk) m.onOk.call(this); },
-      modalNo: function() { this.modal = null; }
+      clearLog: function() {
+        logClear();
+      },
+      modalOk: function() {
+        var m = this.modal;
+        this.modal = null;
+        if (m && m.onOk) m.onOk.call(this);
+      },
+      modalNo: function() {
+        this.modal = null;
+      }
     },
     mounted: function() {
       var self = this;
-      win.onerror = function(msg, url, line) { log('window error: ' + msg + ' (line ' + (line || '?') + ')', 'err'); return false; };
+      win.onerror = function(msg, url, line) {
+        host.log('window error: ' + msg + ' (line ' + (line || '?') + ')', 'err');
+        return false;
+      };
       var keyfn = function(e) {
         e = e || win.event;
         var c = e.keyCode || e.which || e.charCode;
@@ -1096,7 +1124,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       };
       if (doc.addEventListener) doc.addEventListener('keydown', keyfn, false);
       else doc.attachEvent('onkeydown', keyfn);
-      log(hasShell ? 'host=mshta workdir=' + WORKDIR + ' - click Refresh to probe modules.' : 'host=browser - no shell available, actions will fail.');
+      host.log('workdir=' + host.workdir + ' - click Refresh to probe modules.');
       self.render();
     }
   });
