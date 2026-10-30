@@ -124,6 +124,18 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   }
 
   // ---- 宿主接口 ----
+  // ActiveX 实例只创建一次并复用；创建失败说明运行在浏览器，后续操作静默失效
+  var shell = null, fso = null;
+  try {
+    shell = new win.ActiveXObject('WScript.Shell');
+    fso = new win.ActiveXObject('Scripting.FileSystemObject');
+  } catch (ex) {
+    // host 尚未就绪，错误提示延后到脚本求值完成后输出
+    setTimeout(function() {
+      host.log('host=browser - no shell available, actions will fail.', 'err');
+    }, 0);
+  }
+
   var host = {
     workdir: (function() {
       var s = unescape(location.href).replace(/\+/g, ' ').replace(/^file:\/\/\//i, '').replace(/\//g, '\\');
@@ -143,12 +155,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     },
     run: function(cmd, show, wait) {
       if (cmd.indexOf('timeout ') !== 0) host.log('> ' + cmd, 'dim');
-      try { return new win.ActiveXObject('WScript.Shell').Run('%comspec% /c "' + cmd + '"', show ? 1 : 0, wait !== false); }
+      try { return shell.Run('%comspec% /c "' + cmd + '"', show ? 1 : 0, wait !== false); }
       catch (ex) { return 1; }
     },
     exec: function(cmd) {
       var tmp = host.workdir + '.hta.output';
-      try { new win.ActiveXObject('WScript.Shell').Run('%comspec% /c (' + cmd + ') > "' + tmp + '"', 0, true); }
+      try { shell.Run('%comspec% /c (' + cmd + ') > "' + tmp + '"', 0, true); }
       catch (ex) { return ''; }
       var out = host.file.read('.hta.output');
       host.file.remove(['.hta.output']);
@@ -156,13 +168,13 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     },
     file: {
       exists: function(name) {
-        try { return new win.ActiveXObject('Scripting.FileSystemObject').FileExists(host.workdir + name); }
+        try { return fso.FileExists(host.workdir + name); }
         catch (ex) { return false; }
       },
       read: function(name) {
         var out = '';
         try {
-          var f = new win.ActiveXObject('Scripting.FileSystemObject').OpenTextFile(host.workdir + name, 1, false, 0);
+          var f = fso.OpenTextFile(host.workdir + name, 1, false, 0);
           if (!f.AtEndOfStream) out = f.ReadAll();
           f.Close();
         } catch (ex) {}
@@ -170,28 +182,20 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       },
       write: function(name, lines) {
         try {
-          var f = new win.ActiveXObject('Scripting.FileSystemObject').CreateTextFile(host.workdir + name, true, false);
+          var f = fso.CreateTextFile(host.workdir + name, true, false);
           for (var i = 0; i < lines.length; i++) f.WriteLine(lines[i]);
           f.Close();
         } catch (ex) {}
       },
       remove: function(names) {
         try {
-          var fso = new win.ActiveXObject('Scripting.FileSystemObject'), i;
-          for (i = 0; i < names.length; i++) {
+          for (var i = 0; i < names.length; i++) {
             if (fso.FileExists(host.workdir + names[i])) fso.DeleteFile(host.workdir + names[i], true);
           }
         } catch (ex) {}
       }
     }
   };
-
-  // ---- 环境检测 ----
-  try {
-    new win.ActiveXObject('WScript.Shell');
-  } catch (ex) {
-    host.log('host=browser - no shell available, actions will fail.', 'err');
-  }
 
   // ---- 输入持久化 ----
   var inputCache = {}, INPUT_FILE = '.hta.input';
