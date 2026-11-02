@@ -138,7 +138,10 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
   var host = {
     workdir: (function() {
-      var s = unescape(location.href).replace(/\+/g, ' ').replace(/^file:\/\/\//i, '').replace(/\//g, '\\');
+      // unescape 按 Latin-1 拆 UTF-8 字节，中文等非 ASCII 目录会乱码；decodeURIComponent 按 UTF-8 还原
+      var s;
+      try { s = decodeURIComponent(location.href); } catch (ex) { s = location.href; }
+      s = s.replace(/^file:\/\/\//i, '').replace(/\//g, '\\');
       return s.substring(0, s.lastIndexOf('\\') + 1);
     })(),
     log: function(text, lv) {
@@ -172,27 +175,28 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         catch (ex) { return false; }
       },
       read: function(name) {
-        var out = '';
+        var out = '', f = null;
         try {
-          var f = fso.OpenTextFile(host.workdir + name, 1, false, 0);
+          f = fso.OpenTextFile(host.workdir + name, 1, false, 0);
           if (!f.AtEndOfStream) out = f.ReadAll();
-          f.Close();
         } catch (ex) {}
+        try { if (f) f.Close(); } catch (ex) {}
         return out;
       },
       write: function(name, lines) {
+        var f = null;
         try {
-          var f = fso.CreateTextFile(host.workdir + name, true, false);
+          f = fso.CreateTextFile(host.workdir + name, true, false);
           for (var i = 0; i < lines.length; i++) f.WriteLine(lines[i]);
-          f.Close();
         } catch (ex) {}
+        try { if (f) f.Close(); } catch (ex) {}
       },
       remove: function(names) {
-        try {
-          for (var i = 0; i < names.length; i++) {
+        for (var i = 0; i < names.length; i++) {
+          try {
             if (fso.FileExists(host.workdir + names[i])) fso.DeleteFile(host.workdir + names[i], true);
-          }
-        } catch (ex) {}
+          } catch (ex) {}
+        }
       }
     }
   };
@@ -532,8 +536,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               var found = dump.match(/cn=([^,\r\n]+)/);
               if (found) {
                 var cn = found[1];
-                if (host.exec('certutil -store Root 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) data.cert = 'MACHINE';
-                else if (host.exec('certutil -user -store Root 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) data.cert = 'USER';
+                // 带名称参数让 certutil 只输出匹配项，全库枚举在大证书库下要数十秒
+                if (host.exec('certutil -store Root "' + cn + '" 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) data.cert = 'MACHINE';
+                else if (host.exec('certutil -user -store Root "' + cn + '" 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) data.cert = 'USER';
               }
             }
             var ok = data.cert !== 'NONE';
