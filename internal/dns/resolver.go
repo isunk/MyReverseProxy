@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,17 @@ type Resolver struct {
 	tcpDialer      *net.Dialer
 	system         *net.Resolver
 	cache          *cache.Cache[[]string]
+
+	// inflight 合并同域并发解析：TTL 过期瞬间多个请求只发一次 DNS 查询
+	mu       sync.Mutex
+	inflight map[string]*lookupCall
+}
+
+// lookupCall 承载一次进行中的解析，让同域并发请求等待同一结果而非重复发 DNS 查询
+type lookupCall struct {
+	done    chan struct{}
+	targets []string
+	err     error
 }
 
 type state struct {
@@ -51,6 +63,7 @@ func New(attemptTimeout, ttl time.Duration, entries []string) (*Resolver, error)
 		tcpDialer:      &net.Dialer{Timeout: dialerTimeout, KeepAlive: KeepAlive},
 		system:         &net.Resolver{PreferGo: true},
 		cache:          cache.New[[]string](maxCached, ttl),
+		inflight:       map[string]*lookupCall{},
 	}
 	set.current.Store(&state{addresses: addresses, resolvers: set.buildResolvers(addresses)})
 	return set, nil
@@ -125,18 +138,49 @@ func (r *Resolver) connect(ctx context.Context, network, address string) (net.Co
 	return r.tcpDialer.DialContext(ctx, network, address)
 }
 
-// lookup 命中未过期缓存即返回；否则向配置的 DNS 服务器查询并写入缓存。第二个返回值标记结果来自缓存，调用方据此决定是否重试。
+// lookup 命中未过期缓存即返回；否则合并同域并发解析（首个请求发起 DNS 查询，其余等待同一结果）并写入缓存。第二个返回值标记结果来自缓存，调用方据此决定是否重试。
 func (r *Resolver) lookup(ctx context.Context, host, port string) ([]string, bool, error) {
 	key := net.JoinHostPort(host, port)
 	if targets, ok := r.cache.Get(key); ok {
 		return targets, true, nil
 	}
+	call, leader := r.begin(key)
+	if !leader {
+		select {
+		case <-call.done:
+			return call.targets, false, call.err
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+	}
 	targets, err := r.resolve(ctx, host, port)
+	r.finish(key, call, targets, err)
 	if err != nil {
 		return nil, false, err
 	}
 	r.cache.Put(key, targets)
 	return targets, false, nil
+}
+
+// begin 登记一次进行中的解析，第二个返回值表示调用方是否为负责发起查询的首个请求。
+func (r *Resolver) begin(key string) (*lookupCall, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if call, ok := r.inflight[key]; ok {
+		return call, false
+	}
+	call := &lookupCall{done: make(chan struct{})}
+	r.inflight[key] = call
+	return call, true
+}
+
+// finish 注销进行中的解析并广播结果，唤醒所有等待该域名的请求；先赋值后关闭，等待者醒来时结果必已就绪。
+func (r *Resolver) finish(key string, call *lookupCall, targets []string, err error) {
+	r.mu.Lock()
+	delete(r.inflight, key)
+	r.mu.Unlock()
+	call.targets, call.err = targets, err
+	close(call.done)
 }
 
 // dropCached 丢弃缓存的解析结果，缓存地址全部连不上时调用以触发立即重解析。

@@ -243,6 +243,37 @@ func TestResolver_StaleCacheRetries(t *testing.T) {
 	}
 }
 
+// TTL 过期瞬间同域并发解析只发一次 DNS 查询，其余请求等待同一结果
+func TestResolver_ConcurrentLookupMergesQueries(t *testing.T) {
+	echo := testutil.EchoServer(t)
+	_, port, _ := net.SplitHostPort(echo)
+	stub := testutil.NewStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
+	set := testNameservers(t, stub.Address())
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			<-start
+			conn, err := set.DialContext(context.Background(), "tcp", "up.example.com:"+port)
+			if err == nil {
+				_ = conn.Close()
+			}
+			results <- err
+		}()
+	}
+	close(start)
+	for i := 0; i < workers; i++ {
+		if err := <-results; err != nil {
+			t.Fatalf("dial %d: %v", i+1, err)
+		}
+	}
+	// 一次 lookup 产生 A 与 AAAA 两条查询；合并后 8 个并发 dial 也只有 2 条
+	if got := stub.QueryCount(); got != 2 {
+		t.Fatalf("dns queries for %d concurrent dials = %d, want 2", workers, got)
+	}
+}
+
 func TestResolver_UpdateFailureKeepsServers(t *testing.T) {
 	stub := testutil.NewStub(t, map[uint16][]net.IP{1: {net.ParseIP("127.0.0.1")}})
 	set := testNameservers(t, stub.Address())
