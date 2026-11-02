@@ -83,6 +83,8 @@ func TestRewriteRequest_PreservesEscapedPath(t *testing.T) {
 		{"/api/", "/api/a%2Fb", "/v1/a/b", "/v1/a%2Fb"},
 		{"/api", "/unmatched/a%2Fb", "/v1/unmatched/a/b", "/v1/unmatched/a%2Fb"},
 		{"/api", "/api/x%20y", "/v1/x y", "/v1/x%20y"},
+		// prefix 含需编码字符时编码侧剥离失败，回退按解码 path 重编码：前缀剥离正确，%2F 降级为 /
+		{"/a pi", "/a%20pi/x%2Fy", "/v1/x/y", "/v1/x/y"},
 	}
 	for _, tc := range cases {
 		target, err := ParseTarget("http://up-a/v1")

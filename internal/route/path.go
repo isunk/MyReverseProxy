@@ -8,11 +8,13 @@ import (
 // buildOutPath 按斜杠边界把上游基路径与入站剩余路径拼成 (Path, RawPath)，剩余路径取原始编码形态避免 %2F 被重新转义。
 func buildOutPath(inboundURL *url.URL, prefix string, base *url.URL) (string, string) {
 	restPath := strings.TrimPrefix(inboundURL.Path, prefix)
-	restRawPath := strings.TrimPrefix(inboundURL.EscapedPath(), prefix)
+	escaped := inboundURL.EscapedPath()
+	restRawPath := strings.TrimPrefix(escaped, prefix)
 	baseSlash := strings.HasSuffix(base.Path, "/")
 	restSlash := strings.HasPrefix(restPath, "/")
 	path := singleJoiningSlash(base.Path, restPath)
-	if restRawPath == "" {
+	// 解码侧命中而编码侧剥不掉（prefix 含需编码字符）时 restRawPath 与 restPath 错位，放弃 RawPath 改按解码 path 重编码，保证前缀剥离正确；前缀整体不匹配时两侧一致保留原样转发
+	if strings.HasPrefix(inboundURL.Path, prefix) && !strings.HasPrefix(escaped, prefix) {
 		return path, ""
 	}
 	raw := base.EscapedPath()
