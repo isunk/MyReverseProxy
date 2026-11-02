@@ -276,7 +276,7 @@ func TestBuildProxy_LogsConfiguredNameservers(t *testing.T) {
 func TestDrainConnections(t *testing.T) {
 	t.Run("returns_true_when_idle", func(t *testing.T) {
 		var connections sync.WaitGroup
-		if !drainConnections(&connections, time.Second) {
+		if !drainConnections(&connections, time.Second, nil) {
 			t.Fatal("drainConnections = false for idle waitgroup")
 		}
 	})
@@ -284,8 +284,20 @@ func TestDrainConnections(t *testing.T) {
 	t.Run("returns_false_on_timeout", func(t *testing.T) {
 		var connections sync.WaitGroup
 		connections.Add(1)
-		if drainConnections(&connections, 50*time.Millisecond) {
+		if drainConnections(&connections, 50*time.Millisecond, nil) {
 			t.Fatal("drainConnections = true while connection still in flight")
+		}
+		connections.Done()
+	})
+
+	// drain 期间再次收到退出信号立即放行强退，不等宽限期走完
+	t.Run("returns_false_on_second_signal", func(t *testing.T) {
+		var connections sync.WaitGroup
+		connections.Add(1)
+		sigCh := make(chan os.Signal, 1)
+		sigCh <- os.Interrupt
+		if drainConnections(&connections, time.Second, sigCh) {
+			t.Fatal("drainConnections = true after second signal")
 		}
 		connections.Done()
 	})

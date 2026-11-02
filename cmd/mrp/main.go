@@ -161,7 +161,7 @@ func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy, connections
 		}
 		// 等 Serve 退出 accept 循环：保证所有 Add 都已发生在随后的 Wait 之前。
 		<-serveDone
-		if drainConnections(connections, shutdownGracePeriod) {
+		if drainConnections(connections, shutdownGracePeriod, sigCh) {
 			log.Info("shutdown complete")
 			return
 		}
@@ -170,8 +170,8 @@ func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy, connections
 	}
 }
 
-// drainConnections 等待全部活跃连接在宽限期内结束；超时返回 false。
-func drainConnections(connections *sync.WaitGroup, gracePeriod time.Duration) bool {
+// drainConnections 等待全部活跃连接在宽限期内结束；宽限期用尽或 drain 期间再次收到退出信号返回 false。
+func drainConnections(connections *sync.WaitGroup, gracePeriod time.Duration, sigCh <-chan os.Signal) bool {
 	drained := make(chan struct{})
 	go func() {
 		connections.Wait()
@@ -181,6 +181,8 @@ func drainConnections(connections *sync.WaitGroup, gracePeriod time.Duration) bo
 	case <-drained:
 		return true
 	case <-time.After(gracePeriod):
+		return false
+	case <-sigCh:
 		return false
 	}
 }
