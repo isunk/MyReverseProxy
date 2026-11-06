@@ -341,7 +341,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       catch (ex) { report('expr "' + expr + '": ' + (ex && ex.message ? ex.message : ex)); return undefined; }
     }
 
-    function track(run) {
+    function track(run, owner) {
       var own = {};
       function fire() {
         var prev = _collect, paths, i, k;
@@ -357,9 +357,24 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           }
         }
         for (k in own) if (!fresh[k]) { delDep(k, fire); delete own[k]; }
+        fire.paths = own;
       }
       fire();
+      if (owner) (owner._fires || (owner._fires = [])).push(fire);
       return fire;
+    }
+
+    // dispose 递归清理节点及其后代注册的依赖，v-for 重建时调用，防止游离 fire 永久残留
+    function dispose(el) {
+      var fs = el._fires, i, n, k, paths;
+      if (fs) {
+        for (i = 0; i < fs.length; i++) {
+          paths = fs[i].paths;
+          if (paths) for (k in paths) delDep(k, fs[i]);
+        }
+        el._fires = null;
+      }
+      for (n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 1) dispose(n);
     }
 
     function computed(key, fn) {
@@ -370,7 +385,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       });
     }
 
-    function bindText(node, $s) {
+    function bindText(node, $s, owner) {
       var src = node.nodeValue, re = /\{\{\s*([^}]+?)\s*\}\}/g;
       if (!re.test(src)) return;
       re.lastIndex = 0;
@@ -384,14 +399,14 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       }
       if (last < src.length) frag.appendChild(doc.createTextNode(src.slice(last)));
       node.parentNode.replaceChild(frag, node);
-      for (var i = 0; i < binds.length; i++) bindSeg(binds[i], $s);
+      for (var i = 0; i < binds.length; i++) bindSeg(binds[i], $s, owner);
     }
 
-    function bindSeg(seg, $s) {
+    function bindSeg(seg, $s, owner) {
       track(function() {
         var v = evalExpr(seg.expr, $s), s2 = v == null ? '' : String(v);
         if (seg.tn.nodeValue !== s2) seg.tn.nodeValue = s2;
-      });
+      }, owner);
     }
 
     function bindEvent(el, spec, $s) {
@@ -422,7 +437,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       track(function() {
         try {
           var list = evalExpr(listExpr) || [], n, i;
-          while ((n = anchor.nextSibling) && n._vfor) parent.removeChild(n);
+          while ((n = anchor.nextSibling) && n._vfor) { dispose(n); parent.removeChild(n); }
           var after = anchor.nextSibling;
           for (i = 0; i < list.length; i++) {
             var node = tpl.cloneNode(true);
@@ -444,7 +459,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       for (i = 0; i < nodes.length; i++) arr.push(nodes[i]);
       for (i = 0; i < arr.length; i++) {
         n = arr[i];
-        if (n.nodeType === 3) bindText(n, $s);
+        if (n.nodeType === 3) bindText(n, $s, el);
         else compile(n, $s);
       }
       var modelKey = el.getAttribute('v-model');
@@ -456,7 +471,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         track(function() {
           var v = getPath(modelKey), s2 = v == null ? '' : String(v);
           if (el.value !== s2) el.value = s2;
-        });
+        }, el);
       }
       var ifExpr = el.getAttribute('v-if');
       if (ifExpr) {
@@ -465,14 +480,14 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           var v = evalExpr(ifExpr, $s);
           if (v && !shown && ph.parentNode) { ph.parentNode.replaceChild(el, ph); shown = true; }
           else if (!v && shown && el.parentNode) { el.parentNode.replaceChild(ph, el); shown = false; }
-        });
+        }, el);
       }
       var clsExpr = el.getAttribute('v-class');
       if (clsExpr) {
         track(function() {
           var map = evalExpr(clsExpr, $s);
           if (map) for (var c in map) if (Object.prototype.hasOwnProperty.call(map, c)) toggleClass(el, c, !!map[c]);
-        });
+        }, el);
       }
       var atts = el.attributes;
       for (i = 0; i < atts.length; i++) if (atts[i].name.charAt(0) === '@') bindEvent(el, atts[i], $s);
@@ -501,6 +516,10 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
   // ---- 模块定义 ----
   // states: get(data) 实时探测返回 [状态标识, 文案, 颜色]；state 按标识映射按钮 [文案, 事件, 危险]；tools 固定工具；health 页签圆点；uninstall 顶部卸载
+  function mrpWindowsRunning() {
+    return host.exec('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase().indexOf(MRP_EXE.toLowerCase()) >= 0;
+  }
+
   var modules = [
     {
       name: 'Windows',
@@ -532,14 +551,10 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           get: function(data) {
             data.cert = 'NONE';
             if (host.file.exists(CRT)) {
-              var dump = host.exec('certutil -dump "' + host.workdir + CRT + '"').toLowerCase();
-              var found = dump.match(/cn=([^,\r\n]+)/);
-              if (found) {
-                var cn = found[1];
-                // 带名称参数让 certutil 只输出匹配项，全库枚举在大证书库下要数十秒
-                if (host.exec('certutil -store Root "' + cn + '" 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) data.cert = 'MACHINE';
-                else if (host.exec('certutil -user -store Root "' + cn + '" 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) data.cert = 'USER';
-              }
+              // 带名称参数让 certutil 只输出匹配项，全库枚举在大证书库下要数十秒；CN 取常量，与 Remove 按钮的删除条件保持一致
+              var cn = CA_CN.toLowerCase();
+              if (host.exec('certutil -store Root "' + CA_CN + '" 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) data.cert = 'MACHINE';
+              else if (host.exec('certutil -user -store Root "' + CA_CN + '" 2>nul').toLowerCase().indexOf('cn=' + cn) >= 0) data.cert = 'USER';
             }
             var ok = data.cert !== 'NONE';
             return [ok ? 'TRUE' : 'FALSE', ok ? 'Imported [' + data.cert + ']' : 'Not imported', ok ? 'ok' : 'warn'];
@@ -560,18 +575,25 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         {
           name: 'MRP Process',
           get: function(data) {
-            data.run = host.exec('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase().indexOf(MRP_EXE.toLowerCase()) >= 0;
+            data.run = mrpWindowsRunning();
             return [data.run ? 'TRUE' : 'FALSE', data.run ? 'Running' : 'Stopped', data.run ? 'ok' : 'warn'];
           },
           state: {
             TRUE: ['Stop', function(data, vm) {
-              if (host.exec('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase().indexOf(MRP_EXE.toLowerCase()) >= 0) host.run('taskkill /im "' + MRP_EXE + '" /f');
+              if (mrpWindowsRunning()) {
+                host.run('taskkill /im "' + MRP_EXE + '" /f');
+                var gone = false, i;
+                for (i = 0; i < 3; i++) { host.run('timeout /t 1 >nul'); if (!mrpWindowsRunning()) { gone = true; break; } }
+                if (!gone) { host.log('mrp stop not confirmed.', 'warn'); return; }
+              }
               host.log('mrp stopped.', 'ok');
             }],
             FALSE: ['Start', function(data, vm) {
-              if (host.exec('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase().indexOf(MRP_EXE.toLowerCase()) >= 0) { host.log('mrp already running.', 'ok'); return; }
+              if (mrpWindowsRunning()) { host.log('mrp already running.', 'ok'); return; }
               host.run('start "mrp" /D "' + host.workdir + '" "' + host.workdir + MRP_EXE + '"', true);
-              host.log('mrp started in a new window.', 'ok');
+              var up = false, i;
+              for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (mrpWindowsRunning()) { up = true; break; } }
+              host.log(up ? 'mrp started in a new window.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
             }],
           },
         },
@@ -729,7 +751,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           state: {
             TRUE: ['Stop', function(data, vm) {
               host.run('adb shell "kill -9 $(pidof ' + DEV_BIN + ')" >nul 2>&1');
-              host.log('mrp stopped.', 'ok');
+              var gone = false, i;
+              for (i = 0; i < 3; i++) { host.run('timeout /t 1 >nul'); if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') === '') { gone = true; break; } }
+              host.log(gone ? 'mrp stopped.' : 'mrp stop not confirmed.', gone ? 'ok' : 'warn');
             }],
             FALSE: ['Start', function(data, vm) {
               if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on the device.', 'ok'); return; }
@@ -906,7 +930,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           state: {
             TRUE: ['Stop', function(data, vm) {
               host.run('hdc shell "kill -9 $(pidof ' + DEV_BIN + ')" >nul 2>&1');
-              host.log('mrp stopped.', 'ok');
+              var gone = false, i;
+              for (i = 0; i < 3; i++) { host.run('timeout /t 1 >nul'); if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') === '') { gone = true; break; } }
+              host.log(gone ? 'mrp stopped.' : 'mrp stop not confirmed.', gone ? 'ok' : 'warn');
             }],
             FALSE: ['Start', function(data, vm) {
               if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on the device.', 'ok'); return; }
@@ -1052,7 +1078,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         var self = this, m = this.cur;
         this.confirm('Confirm', 'Remove all files and reset ' + m.name + '?\n\nThis cannot be undone.', 'Uninstall', function() {
           host.log('>> Uninstall', 'dim');
-          m.uninstall(m.data);
+          try { m.uninstall(m.data); }
+          catch (ex) { host.log('uninstall failed: ' + (ex && ex.message ? ex.message : ex), 'err'); }
           self.render();
         });
       },
@@ -1060,8 +1087,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         var self = this, m = this.cur;
         var go = function() {
           host.log('>> ' + a.name, 'dim');
-          a.run(m.data, self);
-          self.render();
+          try { a.run(m.data, self); }
+          finally { self.render(); }
         };
         if (a.danger) this.confirm('Confirm', 'Run "' + a.name + '" on ' + m.name + '?', a.name, go);
         else go();
@@ -1071,8 +1098,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         var self = this, m = this.cur;
         var go = function() {
           host.log('>> ' + r.act, 'dim');
-          r.fn(m.data, self);
-          self.render();
+          try { r.fn(m.data, self); }
+          finally { self.render(); }
         };
         if (r.danger) this.confirm('Confirm', 'Run "' + r.act + '" on ' + m.name + '?', r.act, go);
         else go();
@@ -1080,7 +1107,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       render: function() {
         var m = this.cur, out = [], j;
         for (j = 0; j < m.states.length; j++) {
-          var st = m.states[j], v = st.get(m.data);
+          var st = m.states[j], v;
+          try { v = st.get(m.data); }
+          catch (ex) { host.log('probe ' + st.name + ' failed: ' + (ex && ex.message ? ex.message : ex), 'err'); continue; }
           if (!v) continue;
           var btn = st.state ? st.state[v[0]] : null;
           out.push({ name: st.name, tone: v[2], text: v[1], act: btn ? btn[0] : '', danger: btn ? !!btn[2] : false, fn: btn ? btn[1] : null });
