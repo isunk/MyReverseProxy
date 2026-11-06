@@ -5,11 +5,11 @@ Updated: 2026-09-30
 
 ## Description
 
-mrp 收敛为单端口代理模型：只监听一个端口（`--port`，默认 8000），配置里的 `protocol` 与 `port` 从监听规格降级为虚拟服务器匹配条件——决定哪个请求归属哪个 server，两者均不参与监听。协议与端口从请求内容推导：非 CONNECT 请求取 URL scheme 与目标端口（省略端口按协议补默认 80/443），CONNECT 视为 https 并按目标主机端口；隧道解密后的请求按 https + Host 匹配。CONNECT 命中配置的域名走 MITM，未命中走透传隧道。
+mrp 收敛为单端口代理模型：只监听一个端口（`--port`，默认 9000），配置里的 `protocol` 与 `port` 从监听规格降级为虚拟服务器匹配条件——决定哪个请求归属哪个 server，两者均不参与监听。协议与端口从请求内容推导：非 CONNECT 请求取 URL scheme 与目标端口（省略端口按协议补默认 80/443），CONNECT 视为 https 并按目标主机端口；隧道解密后的请求按 https + Host 匹配。CONNECT 命中配置的域名走 MITM，未命中走透传隧道。
 
 已确认的设计决策：
 
-1. **单端口监听**：`--port` 恢复为唯一监听端口参数（默认 8000，校验 1-65535），监听在 `main` 内一次性建立，`reload` 不再增减监听，配置热加载只替换路由表。
+1. **单端口监听**：`--port` 恢复为唯一监听端口参数（默认 9000，校验 1-65535），监听在 `main` 内一次性建立，`reload` 不再增减监听，配置热加载只替换路由表。
 2. **protocol 保留并按请求 scheme 匹配**：`protocol` 省略匹配任意协议，显式 `http`/`https` 只接对应协议请求；不参与监听，mrp 恒在 `--port` 上监听明文连接。
 3. **port 匹配请求目标端口**：`port` 省略匹配任意端口，显式取值只接该目标端口的请求；`(domain, protocol, port)` 组合唯一。
 4. **去掉自适应嗅探**：监听恒为明文，不存在按首字节识别协议的端口，`sniffConn` 及其 TLS 记录握手判定整体删除。
@@ -39,10 +39,10 @@ graph TD
 | `route.go` | `portGroup`/`byPort` 改为 `serverEntry{protocol, port, routes}` 与 `routeTable.byDomain map[string][]*serverEntry`；新增 `serverEntry.matches(protocol, port)`；`pick(protocol, port, domain, path)`、`has(protocol, port, domain)`；`listenerSpecs`/`hasHTTPSPort` 删除；`fingerprint` 纳入 protocol 与 port |
 | `server.go` | `serve(listener, handler)` 始终明文服务；`handleConn`/`sniffConn`/`tlsRecordHandshake`/`protoDetectWait` 删除；`bufferedConn` 保留供 hijack 预读 |
 | `proxy.go` | 删除 `listenerSpec`/`listenerEntry`/`listenerSet`/`reconcile`/`closeAll`/`portHandler` 与 `listeners` 字段；新增 `handler()`（供 `serve` 与隧道内层共用）、`targetOf`、`hostAndPort`、`effectivePort`、`defaultPort`；`serveConnect` 按 `(protocol, port, domain)` 分派 MITM 与隧道；`reload` 删除 CA 校验与 reconcile |
-| `main.go` | 恢复 `--port` flag（默认 `defaultListenPort` = 8000，校验 1-65535）；`main` 先 `net.Listen` 后 `buildProxy`；`run(listener, proxy)`、`serveSignals(listener, proxy)` |
+| `main.go` | 恢复 `--port` flag（默认 `defaultListenPort` = 9000，校验 1-65535）；`main` 先 `net.Listen` 后 `buildProxy`；`run(listener, proxy)`、`serveSignals(listener, proxy)` |
 | `main_test.go` | 监听集与自适应用例删除，改为 `startListener(t, p)` 起单端口监听；`pick`/`has` 带协议与端口；新增协议匹配与无 CA 502 断言 |
 | `AGENTS.md` | 文件职责表更新 route.go/proxy.go/server.go/main.go 行，删除监听集描述，补 `--port` 单端口模型 |
-| `README.md` | 原理图与接入方式改为 CONNECT + MITM；字段表说明 protocol/port 仅参与匹配；flags 表补 `--port`；示例端口统一 8000 |
+| `README.md` | 原理图与接入方式改为 CONNECT + MITM；字段表说明 protocol/port 仅参与匹配；flags 表补 `--port`；示例端口统一 9000 |
 
 ## Data Models
 

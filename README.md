@@ -158,7 +158,7 @@ mrp-windows-amd64.exe
 
 参数：
 
-- `--port`（默认 `8000`）：唯一监听端口，须与客户端代理端口一致
+- `--port`（默认 `9000`）：唯一监听端口，须与客户端代理端口一致
 - `--config`（默认 `mrp.yaml`）：路由配置文件，缺失自动创建
 - `--cert` / `--key`（默认 `ca.crt` / `ca.key`）：CA 证书与私钥，缺省时无法 MITM
 - `--log`（默认 `info`）：debug / info / warn / error
@@ -170,13 +170,13 @@ Windows 也可双击 `mrp.hta` 部署面板：内置固定 CA 免 openssl，提�
 
 ```bash
 # 显式代理：命中配置域名则 MITM 后转发
-curl -x http://127.0.0.1:8000 --cacert ca.crt https://api.target-app.com/v1/hello
+curl -x http://127.0.0.1:9000 --cacert ca.crt https://api.target-app.com/v1/hello
 
 # 显式代理：未命中则透传隧道
-curl -x http://127.0.0.1:8000 https://www.example.com/
+curl -x http://127.0.0.1:9000 https://www.example.com/
 
 # 直连：域名解析到监听端口，按 Host 头路由
-curl --resolve api.target-app.com:8000:127.0.0.1 http://api.target-app.com:8000/v1/hello
+curl --resolve api.target-app.com:9000:127.0.0.1 http://api.target-app.com:9000/v1/hello
 ```
 
 日志打印 `domain` / `protocol` / `port` / `path` / `status` / `elapsed`，CONNECT 标记 `mitm started` / `tunnel started`；上游不可达返回 502。
@@ -196,7 +196,7 @@ adb shell chmod +x /data/local/mrp/mrp-linux-arm64
 adb shell "cd /data/local/mrp && ./mrp-linux-arm64"
 
 # 全局代理指向本机，取消改 :0
-adb shell settings put global http_proxy 127.0.0.1:8000
+adb shell settings put global http_proxy 127.0.0.1:9000
 ```
 
 **HarmonyOS：**
@@ -207,18 +207,18 @@ hdc file send mrp-linux-arm64 ca.key ca.crt mrp.yaml /data/local/mrp/
 hdc shell "chmod +x /data/local/mrp/mrp-linux-arm64 && cd /data/local/mrp && ./mrp-linux-arm64"
 
 # 全局代理指向本机，取消改 0
-hdc shell network-cfg set http_proxy 127.0.0.1:8000
+hdc shell network-cfg set http_proxy 127.0.0.1:9000
 ```
 
-Windows 系统代理：`netsh winhttp set proxy 192.168.1.100:8000`（取消 `reset proxy`），浏览器走 WinINET（设置 → 网络和 Internet → 代理）；Linux 会话代理：`export http_proxy=http://192.168.1.100:8000 https_proxy=http://192.168.1.100:8000`。
+Windows 系统代理：`netsh winhttp set proxy 192.168.1.100:9000`（取消 `reset proxy`），浏览器走 WinINET（设置 → 网络和 Internet → 代理）；Linux 会话代理：`export http_proxy=http://192.168.1.100:9000 https_proxy=http://192.168.1.100:9000`。
 
 ### 6. PC 借道设备网络出口
 
 mrp 运行在设备上，PC 建立端口转发后将代理指向 `127.0.0.1:<端口>`，流量改从设备出口发出，上游 DNS 解析也在设备侧完成。
 
 ```bash
-# Android（HarmonyOS 用 hdc fport tcp:8000 tcp:8000）
-adb forward tcp:8000 tcp:8000
+# Android（HarmonyOS 用 hdc fport tcp:9000 tcp:9000）
+adb forward tcp:9000 tcp:9000
 ```
 
 - 留空 `servers` 即全量 tunnel，PC 侧无需导入 CA

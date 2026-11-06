@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	defaultListenPort = 8000
+	defaultListenPort = 9000
 
 	// shutdownGracePeriod 是收到退出信号后等待 in-flight 连接自行结束的时间窗口，超时强制退出；长连接（隧道、空闲 keep-alive）通常不会在此窗口内自然结束。
 	shutdownGracePeriod = 10 * time.Second

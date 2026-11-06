@@ -5,7 +5,7 @@ Updated: 2026-09-30
 
 ## Introduction
 
-mrp 收敛为单端口代理模型：只监听一个端口（`--port`，默认 8000），配置里的 `protocol` 与 `port` 不再决定监听，只作为虚拟服务器的匹配条件——决定哪个请求归属哪个 server。协议与端口从请求内容推导：明文连接取 Host 头与 URL，CONNECT 按目标主机与端口（视为 https）。未命中路由的域名透传原目标，未配置的 CONNECT 目标走透传隧道。同时保留 `upstream` 简写与本地目录识别规则。
+mrp 收敛为单端口代理模型：只监听一个端口（`--port`，默认 9000），配置里的 `protocol` 与 `port` 不再决定监听，只作为虚拟服务器的匹配条件——决定哪个请求归属哪个 server。协议与端口从请求内容推导：明文连接取 Host 头与 URL，CONNECT 按目标主机与端口（视为 https）。未命中路由的域名透传原目标，未配置的 CONNECT 目标走透传隧道。同时保留 `upstream` 简写与本地目录识别规则。
 
 ## Glossary
 
