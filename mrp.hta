@@ -1025,13 +1025,17 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       tab: 0, busy: false,
       modules: modules,
       tones: ['warn', 'dim', 'dim'],
+      rows: [], rowSet: [[], [], []],
       draft: '', modal: null,
-      cur: null, tabs: [], rows: [], tools: [],
+      cur: null, tabs: [], tools: [],
       dot: String.fromCharCode(9679)
     },
     computed: {
       cur: function() {
         return this.modules[this.tab];
+      },
+      rows: function() {
+        return this.rowSet[this.tab];
       },
       tools: function() {
         return this.cur.tools;
@@ -1054,8 +1058,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       switchTab: function(k) {
         k = Number(k);
         if (isNaN(k) || k === this.tab) return;
+        // 切换页签只切换缓存引用，不重新探测；状态仅在 Refresh 时更新
         this.tab = k;
-        this.render();
       },
       confirm: function(title, text, okText, cb) {
         this.modal = { title: title, text: text, okText: okText, danger: true, onOk: cb };
@@ -1114,7 +1118,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           var btn = st.state ? st.state[v[0]] : null;
           out.push({ name: st.name, tone: v[2], text: v[1], act: btn ? btn[0] : '', danger: btn ? !!btn[2] : false, fn: btn ? btn[1] : null });
         }
-        this.rows = out;
+        this.rowSet[this.tab] = out;
         this.tones[this.tab] = m.health(m.data);
       },
       refresh: function() {
