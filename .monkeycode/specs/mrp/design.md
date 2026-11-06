@@ -47,7 +47,7 @@ mrp/
 ├── proxy.go          # proxy 结构：路由、转发、CONNECT、tunnel
 ├── server.go         # 单端口监听、TLS/HTTP 识别、SNI 注入、oneConnListener、辅助函数、logWriter
 ├── main_test.go      # 单元与集成测试
-├── config.yaml       # 示例路由配置
+├── mrp.yaml            # 示例路由配置
 ├── README.md         # 证书创建与设备导入指引
 └── AGENTS.md         # 代码规范
 ```
@@ -62,7 +62,7 @@ mrp/
 ## CLI
 
 ```
-mrp --config config.yaml \
+mrp --config mrp.yaml \
   --port 4000 \
   --cert ca.crt --key ca.key \
   --log info

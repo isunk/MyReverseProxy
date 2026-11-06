@@ -185,7 +185,7 @@ func TestRouteTable_Fingerprint(t *testing.T) {
 }
 
 func TestEnsureConfig_CreatesMissingFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
+	path := filepath.Join(t.TempDir(), "mrp.yaml")
 	if err := Ensure(path); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}

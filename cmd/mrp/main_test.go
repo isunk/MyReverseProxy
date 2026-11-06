@@ -54,7 +54,7 @@ func TestParseStartupOptions_Defaults(t *testing.T) {
 	if opts.port != defaultListenPort {
 		t.Fatalf("default port = %d, want %d", opts.port, defaultListenPort)
 	}
-	if opts.configPath != "config.yaml" || opts.certPath != "ca.crt" || opts.keyPath != "ca.key" {
+	if opts.configPath != "mrp.yaml" || opts.certPath != "ca.crt" || opts.keyPath != "ca.key" {
 		t.Fatalf("default paths = %q %q %q", opts.configPath, opts.certPath, opts.keyPath)
 	}
 	if opts.logLevel != log.InfoLevel {
@@ -100,7 +100,7 @@ func TestParseStartupOptions_RejectsInvalidValues(t *testing.T) {
 
 func TestBuildProxy_EnsuresConfigWhenNotSpecified(t *testing.T) {
 	opts := startupOptions{
-		configPath: filepath.Join(t.TempDir(), "config.yaml"),
+		configPath: filepath.Join(t.TempDir(), "mrp.yaml"),
 		logLevel:   log.ErrorLevel,
 		dnsTimeout: dns.AttemptTimeout,
 		dnsTTL:     dns.TTL,
@@ -115,7 +115,7 @@ func TestBuildProxy_EnsuresConfigWhenNotSpecified(t *testing.T) {
 
 func TestBuildProxy_RejectsUnpairedCert(t *testing.T) {
 	opts := startupOptions{
-		configPath:      filepath.Join(t.TempDir(), "config.yaml"),
+		configPath:      filepath.Join(t.TempDir(), "mrp.yaml"),
 		configSpecified: true,
 		certPath:        "ca.crt",
 		keyPath:         "",

@@ -46,7 +46,7 @@ func parseStartupOptions() (startupOptions, error) {
 	var opts startupOptions
 	levelName := ""
 	flag.IntVar(&opts.port, "port", defaultListenPort, "single proxy listening port")
-	flag.StringVar(&opts.configPath, "config", "config.yaml", "routing config file, created automatically when missing")
+	flag.StringVar(&opts.configPath, "config", "mrp.yaml", "routing config file, created automatically when missing")
 	flag.StringVar(&opts.certPath, "cert", "ca.crt", "CA certificate file for MITM signing")
 	flag.StringVar(&opts.keyPath, "key", "ca.key", "CA private key file")
 	flag.StringVar(&levelName, "log", "info", "log level: debug, info, warn or error")

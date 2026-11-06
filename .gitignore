@@ -16,7 +16,7 @@ vendor/
 certs/
 
 # 运行时生成的本地配置
-config.yaml
+mrp.yaml
 
 # HTA 运行时产物
 _mrp_out.txt
