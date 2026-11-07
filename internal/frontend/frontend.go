@@ -65,7 +65,7 @@ func Serve(listener net.Listener, handler http.Handler, connections *sync.WaitGr
 			if errors.Is(err, net.ErrClosed) {
 				return err
 			}
-			log.Error("listener accept failed, retrying in %s: %v", backoff, err)
+			log.Error("accept failed retry=%s err=%v", backoff, err)
 			time.Sleep(backoff)
 			backoff = min(backoff*2, acceptBackoffMax)
 			continue

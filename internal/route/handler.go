@@ -79,7 +79,7 @@ func (r *Route) rewriteRequest(request *httputil.ProxyRequest) {
 
 // UpstreamErrorHandler 上游不可达时回 502，不向客户端透出传输层错误；按实际拨号目标记录，供本包路由代理与 proxy 包透传代理共用。
 func UpstreamErrorHandler(writer http.ResponseWriter, request *http.Request, err error) {
-	log.Error("upstream request failed upstream=%s: %v", request.URL.String(), err)
+	log.Error("upstream failed upstream=%s err=%v", request.URL.String(), err)
 	writer.WriteHeader(http.StatusBadGateway)
 	_, _ = io.WriteString(writer, "502 Bad Gateway")
 }

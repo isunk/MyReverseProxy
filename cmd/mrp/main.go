@@ -115,17 +115,17 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 func main() {
 	opts, err := parseStartupOptions()
 	if err != nil {
-		log.Fatal("flag parsing failed: %v", err)
+		log.Fatal("flags parse failed err=%v", err)
 	}
 	log.Init(opts.logLevel)
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", opts.port))
 	if err != nil {
-		log.Fatal("listen failed addr=:%d: %v", opts.port, err)
+		log.Fatal("listen failed addr=:%d err=%v", opts.port, err)
 	}
 	log.Info("listening addr=:%d", opts.port)
 	proxyInstance, err := buildProxy(opts)
 	if err != nil {
-		log.Fatal("build proxy failed: %v", err)
+		log.Fatal("proxy init failed err=%v", err)
 	}
 	run(listener, proxyInstance)
 }
@@ -149,15 +149,15 @@ func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy, connections
 	for sig := range sigCh {
 		if sig == syscall.SIGHUP {
 			if err := proxyInstance.Reload(); err != nil {
-				log.Error("reload failed, keeping previous config: %v", err)
+				log.Error("config reload failed err=%v", err)
 				continue
 			}
 			log.Info("config reloaded")
 			continue
 		}
-		log.Info("shutdown signal received, draining connections")
+		log.Info("shutting down")
 		if err := listener.Close(); err != nil {
-			log.Debug("listener close failed: %v", err)
+			log.Debug("listener close failed err=%v", err)
 		}
 		// 等 Serve 退出 accept 循环：保证所有 Add 都已发生在随后的 Wait 之前。
 		<-serveDone
@@ -165,7 +165,7 @@ func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy, connections
 			log.Info("shutdown complete")
 			return
 		}
-		log.Warn("shutdown grace period expired, forcing exit")
+		log.Warn("shutdown timed out, forcing exit")
 		return
 	}
 }

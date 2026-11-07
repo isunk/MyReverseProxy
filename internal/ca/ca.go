@@ -156,7 +156,7 @@ func Load(certPath, keyPath string, explicitPair bool) (*tls.Config, *Authority,
 		certExists := fileExists(certPath)
 		keyExists := fileExists(keyPath)
 		if !certExists && !keyExists {
-			log.Warn("ca certificate not found cert=%s: serving http and tunnel only", certPath)
+			log.Warn("ca certificate missing cert=%s: mitm disabled", certPath)
 			return nil, nil, nil
 		}
 		if certExists != keyExists {

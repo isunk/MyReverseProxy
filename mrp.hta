@@ -541,8 +541,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             FALSE: ['Check files', function(data, vm) {
               var want = [MRP_EXE, CRT, KEY], lacking = [], i;
               for (i = 0; i < want.length; i++) if (!host.file.exists(want[i])) lacking.push(want[i]);
-              if (lacking.length === 0) { host.log('Files ready.', 'ok'); return; }
-              host.log('Missing ' + lacking.join(', ') + ' in ' + host.workdir + ' - download from GitHub Releases.', 'err');
+              if (lacking.length === 0) { host.log('files ready.', 'ok'); return; }
+              host.log('missing ' + lacking.join(', ') + ' - download from GitHub Releases.', 'err');
             }],
           },
         },
@@ -562,13 +562,13 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           state: {
             TRUE: ['Remove', function(data, vm) {
               host.run('powershell -NoProfile -Command "Get-ChildItem Cert:\\CurrentUser\\Root | Where-Object {$_.Subject -eq \'CN=' + CA_CN + '\' } | Remove-Item -Force" >nul 2>&1');
-              host.log('CA removed.', 'ok');
+              host.log('ca removed.', 'ok');
             }, true],
             FALSE: ['Import CA', function(data, vm) {
-              if (data.cert !== 'NONE') { host.log('Already imported [' + data.cert + '].', 'ok'); return; }
+              if (data.cert !== 'NONE') { host.log('ca already imported [' + data.cert + '].', 'ok'); return; }
               var code = host.run('certutil -user -addstore Root "' + host.workdir + CRT + '"');
-              if (code === 0) host.log('CA imported into the user Root store.', 'ok');
-              else host.log('CA import failed.', 'err');
+              if (code === 0) host.log('ca imported into user Root store.', 'ok');
+              else host.log('ca import failed.', 'err');
             }],
           },
         },
@@ -612,7 +612,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
                 host.run(ps, 0, true);
               } else host.run(cmd);
               var ok = host.exec('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) < 0;
-              host.log(ok ? 'System proxy cleared.' : 'Proxy not cleared.', ok ? 'ok' : 'warn');
+              host.log(ok ? 'system proxy cleared.' : 'proxy not cleared.', ok ? 'ok' : 'warn');
             }],
             FALSE: ['Set', function(data, vm) {
               var cmd = 'netsh winhttp set proxy 127.0.0.1:' + PORT;
@@ -622,7 +622,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
                 host.run(ps, 0, true);
               } else host.run(cmd);
               var ok = host.exec('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0;
-              host.log(ok ? 'System proxy set to 127.0.0.1:' + PORT + '.' : 'Proxy not applied.', ok ? 'ok' : 'warn');
+              host.log(ok ? 'system proxy set to 127.0.0.1:' + PORT + '.' : 'proxy not applied.', ok ? 'ok' : 'warn');
             }],
           },
         },
@@ -635,7 +635,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               dir = String(dir == null ? '' : dir).replace(/^\s+|\s+$/g, '');
               if (dir === '') return;
               host.run('cmd /k python -m http.server ' + HTTP_PORT + ' --directory "' + dir + '"', 1, false);
-              host.log('Static server serving ' + dir + ' at http://127.0.0.1:' + HTTP_PORT + '.', 'ok');
+              host.log('static server serving ' + dir + ' at http://127.0.0.1:' + HTTP_PORT + '.', 'ok');
             });
           },
         },
@@ -647,11 +647,11 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           host.log('> ' + cmd + ' [runas]', 'dim');
           host.run(ps, 0, true);
         } else host.run(cmd);
-        if (host.exec('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0) host.log('System proxy may still be set - clear it manually.', 'warn');
+        if (host.exec('netsh winhttp show proxy 2>nul').indexOf('127.0.0.1:' + PORT) >= 0) host.log('system proxy may still be set, clear manually.', 'warn');
         if (host.exec('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase().indexOf(MRP_EXE.toLowerCase()) >= 0) host.run('taskkill /im "' + MRP_EXE + '" /f');
         host.run('powershell -NoProfile -Command "Get-ChildItem Cert:\\CurrentUser\\Root | Where-Object {$_.Subject -eq \'CN=' + CA_CN + '\' } | Remove-Item -Force" >nul 2>&1');
         host.file.remove([MRP_EXE, CRT, KEY]);
-        host.log('Windows module uninstalled.', 'ok');
+        host.log('windows module uninstalled.', 'ok');
       },
     },
     {
@@ -685,8 +685,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             TRUE: ['Sync config', function(data, vm) {
               if (!host.file.exists(DEV_CFG)) { host.log(DEV_CFG + ' not found next to this script.', 'err'); return; }
               host.run('adb shell mkdir -p ' + data.devDir);
-              if (host.run('adb push "' + host.workdir + DEV_CFG + '" ' + data.devDir) !== 0) { host.log('Config sync failed - check the device connection.', 'err'); return; }
-              host.log(DEV_CFG + ' synced - mrp hot reloads it automatically.', 'ok');
+              if (host.run('adb push "' + host.workdir + DEV_CFG + '" ' + data.devDir) !== 0) { host.log('config sync failed, check device connection.', 'err'); return; }
+              host.log(DEV_CFG + ' synced, mrp reloads automatically.', 'ok');
             }],
           },
         },
@@ -701,13 +701,13 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             FALSE: ['Install files', function(data, vm) {
               host.run('adb shell mkdir -p ' + data.devDir);
               var rc = host.run('adb push "' + host.workdir + DEV_BIN + '" ' + data.devDir);
-              if (rc !== 0) { host.log('Binary push failed rc=' + rc + ' - download ' + DEV_BIN + ' into ' + host.workdir + ' from GitHub Releases.', 'err'); return; }
+              if (rc !== 0) { host.log('binary push failed rc=' + rc + ', download ' + DEV_BIN + ' from GitHub Releases.', 'err'); return; }
               if (host.file.exists(DEV_CFG)) host.run('adb push "' + host.workdir + DEV_CFG + '" ' + data.devDir);
               var bad = [];
               if (host.run('adb push "' + host.workdir + CRT + '" ' + data.devDir) !== 0) bad.push(CRT);
               if (host.run('adb push "' + host.workdir + KEY + '" ' + data.devDir) !== 0) bad.push(KEY);
               host.run('adb shell chmod +x ' + data.devDir + '/' + DEV_BIN);
-              host.log(bad.length ? 'Binary installed, CA push failed for ' + bad.join(', ') + '.' : 'Device files installed.', bad.length ? 'warn' : 'ok');
+              host.log(bad.length ? 'binary installed, ca push failed for ' + bad.join(', ') + '.' : 'device files installed.', bad.length ? 'warn' : 'ok');
             }],
           },
         },
@@ -725,7 +725,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               host.run('adb wait-for-device');
               host.run('adb remount');
               host.run('adb shell rm -f ' + data.certPath);
-              host.log('CA removed.', 'ok');
+              host.log('ca removed.', 'ok');
             }, true],
             FALSE: ['Install CA', function(data, vm) {
               host.run('adb root');
@@ -734,8 +734,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               host.run('adb remount');
               host.run('adb push "' + host.workdir + CRT + '" ' + data.certPath);
               host.run('adb shell chmod 644 ' + data.certPath);
-              if (host.exec('adb shell "test -f ' + data.certPath + ' && echo Y" 2>nul') !== '') { host.log('CA installed.', 'ok'); return; }
-              host.log('CA install may have failed - ensure the device is rooted or in developer mode.', 'warn');
+              if (host.exec('adb shell "test -f ' + data.certPath + ' && echo Y" 2>nul') !== '') { host.log('ca installed.', 'ok'); return; }
+              host.log('ca install may have failed, ensure device rooted or in developer mode.', 'warn');
             }],
           },
         },
@@ -756,12 +756,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               host.log(gone ? 'mrp stopped.' : 'mrp stop not confirmed.', gone ? 'ok' : 'warn');
             }],
             FALSE: ['Start', function(data, vm) {
-              if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on the device.', 'ok'); return; }
+              if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on device.', 'ok'); return; }
               // nohup 后台运行：adb 会话断开（拔 USB）不终止 mrp，输出落设备侧日志
               host.run('adb shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' >mrp.log 2>&1 &"');
               var up = false, i;
               for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== '') { up = true; break; } }
-              host.log(up ? 'mrp started in the background on the device - output in ' + data.devDir + '/mrp.log.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
+              host.log(up ? 'mrp started on device, log in ' + data.devDir + '/mrp.log.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
             }],
           },
         },
@@ -775,11 +775,11 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           state: {
             TRUE: ['Clear', function(data, vm) {
               host.run('adb shell settings put global http_proxy :0');
-              host.log('Device global proxy cleared.', 'ok');
+              host.log('device global proxy cleared.', 'ok');
             }],
             FALSE: ['Set', function(data, vm) {
               host.run('adb shell settings put global http_proxy 127.0.0.1:' + PORT);
-              host.log('Device global proxy set to 127.0.0.1:' + PORT + '.', 'ok');
+              host.log('device global proxy set to 127.0.0.1:' + PORT + '.', 'ok');
             }],
           },
         },
@@ -789,14 +789,14 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           name: 'Port forward :' + PORT,
           run: function(data, vm) {
             host.run('adb forward tcp:' + PORT + ' tcp:' + PORT);
-            host.log('Forward port :' + PORT + ' active - PC proxy target 127.0.0.1:' + PORT + '.', 'ok');
+            host.log('forward port ' + PORT + ' active, pc proxy target 127.0.0.1:' + PORT + '.', 'ok');
           },
         },
         {
           name: 'Port reverse :' + HTTP_PORT,
           run: function(data, vm) {
             host.run('adb reverse tcp:' + HTTP_PORT + ' tcp:' + HTTP_PORT);
-            host.log('Reverse port :' + HTTP_PORT + ' active.', 'ok');
+            host.log('reverse port ' + HTTP_PORT + ' active.', 'ok');
           },
         },
         {
@@ -814,13 +814,13 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           run: function(data, vm) {
             var probe = 'adb shell \'cat /proc/net/unix | grep devtools | head -n 1 | cut -d @ -f2\'';
             var rc = host.run('powershell -Command "adb forward tcp:9222 localabstract:$(' + probe + ')"', 0, true);
-            host.log(rc === 0 ? 'DevTools port forwarding active.' : 'DevTools port forwarding failed rc=' + rc + '.', rc === 0 ? 'ok' : 'err');
+            host.log(rc === 0 ? 'devtools port forwarding active.' : 'devtools port forwarding failed rc=' + rc + '.', rc === 0 ? 'ok' : 'err');
           },
         },
         {
           name: 'Tail log',
           run: function(data, vm) {
-            if (host.exec('adb shell "test -f ' + data.devDir + '/mrp.log && echo Y" 2>nul') === '') { host.log('mrp.log not found on the device.', 'warn'); return; }
+            if (host.exec('adb shell "test -f ' + data.devDir + '/mrp.log && echo Y" 2>nul') === '') { host.log('mrp.log not found on device.', 'warn'); return; }
             host.run('cmd /k adb shell "tail -n 200 -f ' + data.devDir + '/mrp.log"', 1, false);
             host.log('mrp.log tailing in a new window.', 'ok');
           },
@@ -835,7 +835,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         host.run('adb remount');
         host.run('adb shell rm -f ' + data.certPath);
         host.run('adb shell rm -rf ' + data.devDir);
-        host.log('Android uninstalled.', 'ok');
+        host.log('android uninstalled.', 'ok');
       },
     },
     {
@@ -871,8 +871,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             TRUE: ['Sync config', function(data, vm) {
               if (!host.file.exists(DEV_CFG)) { host.log(DEV_CFG + ' not found next to this script.', 'err'); return; }
               host.run('hdc shell mkdir -p ' + data.devDir);
-              if (host.run('hdc file send "' + host.workdir + DEV_CFG + '" ' + data.devDir) !== 0) { host.log('Config sync failed - check the device connection.', 'err'); return; }
-              host.log(DEV_CFG + ' synced - mrp hot reloads it automatically.', 'ok');
+              if (host.run('hdc file send "' + host.workdir + DEV_CFG + '" ' + data.devDir) !== 0) { host.log('config sync failed, check device connection.', 'err'); return; }
+              host.log(DEV_CFG + ' synced, mrp reloads automatically.', 'ok');
             }],
           },
         },
@@ -887,13 +887,13 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             FALSE: ['Install files', function(data, vm) {
               host.run('hdc shell mkdir -p ' + data.devDir);
               var rc = host.run('hdc file send "' + host.workdir + DEV_BIN + '" ' + data.devDir);
-              if (rc !== 0) { host.log('Binary push failed rc=' + rc + ' - download ' + DEV_BIN + ' into ' + host.workdir + ' from GitHub Releases.', 'err'); return; }
+              if (rc !== 0) { host.log('binary push failed rc=' + rc + ', download ' + DEV_BIN + ' from GitHub Releases.', 'err'); return; }
               if (host.file.exists(DEV_CFG)) host.run('hdc file send "' + host.workdir + DEV_CFG + '" ' + data.devDir);
               var bad = [];
               if (host.run('hdc file send "' + host.workdir + CRT + '" ' + data.devDir) !== 0) bad.push(CRT);
               if (host.run('hdc file send "' + host.workdir + KEY + '" ' + data.devDir) !== 0) bad.push(KEY);
               host.run('hdc shell chmod +x ' + data.devDir + '/' + DEV_BIN);
-              host.log(bad.length ? 'Binary installed, CA push failed for ' + bad.join(', ') + '.' : 'Device files installed.', bad.length ? 'warn' : 'ok');
+              host.log(bad.length ? 'binary installed, ca push failed for ' + bad.join(', ') + '.' : 'device files installed.', bad.length ? 'warn' : 'ok');
             }],
           },
         },
@@ -907,14 +907,14 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           state: {
             TRUE: ['Remove', function(data, vm) {
               host.run('hdc shell rm -f ' + data.certPath);
-              host.log('CA removed.', 'ok');
+              host.log('ca removed.', 'ok');
             }, true],
             FALSE: ['Install CA', function(data, vm) {
               var tmp = '%TEMP%\\' + CA_HASH + '.0';
               host.run('copy /y "' + host.workdir + CRT + '" "' + tmp + '" >nul');
               host.run('hdc file send "' + tmp + '" /etc/security/certificates');
-              if (host.exec('hdc shell "test -f ' + data.certPath + ' && echo Y" 2>nul') !== '') { host.log('CA installed.', 'ok'); return; }
-              host.log('CA install may have failed - ensure the device is rooted or in developer mode.', 'warn');
+              if (host.exec('hdc shell "test -f ' + data.certPath + ' && echo Y" 2>nul') !== '') { host.log('ca installed.', 'ok'); return; }
+              host.log('ca install may have failed, ensure device rooted or in developer mode.', 'warn');
             }],
           },
         },
@@ -935,12 +935,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               host.log(gone ? 'mrp stopped.' : 'mrp stop not confirmed.', gone ? 'ok' : 'warn');
             }],
             FALSE: ['Start', function(data, vm) {
-              if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on the device.', 'ok'); return; }
+              if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on device.', 'ok'); return; }
               // nohup 后台运行：hdc 会话断开（拔 USB）不终止 mrp，输出落设备侧日志
               host.run('hdc shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' >mrp.log 2>&1 &"');
               var up = false, i;
               for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== '') { up = true; break; } }
-              host.log(up ? 'mrp started in the background on the device - output in ' + data.devDir + '/mrp.log.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
+              host.log(up ? 'mrp started on device, log in ' + data.devDir + '/mrp.log.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
             }],
           },
         },
@@ -955,12 +955,12 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             TRUE: ['Clear', function(data, vm) {
               host.run('hdc shell network-cfg set http_proxy 0');
               data.proxy = false;
-              host.log('Device global proxy cleared.', 'ok');
+              host.log('device global proxy cleared.', 'ok');
             }],
             FALSE: ['Set', function(data, vm) {
               host.run('hdc shell network-cfg set http_proxy 127.0.0.1:' + PORT);
               data.proxy = true;
-              host.log('Device global proxy set to 127.0.0.1:' + PORT + '.', 'ok');
+              host.log('device global proxy set to 127.0.0.1:' + PORT + '.', 'ok');
             }],
           },
         },
@@ -970,14 +970,14 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           name: 'Port forward :' + PORT,
           run: function(data, vm) {
             host.run('hdc fport tcp:' + PORT + ' tcp:' + PORT);
-            host.log('Forward port :' + PORT + ' active - PC proxy target 127.0.0.1:' + PORT + '.', 'ok');
+            host.log('forward port ' + PORT + ' active, pc proxy target 127.0.0.1:' + PORT + '.', 'ok');
           },
         },
         {
           name: 'Port reverse :' + HTTP_PORT,
           run: function(data, vm) {
             host.run('hdc rport tcp:' + HTTP_PORT + ' tcp:' + HTTP_PORT);
-            host.log('Reverse port :' + HTTP_PORT + ' active.', 'ok');
+            host.log('reverse port ' + HTTP_PORT + ' active.', 'ok');
           },
         },
         {
@@ -995,13 +995,13 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           run: function(data, vm) {
             var probe = 'hdc shell \'cat /proc/net/unix | grep devtools | head -n 1 | cut -d @ -f2\'';
             var rc = host.run('powershell -Command "hdc fport tcp:9222 localabstract:$(' + probe + ')"', 0, true);
-            host.log(rc === 0 ? 'DevTools port forwarding active.' : 'DevTools port forwarding failed rc=' + rc + '.', rc === 0 ? 'ok' : 'err');
+            host.log(rc === 0 ? 'devtools port forwarding active.' : 'devtools port forwarding failed rc=' + rc + '.', rc === 0 ? 'ok' : 'err');
           },
         },
         {
           name: 'Tail log',
           run: function(data, vm) {
-            if (host.exec('hdc shell "test -f ' + data.devDir + '/mrp.log && echo Y" 2>nul') === '') { host.log('mrp.log not found on the device.', 'warn'); return; }
+            if (host.exec('hdc shell "test -f ' + data.devDir + '/mrp.log && echo Y" 2>nul') === '') { host.log('mrp.log not found on device.', 'warn'); return; }
             host.run('cmd /k hdc shell "tail -n 200 -f ' + data.devDir + '/mrp.log"', 1, false);
             host.log('mrp.log tailing in a new window.', 'ok');
           },
@@ -1013,7 +1013,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         host.run('hdc shell rm -f ' + data.certPath);
         host.run('hdc shell rm -rf ' + data.devDir);
         data.proxy = false;
-        host.log('HarmonyOS uninstalled.', 'ok');
+        host.log('harmonyos uninstalled.', 'ok');
       },
     },
   ];
@@ -1125,11 +1125,11 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         if (this.busy) return;
         var self = this, m = this.cur;
         this.busy = true;
-        host.log('Refreshing ' + m.name + '...', 'dim');
+        host.log('refreshing ' + m.name + '...', 'dim');
         setTimeout(function() {
           try {
             self.render();
-            host.log('Probed ' + m.name + ': ' + ({ ok: 'ok', warn: 'partial', err: 'not ready', dim: 'no device' })[self.tones[self.tab]] + '.');
+            host.log('probed ' + m.name + ': ' + ({ ok: 'ok', warn: 'partial', err: 'not ready', dim: 'no device' })[self.tones[self.tab]] + '.');
           } finally {
             self.busy = false;
           }

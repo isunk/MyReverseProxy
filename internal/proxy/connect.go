@@ -56,7 +56,7 @@ func (p *Proxy) serveConnect(client net.Conn, protocol string, port int, domain 
 		return false
 	}
 	if p.tlsConfig == nil {
-		log.Warn("mitm skipped domain=%s port=%d: no ca certificate configured", domain, port)
+		log.Warn("mitm skipped domain=%s port=%d: no ca certificate", domain, port)
 		_, _ = client.Write([]byte(connectBadGateway))
 		return false
 	}
@@ -88,7 +88,7 @@ func (p *Proxy) tunnel(client net.Conn, domain string, port int) {
 	defer cancel()
 	upstream, err := p.nameservers.DialContext(ctx, "tcp", net.JoinHostPort(domain, strconv.Itoa(port)))
 	if err != nil {
-		log.Error("upstream dial failed domain=%s port=%d: %v", domain, port, err)
+		log.Error("upstream dial failed domain=%s port=%d err=%v", domain, port, err)
 		_, _ = client.Write([]byte(connectBadGateway))
 		return
 	}

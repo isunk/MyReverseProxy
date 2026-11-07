@@ -186,7 +186,7 @@ func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 				// 文件缺失（被删除）期间只提示一次，避免每轮轮询刷屏；恢复后照常比对重载
 				if !statFailed {
 					statFailed = true
-					log.Warn("stat config failed config=%s: %v", p.configPath, err)
+					log.Warn("config stat failed config=%s err=%v", p.configPath, err)
 				}
 				continue
 			}
@@ -197,7 +197,7 @@ func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 			}
 			previousSize, previousModTime, previousKnown = info.Size(), info.ModTime(), true
 			if err := p.reload(); err != nil {
-				log.Error("reload failed, keeping previous config: %v", err)
+				log.Error("config reload failed err=%v", err)
 				continue
 			}
 			log.Info("config reloaded")
