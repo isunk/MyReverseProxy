@@ -2,9 +2,12 @@ package proxy
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"mrp/internal/capture"
@@ -104,6 +107,31 @@ func headersFrom(header http.Header) []capture.Header {
 	return entries
 }
 
+// decodeContent 按 Content-Encoding 解压记录体：gzip/deflate 用标准库解为明文，
+// 其余编码（br/zstd 等）或解压失败保留原始字节；前缀截断导致流不完整时容忍错误，取已解压部分。
+func decodeContent(data []byte, encoding string) string {
+	if len(data) == 0 || encoding == "" {
+		return string(data)
+	}
+	encoding = strings.ToLower(encoding)
+	var reader io.ReadCloser
+	switch {
+	case strings.Contains(encoding, "gzip"):
+		gz, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return string(data)
+		}
+		reader = gz
+	case strings.Contains(encoding, "deflate"):
+		reader = flate.NewReader(bytes.NewReader(data))
+	default:
+		return string(data)
+	}
+	defer reader.Close()
+	out, _ := io.ReadAll(reader)
+	return string(out)
+}
+
 // recordCapture 在响应回传后组装一条 HAR entry 并追加；记录失败或达上限时告警一次并停用，不影响转发。
 func (p *Proxy) recordCapture(start time.Time, protocol string, port int, domain string, request *http.Request, response *captureWriter, requestPrefix []byte, requestSize int64, requestTruncated bool) {
 	recorder := p.capture
@@ -115,7 +143,7 @@ func (p *Proxy) recordCapture(start time.Time, protocol string, port int, domain
 	if len(requestPrefix) > 0 {
 		postData = &capture.PostData{
 			MimeType:  request.Header.Get("Content-Type"),
-			Text:      string(requestPrefix),
+			Text:      decodeContent(requestPrefix, request.Header.Get("Content-Encoding")),
 			Truncated: requestTruncated,
 		}
 	}
@@ -143,7 +171,7 @@ func (p *Proxy) recordCapture(start time.Time, protocol string, port int, domain
 			Content: capture.Content{
 				Size:      len(response.prefix),
 				MimeType:  contentTypeOf(response.header),
-				Text:      string(response.prefix),
+				Text:      decodeContent(response.prefix, response.header.Get("Content-Encoding")),
 				Truncated: response.truncated,
 			},
 			BodySize: response.total,

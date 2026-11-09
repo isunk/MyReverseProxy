@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -237,5 +239,67 @@ func TestCapture_TunnelNotRecorded(t *testing.T) {
 	har := readHar(t, path)
 	if len(har.Log.Entries) != 0 {
 		t.Fatalf("entries = %d, want 0 (tunnel must not be recorded)", len(har.Log.Entries))
+	}
+}
+
+// 上游返回 gzip 编码的响应时，HAR 的 content.text 应记录解压后的明文，而非压缩字节乱码；原始 Content-Encoding 头仍保留在 headers
+func TestCapture_GzipResponseDecoded(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Encoding", "gzip")
+		writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		gz := gzip.NewWriter(writer)
+		io.WriteString(gz, "hello gzip world")
+		gz.Close()
+	}))
+	t.Cleanup(upstream.Close)
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upstream.URL+"\n")
+	path := captureFilePath(t)
+	proxyURL, recorder := startCapturedProxy(t, configPath, path)
+	client := proxyClient(proxyURL)
+
+	if got := requestBody(t, client, "http://api.example.com/gz"); !strings.Contains(got, "hello gzip world") {
+		t.Fatalf("client should receive decoded body, got %q", got)
+	}
+	if err := recorder.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	har := readHar(t, path)
+	entry := har.Log.Entries[0]
+	if entry.Response.Content.Text != "hello gzip world" {
+		t.Fatalf("content.text = %q, want decoded plaintext", entry.Response.Content.Text)
+	}
+	found := false
+	for _, header := range entry.Response.Headers {
+		if header.Name == "Content-Encoding" && header.Value == "gzip" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("original Content-Encoding header should be recorded")
+	}
+}
+
+// 截断的 gzip 前缀（超出 body 上限）应容忍解压失败，保留已解压部分而非记录压缩乱码
+func TestCapture_GzipTruncatedDecoded(t *testing.T) {
+	plain := strings.Repeat("hello ", 3*captureBodyLimit/len("hello "))
+	var buffer bytes.Buffer
+	gz := gzip.NewWriter(&buffer)
+	io.WriteString(gz, plain)
+	gz.Close()
+	encoded := buffer.Bytes()
+
+	if got := decodeContent(encoded, "gzip"); got != plain {
+		t.Fatalf("decodeContent(gzip) = %q, want full plaintext", got)
+	}
+	if got := decodeContent(encoded[:len(encoded)/2], "gzip"); !strings.HasPrefix(plain, got) || got == "" {
+		t.Fatalf("truncated gzip should decode available prefix, got %d bytes", len(got))
+	}
+	if got := decodeContent(encoded, "br"); got != string(encoded) {
+		t.Fatalf("unknown encoding should keep raw bytes, got %d bytes", len(got))
+	}
+	if got := decodeContent([]byte("plain"), ""); got != "plain" {
+		t.Fatalf("no encoding should keep raw bytes, got %q", got)
 	}
 }
