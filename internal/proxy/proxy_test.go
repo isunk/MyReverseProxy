@@ -315,6 +315,31 @@ func TestProxy_HTTPRoutingAndPassthrough(t *testing.T) {
 	}
 }
 
+// TestProxy_WildcardDomainRouting HTTP 代理请求命中通配符虚拟服务器并按其路由转发，命中分组内仍按最长前缀选路
+func TestProxy_WildcardDomainRouting(t *testing.T) {
+	upA := recordingServer(t, "A")
+	upB := recordingServer(t, "B")
+	content := "servers:\n" +
+		"  - domain: \"*.example.org\"\n" +
+		"    routes:\n" +
+		"      - prefix: /v1/\n" +
+		"        upstream: " + upA.URL + "/v1/\n" +
+		"      - prefix: /\n" +
+		"        upstream: " + upB.URL + "\n"
+	proxyURL, _ := startProxy(t, testutil.ConfigFile(t, "r.yaml", content), nil)
+	client := proxyClient(proxyURL)
+
+	if got := requestBody(t, client, "http://api.example.org/v1/users"); !strings.HasPrefix(got, "A:/v1/users") {
+		t.Fatalf("wildcard longest prefix: got %q", got)
+	}
+	if got := requestBody(t, client, "http://other.example.org/misc"); !strings.HasPrefix(got, "B:/misc") {
+		t.Fatalf("wildcard fallback route: got %q", got)
+	}
+	if got := requestBody(t, client, upA.URL+"/misc"); !strings.HasPrefix(got, "A:/misc") {
+		t.Fatalf("unmatched suffix should passthrough to original target, got %q", got)
+	}
+}
+
 func TestProxy_StaticDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("local directory routing is not exercised on windows")

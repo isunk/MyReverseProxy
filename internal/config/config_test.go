@@ -130,6 +130,65 @@ func TestLoadTable_NormalizesDomainCase(t *testing.T) {
 	}
 }
 
+// TestLoadTable_WildcardSuffixDomain 通配符 *.suffix 按 RFC 1034 语义命中单层子域，裸域与多层子域不命中；大小写与空白照常归一
+func TestLoadTable_WildcardSuffixDomain(t *testing.T) {
+	path := testutil.ConfigFile(t, "w.yaml",
+		"servers:\n  - domain: \" *.EXAMPLE.COM \"\n    routes:\n      - prefix: /\n        upstream: http://up-w\n")
+	table, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !table.Has("", 0, "api.example.com") {
+		t.Fatal("single-label subdomain should match *.example.com")
+	}
+	if table.Has("", 0, "example.com") {
+		t.Fatal("bare domain should not match *.example.com")
+	}
+	if table.Has("", 0, "a.b.example.com") {
+		t.Fatal("multi-label subdomain should not match *.example.com")
+	}
+	picked, ok := table.Pick("", 0, "api.example.com", "/")
+	if !ok || picked.Target.URL.Host != "up-w" {
+		t.Fatalf("picked route for subdomain: got %+v ok=%v", picked, ok)
+	}
+}
+
+// TestLoadTable_WildcardAllDomains domain 为 * 时命中任意请求域名（含 IP 字面量），一条配置即可让全部 HTTPS 流量走 MITM
+func TestLoadTable_WildcardAllDomains(t *testing.T) {
+	path := testutil.ConfigFile(t, "a.yaml",
+		"servers:\n  - domain: \"*\"\n    routes:\n      - prefix: /\n        upstream: http://up-a\n")
+	table, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, domain := range []string{"anything.example.com", "a.b.c.example.com", "127.0.0.1", "::1", "unlisted.org"} {
+		if !table.Has("", 0, domain) {
+			t.Fatalf("domain %s should match *", domain)
+		}
+	}
+}
+
+// TestLoadTable_RejectsInvalidWildcard 通配符仅允许 * 与 *.suffix，其余位置出现 * 一律拒绝加载
+func TestLoadTable_RejectsInvalidWildcard(t *testing.T) {
+	for _, domain := range []string{"*.", "a.*.com", "*example.com", "*.*", "**", "a*.com", "*.example.*", "x.*.y"} {
+		content := "servers:\n  - domain: \"" + domain + "\"\n    routes:\n      - prefix: /\n        upstream: http://up-x\n"
+		path := testutil.ConfigFile(t, "bad.yaml", content)
+		if _, _, err := Load(path); err == nil {
+			t.Fatalf("domain %q must be rejected", domain)
+		} else if !strings.Contains(err.Error(), domain) {
+			t.Fatalf("error for domain %q should mention the value, got %q", domain, err)
+		}
+	}
+}
+
+// TestLoadTable_WildcardDuplicateServerEntry 同一通配符模式下 (protocol, port) 组合重复须报错
+func TestLoadTable_WildcardDuplicateServerEntry(t *testing.T) {
+	content := "servers:\n  - domain: \"*\"\n    routes:\n      - prefix: /\n        upstream: http://up-a\n  - domain: \"*\"\n    routes:\n      - prefix: /\n        upstream: http://up-b\n"
+	if _, _, err := Load(testutil.ConfigFile(t, "dup.yaml", content)); err == nil {
+		t.Fatal("duplicate catch-all server entry must fail")
+	}
+}
+
 func TestLoadTable_TrimsWhitespace(t *testing.T) {
 	path := testutil.ConfigFile(t, "r.yaml",
 		"servers:\n  - domain: \" api.example.com \"\n    routes:\n      - prefix: \" /v1/ \"\n        upstream: \" http://up-a \"\n        host: \" up-a.example.com \"\n")
@@ -225,8 +284,8 @@ func TestDefaultConfig_Parses(t *testing.T) {
 
 func TestDefaultConfig_DocumentsNameservers(t *testing.T) {
 	for _, line := range []string{
-		"# nameservers: 顶层字段",
-		"省略或留空按系统默认 DNS 解析",
+		"按序故障切换",
+		"默认按系统 DNS 解析",
 		"# nameservers:",
 		"#   - \"223.5.5.5\"",
 		"#   - \"[2001:4860:4860::8888]:5353\"",

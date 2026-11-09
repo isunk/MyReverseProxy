@@ -214,6 +214,96 @@ func TestConnect_IPDomainMITM(t *testing.T) {
 	}
 }
 
+// 配置 domain 为 * 的 HTTPS 路由：任意域名的 CONNECT 均走 MITM 并按 CONNECT 目标域名签发证书，内层请求照常路由转发
+func TestConnect_WildcardDomainMITM(t *testing.T) {
+	upstream := recordingServer(t, "wild")
+	caCert, caKey := testutil.AuthorityCA(t)
+	authority := ca.New(caCert, caKey)
+	tlsConfig := &tls.Config{
+		GetCertificate: authority.GetCertificate,
+		NextProtos:     []string{"http/1.1"},
+		MinVersion:     tls.VersionTLS12,
+	}
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers:\n  - domain: \"*\"\n    routes:\n      - prefix: /\n        upstream: "+upstream.URL+"\n")
+	servers := testNameservers(t)
+	proxy, err := New(configPath, NewTransport(servers.DialContext), tlsConfig, authority, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	proxyURL := startListener(t, proxy)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	proxyConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxyConn.Close()
+	fmt.Fprintf(proxyConn, "CONNECT test.example.org:443 HTTP/1.1\r\nHost: test.example.org:443\r\n\r\n")
+	if code := readConnectResponse(t, bufio.NewReader(proxyConn)); code != 200 {
+		t.Fatalf("CONNECT: want 200, got %d", code)
+	}
+	// 客户端按 CA 校验证书链与目标域名，握手通过即证明 MITM 按 CONNECT 目标签发证书
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	innerConn := tls.Client(proxyConn, &tls.Config{RootCAs: roots, ServerName: "test.example.org"})
+	if err := innerConn.HandshakeContext(t.Context()); err != nil {
+		t.Fatalf("inner handshake with wildcard MITM certificate: %v", err)
+	}
+	fmt.Fprintf(innerConn, "GET /wild-path HTTP/1.1\r\nHost: test.example.org\r\n\r\n")
+	resp, err := http.ReadResponse(bufio.NewReader(innerConn), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("read inner response: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if got := strings.TrimSpace(string(body)); !strings.HasPrefix(got, "wild:/wild-path") {
+		t.Fatalf("inner request: got %q", got)
+	}
+}
+
+// 配置 domain 为 *.suffix：单层子域 CONNECT 走 MITM，多层子域未命中走透传隧道（拨号失败返回 502）
+func TestConnect_WildcardSuffixTunnelBoundary(t *testing.T) {
+	caCert, caKey := testutil.AuthorityCA(t)
+	tlsConfig := &tls.Config{
+		GetCertificate: ca.New(caCert, caKey).GetCertificate,
+		NextProtos:     []string{"http/1.1"},
+		MinVersion:     tls.VersionTLS12,
+	}
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers:\n  - domain: \"*.example.org\"\n    routes:\n      - prefix: /\n        upstream: http://unused\n")
+	proxyURL, _ := startProxy(t, configPath, tlsConfig)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	connect := func(target string) (net.Conn, int) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		fmt.Fprintf(conn, "CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\n\r\n", target, target)
+		return conn, readConnectResponse(t, bufio.NewReader(conn))
+	}
+	handshake := func(conn net.Conn, serverName string) error {
+		roots := x509.NewCertPool()
+		roots.AddCert(caCert)
+		innerConn := tls.Client(conn, &tls.Config{RootCAs: roots, ServerName: serverName})
+		return innerConn.HandshakeContext(t.Context())
+	}
+
+	conn, code := connect("api.example.org")
+	if code != 200 {
+		t.Fatalf("single-label CONNECT: want 200, got %d", code)
+	}
+	if err := handshake(conn, "api.example.org"); err != nil {
+		t.Fatalf("single-label should MITM with issued certificate: %v", err)
+	}
+	conn, code = connect("a.b.example.org")
+	if code != 502 {
+		t.Fatalf("multi-label CONNECT should tunnel out and fail dialing: want 502, got %d", code)
+	}
+}
+
 // CONNECT+MITM 后内部再发 CONNECT：验证嵌套 hijack 不被外层 defer 误关
 func TestConnect_NestedConnectViaMITM(t *testing.T) {
 	echo := testutil.EchoServer(t)

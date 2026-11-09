@@ -73,47 +73,114 @@ func (e *Entry) matches(protocol string, port int) bool {
 	return e.Port == 0 || e.Port == port
 }
 
-// Table 按域名索引的虚拟服务器表，加载配置时一次性构建、运行期只读，热加载以整体替换实现。
+// Table 按域名模式分组的虚拟服务器表，分组按配置声明顺序排列、先声明先匹配；
+// 加载配置时一次性构建、运行期只读，热加载以整体替换实现。
 type Table struct {
-	byDomain map[string][]*Entry
+	groups []*DomainGroup
+}
+
+// DomainGroup 一个域名模式下的全部虚拟服务器条目：精确分组按域名相等匹配，
+// 通配符分组按 RFC 1034 单层子域语义匹配。
+type DomainGroup struct {
+	pattern  string
+	suffix   string
+	wildcard bool
+	entries  []*Entry
+}
+
+// matches 判断该分组是否响应 (protocol, port, domain) 目标：域名模式命中且分组内存在匹配条目。
+func (g *DomainGroup) matches(protocol string, port int, domain string) bool {
+	if g.wildcard {
+		if !wildcardMatch(domain, g.suffix) {
+			return false
+		}
+	} else if g.pattern != domain {
+		return false
+	}
+	for _, entry := range g.entries {
+		if entry.matches(protocol, port) {
+			return true
+		}
+	}
+	return false
+}
+
+// wildcardMatch 判定请求域名是否命中通配符模式：suffix 为空表示 * 匹配任意域名；
+// *.suffix 按 RFC 1034 语义匹配单层子域 label.suffix，裸域与多层子域不命中。
+func wildcardMatch(domain, suffix string) bool {
+	if domain == "" {
+		return false
+	}
+	if suffix == "" {
+		return true
+	}
+	label, ok := strings.CutSuffix(domain, "."+suffix)
+	return ok && label != "" && !strings.Contains(label, ".")
+}
+
+// newDomainGroup 解析归一后的 domain 配置值：* 匹配任意域名，*.suffix 匹配单层子域，其余为精确域名。
+func newDomainGroup(pattern string, entry *Entry) *DomainGroup {
+	group := &DomainGroup{pattern: pattern, entries: []*Entry{entry}}
+	if pattern == "*" {
+		group.wildcard = true
+	} else if strings.HasPrefix(pattern, "*.") {
+		group.wildcard = true
+		group.suffix = pattern[2:]
+	}
+	return group
 }
 
 func NewTable() *Table {
-	return &Table{byDomain: map[string][]*Entry{}}
+	return &Table{}
 }
 
-// Add 把归一后的虚拟服务器条目挂入对应域名，同一域名下 (protocol, port) 组合唯一，重复报错。
+// Add 把归一后的虚拟服务器条目挂入对应域名分组，分组按首次声明顺序排列，同一 domain 值多次声明合并为一组；
+// 同一分组内 (protocol, port) 组合唯一，重复报错。
 func (t *Table) Add(domain string, entry *Entry, routes []*Route) error {
-	for _, existing := range t.byDomain[domain] {
-		if existing.Protocol == entry.Protocol && existing.Port == entry.Port {
-			return fmt.Errorf("domain %q server entry is duplicated protocol=%s port=%d", domain, protocolLabel(entry.Protocol), entry.Port)
+	for _, group := range t.groups {
+		if group.pattern != domain {
+			continue
 		}
+		for _, existing := range group.entries {
+			if existing.Protocol == entry.Protocol && existing.Port == entry.Port {
+				return fmt.Errorf("domain %q server entry is duplicated protocol=%s port=%d", domain, protocolLabel(entry.Protocol), entry.Port)
+			}
+		}
+		entry.routes = routes
+		group.entries = append(group.entries, entry)
+		return nil
 	}
 	entry.routes = routes
-	t.byDomain[domain] = append(t.byDomain[domain], entry)
+	t.groups = append(t.groups, newDomainGroup(domain, entry))
 	return nil
 }
 
-// Pick 在该域名的虚拟服务器中筛选协议与端口匹配的条目，再按最长前缀匹配路由。
+// Pick 按声明顺序选出第一个命中 (protocol, port, domain) 的分组，再在其条目内按最长前缀匹配路由。
 func (t *Table) Pick(protocol string, port int, domain, path string) (*Route, bool) {
-	var best *Route
-	for _, entry := range t.byDomain[domain] {
-		if !entry.matches(protocol, port) {
+	for _, group := range t.groups {
+		if !group.matches(protocol, port, domain) {
 			continue
 		}
-		for _, route := range entry.routes {
-			if pathHasPrefix(path, route.Prefix) && (best == nil || len(route.Prefix) > len(best.Prefix)) {
-				best = route
+		var best *Route
+		for _, entry := range group.entries {
+			if !entry.matches(protocol, port) {
+				continue
+			}
+			for _, route := range entry.routes {
+				if pathHasPrefix(path, route.Prefix) && (best == nil || len(route.Prefix) > len(best.Prefix)) {
+					best = route
+				}
 			}
 		}
+		return best, best != nil
 	}
-	return best, best != nil
+	return nil, false
 }
 
-// Has 判断该域名在指定协议与端口下是否配置了路由，供 CONNECT 隧道区分 MITM 与透传
+// Has 判断是否存在命中 (protocol, port, domain) 的分组，供 CONNECT 隧道区分 MITM 与透传
 func (t *Table) Has(protocol string, port int, domain string) bool {
-	for _, entry := range t.byDomain[domain] {
-		if entry.matches(protocol, port) {
+	for _, group := range t.groups {
+		if group.matches(protocol, port, domain) {
 			return true
 		}
 	}
@@ -122,8 +189,8 @@ func (t *Table) Has(protocol string, port int, domain string) bool {
 
 // InstallHandlers 为每条路由构建处理器，构建完成后路由表内容不再变化。
 func (t *Table) InstallHandlers(transport *http.Transport) {
-	for _, entries := range t.byDomain {
-		for _, entry := range entries {
+	for _, group := range t.groups {
+		for _, entry := range group.entries {
 			for _, route := range entry.routes {
 				route.handler = route.buildHandler(transport)
 			}
@@ -131,13 +198,13 @@ func (t *Table) InstallHandlers(transport *http.Transport) {
 	}
 }
 
-// Fingerprint 生成路由表稳定指纹用于判断热加载是否变化：无变化跳过重建处理器与拆存量连接，端口与协议也纳入以触发重建。
+// Fingerprint 生成路由表稳定指纹用于判断热加载是否变化：按声明顺序输出，声明顺序变化反映到指纹并触发重建；端口与协议也纳入以触发重建。
 func (t *Table) Fingerprint() string {
 	var buffer strings.Builder
-	for _, domain := range slices.Sorted(maps.Keys(t.byDomain)) {
-		buffer.WriteString(domain)
+	for _, group := range t.groups {
+		buffer.WriteString(group.pattern)
 		buffer.WriteByte('\x00')
-		for _, entry := range t.byDomain[domain] {
+		for _, entry := range group.entries {
 			fmt.Fprintf(&buffer, "%s\x00%d\x00", entry.Protocol, entry.Port)
 			for _, route := range entry.routes {
 				buffer.WriteString(route.fingerprint())

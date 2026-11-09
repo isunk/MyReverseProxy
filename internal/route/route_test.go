@@ -13,14 +13,15 @@ import (
 )
 
 func TestPick_LongestPrefix(t *testing.T) {
-	table := &Table{byDomain: map[string][]*Entry{
-		"a": {{routes: []*Route{
-			{Prefix: "/"},
-			{Prefix: "/v1/"},
-			{Prefix: "/v1/users/"},
-			{Prefix: "/api"},
-		}}},
-	}}
+	table := NewTable()
+	if err := table.Add("a", &Entry{}, []*Route{
+		{Prefix: "/"},
+		{Prefix: "/v1/"},
+		{Prefix: "/v1/users/"},
+		{Prefix: "/api"},
+	}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
 	cases := map[string]string{
 		"/v1/users/1": "/v1/users/",
 		"/v1/other":   "/v1/",
@@ -38,14 +39,163 @@ func TestPick_LongestPrefix(t *testing.T) {
 	if _, ok := table.Pick("", 0, "other", "/"); ok {
 		t.Fatal("unknown domain should not match")
 	}
-	blocked := &Table{byDomain: map[string][]*Entry{
-		"b": {{Protocol: "https", Port: 443, routes: []*Route{{Prefix: "/"}}}},
-	}}
+	blocked := NewTable()
+	if err := blocked.Add("b", &Entry{Protocol: "https", Port: 443}, []*Route{{Prefix: "/"}}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
 	if _, ok := blocked.Pick("http", 80, "b", "/"); ok {
 		t.Fatal("protocol and port mismatch should not match")
 	}
 	if got, ok := blocked.Pick("https", 443, "b", "/"); !ok || got.Prefix != "/" {
 		t.Fatalf("exact protocol and port should match, got %v ok=%v", got, ok)
+	}
+}
+
+// TestWildcardMatch 单层子域语义：*.suffix 只命中 label.suffix，裸域与多层子域不命中；* 命中任意非空域名
+func TestWildcardMatch(t *testing.T) {
+	cases := []struct {
+		domain, suffix string
+		want           bool
+	}{
+		{"a.example.com", "example.com", true},
+		{"example.com", "example.com", false},
+		{"a.b.example.com", "example.com", false},
+		{"xexample.com", "example.com", false},
+		{"sub.example.com", "sub.example.com", false},
+		{"a.sub.example.com", "sub.example.com", true},
+		{"example.com", "", true},
+		{"127.0.0.1", "", true},
+		{"", "", false},
+		{"", "example.com", false},
+	}
+	for _, tc := range cases {
+		if got := wildcardMatch(tc.domain, tc.suffix); got != tc.want {
+			t.Fatalf("wildcardMatch(%q, %q) = %v, want %v", tc.domain, tc.suffix, got, tc.want)
+		}
+	}
+}
+
+// TestAdd_WildcardGroups 同一 domain 值多次声明合并为一组，同组 (protocol, port) 重复报错；分组按首次声明顺序排列
+func TestAdd_WildcardGroups(t *testing.T) {
+	table := NewTable()
+	for _, domain := range []string{"a.example.com", "*.example.com", "*"} {
+		if err := table.Add(domain, &Entry{}, []*Route{{Prefix: "/"}}); err != nil {
+			t.Fatalf("Add(%q): %v", domain, err)
+		}
+	}
+	if err := table.Add("a.example.com", &Entry{Port: 443}, []*Route{{Prefix: "/tls"}}); err != nil {
+		t.Fatalf("Add same domain with another port: %v", err)
+	}
+	if err := table.Add("a.example.com", &Entry{}, []*Route{{Prefix: "/dup"}}); err == nil {
+		t.Fatal("duplicate protocol and port in one group must fail")
+	}
+	if err := table.Add("*.example.com", &Entry{}, []*Route{{Prefix: "/dup"}}); err == nil {
+		t.Fatal("duplicate protocol and port in wildcard group must fail")
+	}
+	if len(table.groups) != 3 {
+		t.Fatalf("group count = %d, want 3", len(table.groups))
+	}
+	for i, want := range []string{"a.example.com", "*.example.com", "*"} {
+		if table.groups[i].pattern != want {
+			t.Fatalf("groups[%d].pattern = %q, want %q", i, table.groups[i].pattern, want)
+		}
+	}
+}
+
+// TestPick_WildcardOrderPriority 声明顺序即匹配顺序：先声明的分组截获请求，通配符与精确域名遵循同一规则
+func TestPick_WildcardOrderPriority(t *testing.T) {
+	build := func(domains ...string) (*Table, map[string]*Route) {
+		table := NewTable()
+		routes := map[string]*Route{}
+		for _, domain := range domains {
+			route := &Route{Prefix: "/"}
+			routes[domain] = route
+			if err := table.Add(domain, &Entry{}, []*Route{route}); err != nil {
+				t.Fatalf("Add(%q): %v", domain, err)
+			}
+		}
+		return table, routes
+	}
+	expect := func(table *Table, routes map[string]*Route, requestDomain, wantDomain string) {
+		t.Helper()
+		picked, ok := table.Pick("", 0, requestDomain, "/")
+		if !ok || picked != routes[wantDomain] {
+			t.Fatalf("pick %s: want group %s, got %v ok=%v", requestDomain, wantDomain, picked, ok)
+		}
+	}
+	expectMiss := func(table *Table, requestDomain string) {
+		t.Helper()
+		if _, ok := table.Pick("", 0, requestDomain, "/"); ok {
+			t.Fatalf("pick %s: want no match", requestDomain)
+		}
+	}
+
+	table, routes := build("*", "a.example.com")
+	expect(table, routes, "a.example.com", "*")
+	table, routes = build("a.example.com", "*")
+	expect(table, routes, "a.example.com", "a.example.com")
+	expect(table, routes, "b.other.com", "*")
+	table, routes = build("*.example.com", "example.com")
+	expect(table, routes, "a.example.com", "*.example.com")
+	expect(table, routes, "example.com", "example.com")
+	table, routes = build("*.example.com")
+	expectMiss(table, "a.b.example.com")
+	expectMiss(table, "127.0.0.1")
+	table, routes = build("*")
+	expect(table, routes, "127.0.0.1", "*")
+}
+
+// TestHas_MatchesPick CONNECT 的 MITM 判定与路由选择对同一目标结论一致
+func TestHas_MatchesPick(t *testing.T) {
+	table := NewTable()
+	for _, domain := range []string{"a.example.com", "*.example.com", "*"} {
+		if err := table.Add(domain, &Entry{}, []*Route{{Prefix: "/"}}); err != nil {
+			t.Fatalf("Add(%q): %v", domain, err)
+		}
+	}
+	for _, protocol := range []string{"", "http", "https"} {
+		for _, port := range []int{0, 80, 443} {
+			for _, domain := range []string{"a.example.com", "b.example.com", "example.com", "a.b.example.com", "127.0.0.1", "unlisted.org"} {
+				_, picked := table.Pick(protocol, port, domain, "/")
+				if has := table.Has(protocol, port, domain); has != picked {
+					t.Fatalf("Has(%s,%d,%s) = %v, Pick ok = %v", protocol, port, domain, has, picked)
+				}
+			}
+		}
+	}
+}
+
+// TestPick_GroupWithoutPathMatch 分组命中但路径无路由匹配时视为未命中，交由透传处理
+func TestPick_GroupWithoutPathMatch(t *testing.T) {
+	table := NewTable()
+	if err := table.Add("a.example.com", &Entry{}, []*Route{{Prefix: "/api"}}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if _, ok := table.Pick("", 0, "a.example.com", "/other"); ok {
+		t.Fatal("unmatched path inside matched group should not pick a route")
+	}
+	if !table.Has("", 0, "a.example.com") {
+		t.Fatal("Has should be true for matched group regardless of path")
+	}
+}
+
+// TestFingerprint_DeclarationOrder 指纹按声明顺序生成：相同内容相同指纹，声明顺序变化改变指纹
+func TestFingerprint_DeclarationOrder(t *testing.T) {
+	build := func(domains ...string) *Table {
+		table := NewTable()
+		for _, domain := range domains {
+			if err := table.Add(domain, &Entry{}, []*Route{{Prefix: "/"}}); err != nil {
+				t.Fatalf("Add(%q): %v", domain, err)
+			}
+		}
+		return table
+	}
+	same := build("a.com", "b.com").Fingerprint()
+	if same != build("a.com", "b.com").Fingerprint() {
+		t.Fatal("identical config must produce identical fingerprint")
+	}
+	if same == build("b.com", "a.com").Fingerprint() {
+		t.Fatal("declaration order change must change the fingerprint")
 	}
 }
 

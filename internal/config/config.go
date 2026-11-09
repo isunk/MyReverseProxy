@@ -75,74 +75,98 @@ func Parse(data []byte) (*Config, error) {
 	return &config, nil
 }
 
-// buildTable 把配置构建为按域名索引的虚拟服务器表，同一域名可按 (protocol, port) 组合声明多条。
+// buildTable 把配置构建为按声明顺序排列的域名分组表，同一 domain 值可按 (protocol, port) 组合声明多条。
 func buildTable(config *Config) (*route.Table, error) {
 	table := route.NewTable()
-	for _, server := range config.Servers {
+	for i, server := range config.Servers {
 		name := strings.ToLower(strings.TrimSpace(server.Domain))
 		if name == "" {
-			return nil, errors.New("domain is required")
+			return nil, fmt.Errorf("servers[%d]: domain is required", i)
 		}
-		entry, err := buildServerEntry(server)
+		if err := validateDomainPattern(name); err != nil {
+			return nil, fmt.Errorf("servers[%d] domain %q: %w", i, server.Domain, err)
+		}
+		entry, err := buildServerEntry(i, server)
 		if err != nil {
 			return nil, err
 		}
-		routes, err := buildRoutes(server)
+		routes, err := buildRoutes(i, server)
 		if err != nil {
 			return nil, err
 		}
 		if err := table.Add(name, entry, routes); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("servers[%d]: %w", i, err)
 		}
 	}
 	return table, nil
 }
 
+// validateDomainPattern 校验归一后的 domain 值：通配符仅允许 *（匹配任意域名）与 *.suffix（匹配单层子域），其余位置出现 * 均视为配置错误。
+func validateDomainPattern(name string) error {
+	if name == "*" {
+		return nil
+	}
+	if strings.HasPrefix(name, "*.") {
+		if name == "*." {
+			return errors.New(`suffix is empty, use "*" to match all domains`)
+		}
+		if strings.Contains(name[2:], "*") {
+			return errors.New("wildcard must be the leading label")
+		}
+		return nil
+	}
+	if strings.Contains(name, "*") {
+		return errors.New("wildcard must be the leading label")
+	}
+	return nil
+}
+
 // buildServerEntry 归一 server 条目的协议与端口：protocol 省略匹配任意协议，port 为 0 匹配任意端口，显式取值须 1-65535。
-func buildServerEntry(server Server) (*route.Entry, error) {
+func buildServerEntry(index int, server Server) (*route.Entry, error) {
 	protocol := strings.ToLower(strings.TrimSpace(server.Protocol))
 	switch protocol {
 	case "", route.ProtocolHTTP, route.ProtocolHTTPS:
 	default:
-		return nil, fmt.Errorf("domain %q protocol %q is not supported", server.Domain, server.Protocol)
+		return nil, fmt.Errorf("servers[%d] domain %q protocol %q is not supported", index, server.Domain, server.Protocol)
 	}
 	port := server.Port
 	if port != 0 && (port < 1 || port > 65535) {
-		return nil, fmt.Errorf("domain %q port %d must be 1-65535", server.Domain, server.Port)
+		return nil, fmt.Errorf("servers[%d] domain %q port %d must be 1-65535", index, server.Domain, server.Port)
 	}
 	return &route.Entry{Protocol: protocol, Port: port}, nil
 }
 
 // buildRoutes 构建单个虚拟服务器的路由：前缀必填且以 / 开头、条目内不可重复，status 与 upstream 互斥。
-func buildRoutes(server Server) ([]*route.Route, error) {
+func buildRoutes(index int, server Server) ([]*route.Route, error) {
 	seen := map[string]bool{}
 	entries := make([]*route.Route, 0, len(server.Routes))
-	for _, configured := range server.Routes {
+	for j, configured := range server.Routes {
 		prefix := strings.TrimSpace(configured.Prefix)
 		upstream := strings.TrimSpace(configured.Upstream)
 		status := configured.Status
+		where := fmt.Sprintf("servers[%d] domain %q route[%d]", index, server.Domain, j)
 		if prefix == "" {
-			return nil, fmt.Errorf("domain %q: prefix is required", server.Domain)
+			return nil, fmt.Errorf("%s: prefix is required", where)
 		}
 		if !strings.HasPrefix(prefix, "/") {
-			return nil, fmt.Errorf("domain %q prefix %q must start with /", server.Domain, prefix)
+			return nil, fmt.Errorf("%s prefix %q must start with /", where, prefix)
 		}
 		if status != 0 && upstream != "" {
-			return nil, fmt.Errorf("domain %q prefix %q status and upstream are mutually exclusive", server.Domain, prefix)
+			return nil, fmt.Errorf("%s prefix %q status and upstream are mutually exclusive", where, prefix)
 		}
 		if status == 0 && upstream == "" {
-			return nil, fmt.Errorf("domain %q prefix %q status or upstream is required", server.Domain, prefix)
+			return nil, fmt.Errorf("%s prefix %q status or upstream is required", where, prefix)
 		}
 		// 1xx 在 net/http 里是 informational 响应，status 路由配了拿不到最终响应，直接拒绝
 		if status != 0 && (status < 200 || status > 599) {
-			return nil, fmt.Errorf("domain %q prefix %q status %d must be 200-599", server.Domain, prefix, status)
+			return nil, fmt.Errorf("%s prefix %q status %d must be 200-599", where, prefix, status)
 		}
 		// 204/304 按协议不得携带消息体，Go 服务端会静默丢弃 body，配置了也无效
 		if configured.Body != "" && (status == 204 || status == 304) {
-			return nil, fmt.Errorf("domain %q prefix %q status %d must not carry a body", server.Domain, prefix, status)
+			return nil, fmt.Errorf("%s prefix %q status %d must not carry a body", where, prefix, status)
 		}
 		if seen[prefix] {
-			return nil, fmt.Errorf("domain %q prefix %q is duplicated", server.Domain, prefix)
+			return nil, fmt.Errorf("%s prefix %q is duplicated", where, prefix)
 		}
 		seen[prefix] = true
 		r := &route.Route{
@@ -159,7 +183,7 @@ func buildRoutes(server Server) ([]*route.Route, error) {
 		} else {
 			target, err := route.ParseTarget(upstream)
 			if err != nil {
-				return nil, fmt.Errorf("domain %q: %w", server.Domain, err)
+				return nil, fmt.Errorf("%s prefix %q upstream %q: %w", where, prefix, upstream, err)
 			}
 			r.Target = target
 		}
