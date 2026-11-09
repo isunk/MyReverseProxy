@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mrp/internal/ca"
+	"mrp/internal/capture"
 	"mrp/internal/config"
 	"mrp/internal/dns"
 	"mrp/internal/frontend"
@@ -36,6 +37,7 @@ type startupOptions struct {
 	logLevel        log.Level
 	dnsTimeout      time.Duration
 	dnsTTL          time.Duration
+	capturePath     string
 	configSpecified bool
 	certSpecified   bool
 	keySpecified    bool
@@ -52,6 +54,7 @@ func parseStartupOptions() (startupOptions, error) {
 	flag.StringVar(&levelName, "log", "info", "log level: debug, info, warn or error")
 	flag.DurationVar(&opts.dnsTimeout, "dns-timeout", dns.AttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
 	flag.DurationVar(&opts.dnsTTL, "dns-ttl", dns.TTL, "ttl of cached upstream resolutions, 0 disables the cache")
+	flag.StringVar(&opts.capturePath, "capture", "", "HAR capture output file, empty disables capture")
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -102,6 +105,15 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 	proxyInstance, err := proxy.New(opts.configPath, transport, tlsConfig, authority, nameservers)
 	if err != nil {
 		return nil, err
+	}
+	if opts.capturePath != "" {
+		recorder, err := capture.New(opts.capturePath, capture.FileSizeLimit)
+		if err != nil {
+			log.Warn("capture disabled path=%s err=%v", opts.capturePath, err)
+		} else {
+			proxyInstance.SetCapture(recorder)
+			log.Info("capture started path=%s", opts.capturePath)
+		}
 	}
 	// 首次 reload 已让配置文件里的 nameservers 生效；未配置时为空，按系统默认 DNS 解析
 	nameserverLabel := "system"
@@ -161,7 +173,11 @@ func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy, connections
 		}
 		// 等 Serve 退出 accept 循环：保证所有 Add 都已发生在随后的 Wait 之前。
 		<-serveDone
-		if drainConnections(connections, shutdownGracePeriod, sigCh) {
+		drained := drainConnections(connections, shutdownGracePeriod, sigCh)
+		if err := proxyInstance.Close(); err != nil {
+			log.Debug("capture close failed err=%v", err)
+		}
+		if drained {
 			log.Info("shutdown complete")
 			return
 		}

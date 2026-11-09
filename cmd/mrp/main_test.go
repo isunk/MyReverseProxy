@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"io"
 	"net"
@@ -79,6 +80,64 @@ func TestParseStartupOptions_Custom(t *testing.T) {
 	}
 	if !opts.configSpecified || !opts.certSpecified || !opts.keySpecified {
 		t.Fatalf("specified flags not recorded: %+v", opts)
+	}
+}
+
+func TestParseStartupOptions_Capture(t *testing.T) {
+	opts, err := parseArgs(t)
+	if err != nil {
+		t.Fatalf("parseStartupOptions: %v", err)
+	}
+	if opts.capturePath != "" {
+		t.Fatalf("default capturePath = %q, want empty", opts.capturePath)
+	}
+	opts, err = parseArgs(t, "--capture", "capture.har")
+	if err != nil {
+		t.Fatalf("parseStartupOptions: %v", err)
+	}
+	if opts.capturePath != "capture.har" {
+		t.Fatalf("capturePath = %q, want capture.har", opts.capturePath)
+	}
+}
+
+func TestBuildProxy_CaptureClosesValidHAR(t *testing.T) {
+	capturePath := filepath.Join(t.TempDir(), "capture.har")
+	opts := startupOptions{
+		configPath:  filepath.Join(t.TempDir(), "mrp.yaml"),
+		capturePath: capturePath,
+		logLevel:    log.ErrorLevel,
+		dnsTimeout:  dns.AttemptTimeout,
+		dnsTTL:      dns.TTL,
+	}
+	proxyInstance, err := buildProxy(opts)
+	if err != nil {
+		t.Fatalf("buildProxy: %v", err)
+	}
+	if err := proxyInstance.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	data, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatalf("capture file not created: %v", err)
+	}
+	if !json.Valid(data) {
+		t.Fatalf("capture file is not valid JSON: %s", data)
+	}
+}
+
+func TestBuildProxy_NoCaptureWhenDisabled(t *testing.T) {
+	opts := startupOptions{
+		configPath: filepath.Join(t.TempDir(), "mrp.yaml"),
+		logLevel:   log.ErrorLevel,
+		dnsTimeout: dns.AttemptTimeout,
+		dnsTTL:     dns.TTL,
+	}
+	proxyInstance, err := buildProxy(opts)
+	if err != nil {
+		t.Fatalf("buildProxy: %v", err)
+	}
+	if err := proxyInstance.Close(); err != nil {
+		t.Fatalf("Close with capture disabled should be no-op: %v", err)
 	}
 }
 

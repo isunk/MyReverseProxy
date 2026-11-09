@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mrp/internal/ca"
+	"mrp/internal/capture"
 	"mrp/internal/config"
 	"mrp/internal/dns"
 	"mrp/internal/frontend"
@@ -37,6 +38,7 @@ type Proxy struct {
 	authority   *ca.Authority
 	passthrough *httputil.ReverseProxy
 	nameservers *dns.Resolver
+	capture     *capture.Recorder
 
 	// reloadMu 串行化 reload：WatchFile 轮询与 SIGHUP 可并发触发，不加锁时两个 reload 的 Load→Store 交错会让旧配置覆盖新配置
 	reloadMu sync.Mutex
@@ -149,7 +151,7 @@ func (p *Proxy) routeHandler(request *http.Request, protocol string, port int, d
 	return targetRoute.Handler()
 }
 
-// serveRequest 是单条入站请求的入口：CONNECT 走隧道，其余按目标协议、端口与域名路由或透传
+// serveRequest 是单条入站请求的入口：CONNECT 走隧道，其余按目标协议、端口与域名路由或透传；开启抓包时在该路径上记录明文交互。
 func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) {
 	if request.Method == http.MethodConnect {
 		p.handleConnect(writer, request)
@@ -157,12 +159,22 @@ func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) 
 	}
 	protocol, port, domain := targetOf(request)
 	start := time.Now()
-	recorder := &frontend.StatusRecorder{ResponseWriter: writer, Status: http.StatusOK}
 	handler := p.routeHandler(request, protocol, port, domain)
+	if p.capture == nil {
+		status := &frontend.StatusRecorder{ResponseWriter: writer, Status: http.StatusOK}
+		defer func() {
+			log.Info("request domain=%s protocol=%s port=%d method=%s path=%s status=%d elapsed=%s", domain, protocol, port, request.Method, request.URL.Path, status.Status, time.Since(start))
+		}()
+		handler.ServeHTTP(status, request)
+		return
+	}
+	requestPrefix, requestSize, requestTruncated := captureRequestBody(request)
+	response := newCaptureWriter(writer)
 	defer func() {
-		log.Info("request domain=%s protocol=%s port=%d method=%s path=%s status=%d elapsed=%s", domain, protocol, port, request.Method, request.URL.Path, recorder.Status, time.Since(start))
+		log.Info("request domain=%s protocol=%s port=%d method=%s path=%s status=%d elapsed=%s", domain, protocol, port, request.Method, request.URL.Path, response.status, time.Since(start))
+		p.recordCapture(start, protocol, port, domain, request, response, requestPrefix, requestSize, requestTruncated)
 	}()
-	handler.ServeHTTP(recorder, request)
+	handler.ServeHTTP(response, request)
 }
 
 // WatchFile 轮询配置文件元数据，size 与 mtime 都未变化时跳过整份读取，内容变化才触发重载，失败保留旧配置；stop 为 nil 时常驻运行。
