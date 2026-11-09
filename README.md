@@ -4,15 +4,16 @@
 
 ## 功能
 
-- **自定义反向代理**：匹配规则支持域名、端口与路径前缀，可改写 Host 与请求/响应头，支持短路响应与静态文件托管
+- **自定义反向代理**：匹配规则支持域名（含通配符 `*` / `*.suffix`）、端口与路径前缀，可改写 Host 与请求/响应头，支持短路响应与静态文件托管
 - **HTTPS 解密**：自签 CA 按目标域名动态签发证书，命中域名的 HTTPS 流量解密后路由；其余域名保持端到端加密，内容不可见
 - **DNS 代理解析**：上游域名解析支持指定 DNS 服务器，按序故障切换
 - **配置热加载**：路由与 DNS 配置修改即时生效
+- **抓包**：把 MITM 解密后的 HTTPS 与直连明文 HTTP 记录为 HAR 文件，离线用 Chrome DevTools / Charles / Fiddler 分析
 - **多端部署**：覆盖 Android / HarmonyOS / Windows / Linux，PC 可借道设备网络出口
 
 ## 原理
 
-代理监听单一端口，同时接收明文 HTTP 与 HTTPS 流量。请求进入后，代理从请求内容解析目标域名与协议，匹配 `servers` 中对应的 server（protocol 与 port 为可选匹配条件，省略匹配任意），再按路径前缀选择路由。
+代理监听单一端口，同时接收明文 HTTP 与 HTTPS 流量。请求进入后，代理从请求内容解析目标域名与协议，匹配 `servers` 中对应的 server（protocol 与 port 为可选匹配条件，省略匹配任意），再按路径前缀选择路由。`domain` 支持通配符 `*`（匹配任意域名）与 `*.suffix`（匹配单层子域），多个 server 命中时按 `servers` 声明顺序取第一个。
 
 - **HTTP**：绝对形式请求取 URL 主机、源形式请求取 Host 头作为目标域名，按域名与路径前缀匹配路由，转发至配置的上游
 - **HTTPS**：客户端以 CONNECT 请求进入，CONNECT 目标即请求域名，按域名是否命中配置分为两种模式：
@@ -130,9 +131,13 @@ servers:
         body: OK
       - prefix: /
         upstream: http://127.0.0.1:9000
+  - domain: "*.target-app.com"   # 通配符：覆盖 *.target-app.com 单层子域
+    routes:
+      - prefix: /
+        upstream: http://127.0.0.1:9000
 ```
 
-- `servers[].domain`：按域名匹配，HTTPS 取 CONNECT 目标主机、HTTP 取 Host 头
+- `servers[].domain`：按域名匹配，HTTPS 取 CONNECT 目标主机、HTTP 取 Host 头；支持通配符 `*`（匹配任意域名，含 IP 字面量）与 `*.suffix`（匹配单层子域 `label.suffix`，不匹配裸域与多层子域）。多 server 命中时按 `servers` 声明顺序先声明先生效，通配符与精确域名遵循同一规则
 - `servers[].protocol` / `port`：可选，限定协议与目标端口，省略匹配任意
 - `routes[].prefix`：最长路径前缀匹配，以 `/` 开头
 - `routes[].upstream`：上游地址或本地目录（静态托管，目录命中回退 `index.html`）；与 `status` 互斥
@@ -163,6 +168,7 @@ mrp-windows-amd64.exe
 - `--cert` / `--key`（默认 `ca.crt` / `ca.key`）：CA 证书与私钥，缺省时无法 MITM
 - `--log`（默认 `info`）：debug / info / warn / error
 - `--dns-timeout` / `--dns-ttl`（默认 `1s` / `30s`）：单次 DNS 解析超时、解析结果缓存时长（`0` 关闭缓存）
+- `--capture`（默认空）：HAR 抓包输出文件，指定即开启，空则关闭
 
 Windows 也可双击 `mrp.hta` 部署面板：内置固定 CA 免 openssl，提供 CA 导入、进程启停、系统代理设置，及 Android(adb) / HarmonyOS(hdc) 设备的安装、启动、配置同步与卸载，设备工作目录 `/data/local/mrp`。
 
@@ -225,6 +231,23 @@ adb forward tcp:9000 tcp:9000
 - 转发随设备连接存活，断开或重连后需重新执行
 - 无视系统代理的应用需 Proxifier 类工具强制接管，改 hosts / DNS 无法改变其流量出口
 
+## 抓包
+
+联调时把代理可见的明文交互记录为 HAR 1.2 文件，供标准工具离线分析。
+
+```bash
+./mrp-linux-arm64 --capture capture.har
+```
+
+- 指定 `--capture <文件>` 即开启，输出文件落设备本地；不加该参数即关闭，关闭时零抓包开销、不产生文件
+- 每次运行截断同名文件从头记录，一次运行对应一份独立文件
+- 记录范围只含 mrp 可见的明文：MITM 解密后的 HTTPS 内层请求与客户端直连的明文 HTTP；tunnel 端到端加密字节不产生记录
+- body 单个请求/响应最多记 1 MiB 前缀（超出截断并在 entry 里标注原始大小），文件累计最多 256 MiB，达到后停止追加
+- 打开：Chrome DevTools（F12 → Network → 导入 HAR）、Charles（File → Import）、Fiddler（File → Import Sessions）
+- 记录含 `Authorization` 等敏感头与业务数据，文件保留在设备本地，安全由使用者自行管理
+
+正常退出（SIGINT/SIGTERM）自动补全 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，用编辑器在末尾补齐 `]}}` 保存即可打开。
+
 ## 从源码构建
 
 Go 1.25+：
@@ -250,6 +273,7 @@ internal/
   proxy/        反向代理核心：请求转发、CONNECT 隧道、MITM 编排、热加载
   frontend/     单端口明文监听、单连接复用（MITM 内层服务）
   ca/           自签 CA 按名字现场签发证书（域名 SAN / IP SAN），并发合并
+  capture/      HAR 抓包：增量写盘、body 截断、文件上限
   dns/          上游 DNS 解析与故障切换、结果缓存
   cache/        通用并发缓存
   log/          控制台日志（级别过滤、按级别着色）
