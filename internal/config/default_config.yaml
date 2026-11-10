@@ -7,7 +7,7 @@
 #     routes:
 #       - prefix: /v1/ # （必填）路径前缀，以 / 开头，最长匹配
 #         upstream: https://api.our-server.com/v1/ # （可选）上游地址或本地目录，与 status 互斥
-#         host: api.our-server.com # （可选）改写转发 Host 头
+#         host: api.our-server.com # （可选）改写转发 Host 头；部分上游会校验 Host，此时需将该字段设为目标 Host（如上游域名）
 #         headers:
 #           request: # （可选）改写发往上游的请求头
 #             Authorization: "Bearer token"

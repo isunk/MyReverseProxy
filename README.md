@@ -143,7 +143,7 @@ servers:
 - `routes[].upstream`：上游地址或本地目录（静态托管，目录命中回退 `index.html`）；与 `status` 互斥
 - `routes[].status`：200-599 短路响应，204/304 不得带 `body`
 - `routes[].body`：响应体，默认 `Content-Type: text/plain; charset=utf-8`
-- `routes[].host`：改写转发时的 Host 头
+- `routes[].host`：改写转发时的 Host 头；部分上游会校验 Host，此时需将该字段设为目标 Host（如上游域名）
 - `routes[].headers.request` / `.response`：覆盖发往上游的请求头 / 下游返回的响应头
 - `nameservers`：DNS 列表（裸 IP 或 `host:port`），按序故障切换；省略用系统 DNS
 
