@@ -209,7 +209,8 @@ func TestSingleJoiningSlash(t *testing.T) {
 		{"/v1/", "users", "/v1/users"},
 		{"/v1", "/users", "/v1/users"},
 		{"/v1/", "/users", "/v1/users"},
-		{"/v1", "", "/v1/"},
+		{"/v1", "", "/v1"},
+		{"/v1/", "", "/v1/"},
 		{"/", "", "/"},
 		{"/", "foo", "/foo"},
 	}
@@ -269,6 +270,7 @@ func TestOutboundURL(t *testing.T) {
 		{"/api/v1", "http://up-a/v1", "http://a.local/api-v2/x", "http://up-a/v1/api-v2/x"},
 		{"/api", "http://up-a/v1", "http://a.local/api/a%2Fb", "http://up-a/v1/a%2Fb"},
 		{"/api", "http://up-a/v1?q=1", "http://a.local/api/x?a=1", "http://up-a/v1/x?q=1&a=1"},
+		{"/api/v1/users", "http://up-a/v1", "http://a.local/api/v1/users", "http://up-a/v1"},
 	}
 	for _, tc := range cases {
 		target, err := ParseTarget(tc.upstream)
