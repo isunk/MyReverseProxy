@@ -8,6 +8,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,11 +82,10 @@ func passthroughURL(inbound *http.Request) *url.URL {
 	if inbound.TLS != nil {
 		protocol = "https"
 	}
-	outbound := *inbound.URL
-	parsed, err := url.Parse(protocol + "://" + inbound.Host + inbound.URL.RequestURI())
-	if err == nil {
-		outbound = *parsed
+	if parsed, err := url.Parse(protocol + "://" + inbound.Host + inbound.URL.RequestURI()); err == nil {
+		return parsed
 	}
+	outbound := *inbound.URL
 	return &outbound
 }
 
@@ -126,29 +126,35 @@ func (p *Proxy) resetCaches() {
 
 // Handler 返回代理的统一处理器：单端口监听与 MITM 隧道内层服务共用。
 func (p *Proxy) Handler() http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		p.serveRequest(writer, request)
-	})
+	return http.HandlerFunc(p.serveRequest)
 }
 
 // routeHandler 选出本次请求的处理器：命中路由走该路由，否则透传原始目标；Debug 级日志一行呈现入站 URL 与改写后实际发出的 URL。
 func (p *Proxy) routeHandler(request *http.Request, protocol string, port int, domain string) http.Handler {
 	targetRoute, matched := p.table.Load().Pick(protocol, port, domain, request.URL.Path)
-	inbound := absoluteTarget(protocol, port, domain, request.URL)
+	if log.DebugEnabled() {
+		inbound := absoluteTarget(protocol, port, domain, request.URL)
+		if matched {
+			log.Debug("route %s -> %s", inbound, routeTarget(request, targetRoute))
+		} else {
+			log.Debug("route %s -> passthrough", inbound)
+		}
+	}
 	if !matched {
-		log.Debug("route %s -> passthrough", inbound)
 		return p.passthrough
 	}
+	return targetRoute.Handler()
+}
+
+// routeTarget 渲染命中路由的去向供 Debug 日志：status 短路、本地目录或改写后的出站 URL。
+func routeTarget(request *http.Request, targetRoute *route.Route) string {
 	if targetRoute.Status != 0 {
-		log.Debug("route %s -> status %d", inbound, targetRoute.Status)
-		return targetRoute.Handler()
+		return "status " + strconv.Itoa(targetRoute.Status)
 	}
 	if targetRoute.Target.Root != "" {
-		log.Debug("route %s -> %s", inbound, targetRoute.Target.Summary)
-		return targetRoute.Handler()
+		return targetRoute.Target.Summary
 	}
-	log.Debug("route %s -> %s", inbound, targetRoute.OutboundURL(request.URL, request.URL.RawQuery).String())
-	return targetRoute.Handler()
+	return targetRoute.OutboundURL(request.URL).String()
 }
 
 // serveRequest 是单条入站请求的入口：CONNECT 走隧道，其余按目标协议、端口与域名路由或透传；开启抓包时在该路径上记录明文交互。
@@ -160,19 +166,20 @@ func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) 
 	protocol, port, domain := targetOf(request)
 	start := time.Now()
 	handler := p.routeHandler(request, protocol, port, domain)
+	logRequest := func(status int) {
+		log.Info("request domain=%s protocol=%s port=%d method=%s path=%s status=%d elapsed=%s", domain, protocol, port, request.Method, request.URL.Path, status, time.Since(start))
+	}
 	if p.capture == nil {
 		status := &frontend.StatusRecorder{ResponseWriter: writer, Status: http.StatusOK}
-		defer func() {
-			log.Info("request domain=%s protocol=%s port=%d method=%s path=%s status=%d elapsed=%s", domain, protocol, port, request.Method, request.URL.Path, status.Status, time.Since(start))
-		}()
+		defer func() { logRequest(status.Status) }()
 		handler.ServeHTTP(status, request)
 		return
 	}
-	requestPrefix, requestSize, requestTruncated := captureRequestBody(request)
+	captured := newCapturedRequest(start, protocol, port, domain, request)
 	response := newCaptureWriter(writer)
 	defer func() {
-		log.Info("request domain=%s protocol=%s port=%d method=%s path=%s status=%d elapsed=%s", domain, protocol, port, request.Method, request.URL.Path, response.status, time.Since(start))
-		p.recordCapture(start, protocol, port, domain, request, response, requestPrefix, requestSize, requestTruncated)
+		logRequest(response.Status)
+		p.recordCapture(captured, request, response)
 	}()
 	handler.ServeHTTP(response, request)
 }

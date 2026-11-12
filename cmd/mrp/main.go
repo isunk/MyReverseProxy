@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -116,11 +115,7 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 		}
 	}
 	// 首次 reload 已让配置文件里的 nameservers 生效；未配置时为空，按系统默认 DNS 解析
-	nameserverLabel := "system"
-	if addresses := nameservers.Addresses(); len(addresses) > 0 {
-		nameserverLabel = strings.Join(addresses, ",")
-	}
-	log.Info("dns configured nameservers=%s ttl=%s", nameserverLabel, opts.dnsTTL)
+	log.Info("dns configured nameservers=%s ttl=%s", nameservers.Describe(), opts.dnsTTL)
 	return proxyInstance, nil
 }
 

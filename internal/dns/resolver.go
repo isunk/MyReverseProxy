@@ -7,12 +7,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"mrp/internal/cache"
 	"mrp/internal/log"
+	"mrp/internal/singleflight"
 )
 
 const (
@@ -35,15 +35,7 @@ type Resolver struct {
 	cache          *cache.Cache[[]string]
 
 	// inflight 合并同域并发解析：TTL 过期瞬间多个请求只发一次 DNS 查询
-	mu       sync.Mutex
-	inflight map[string]*lookupCall
-}
-
-// lookupCall 承载一次进行中的解析，让同域并发请求等待同一结果而非重复发 DNS 查询
-type lookupCall struct {
-	done    chan struct{}
-	targets []string
-	err     error
+	inflight singleflight.Group[[]string]
 }
 
 type state struct {
@@ -63,7 +55,6 @@ func New(attemptTimeout, ttl time.Duration, entries []string) (*Resolver, error)
 		tcpDialer:      &net.Dialer{Timeout: dialerTimeout, KeepAlive: KeepAlive},
 		system:         &net.Resolver{PreferGo: true},
 		cache:          cache.New[[]string](maxCached, ttl),
-		inflight:       map[string]*lookupCall{},
 	}
 	set.current.Store(&state{addresses: addresses, resolvers: set.buildResolvers(addresses)})
 	return set, nil
@@ -89,6 +80,11 @@ func (r *Resolver) Update(entries []string) (bool, error) {
 // Addresses 返回当前生效服务器地址的副本，避免外部修改内部状态。
 func (r *Resolver) Addresses() []string {
 	return slices.Clone(r.current.Load().addresses)
+}
+
+// Describe 渲染当前生效服务器列表用于日志展示：空列表表示按系统默认 DNS 解析。
+func (r *Resolver) Describe() string {
+	return describeAddresses(r.Addresses())
 }
 
 // DialContext 拨向指定地址：IP 字面量直接拨号跳过 DNS，域名经 dialHost 解析后拨号。
@@ -144,43 +140,18 @@ func (r *Resolver) lookup(ctx context.Context, host, port string) ([]string, boo
 	if targets, ok := r.cache.Get(key); ok {
 		return targets, true, nil
 	}
-	call, leader := r.begin(key)
+	call, leader := r.inflight.Begin(key)
 	if !leader {
-		select {
-		case <-call.done:
-			return call.targets, false, call.err
-		case <-ctx.Done():
-			return nil, false, ctx.Err()
-		}
+		targets, err := call.WaitContext(ctx)
+		return targets, false, err
 	}
 	targets, err := r.resolve(ctx, host, port)
-	r.finish(key, call, targets, err)
+	r.inflight.Finish(key, call, targets, err)
 	if err != nil {
 		return nil, false, err
 	}
 	r.cache.Put(key, targets)
 	return targets, false, nil
-}
-
-// begin 登记一次进行中的解析，第二个返回值表示调用方是否为负责发起查询的首个请求。
-func (r *Resolver) begin(key string) (*lookupCall, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if call, ok := r.inflight[key]; ok {
-		return call, false
-	}
-	call := &lookupCall{done: make(chan struct{})}
-	r.inflight[key] = call
-	return call, true
-}
-
-// finish 注销进行中的解析并广播结果，唤醒所有等待该域名的请求；先赋值后关闭，等待者醒来时结果必已就绪。
-func (r *Resolver) finish(key string, call *lookupCall, targets []string, err error) {
-	r.mu.Lock()
-	delete(r.inflight, key)
-	r.mu.Unlock()
-	call.targets, call.err = targets, err
-	close(call.done)
 }
 
 // dropCached 丢弃缓存的解析结果，缓存地址全部连不上时调用以触发立即重解析。

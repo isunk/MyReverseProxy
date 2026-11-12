@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -61,9 +62,11 @@ func TestParseLevel(t *testing.T) {
 
 func TestLogf_LevelFilter(t *testing.T) {
 	var out bytes.Buffer
-	logOut, logFloor, logColor = &out, WarnLevel, false
+	Init(WarnLevel)
+	SetOutput(&out)
 	t.Cleanup(func() {
-		logOut, logFloor, logColor = io.Discard, InfoLevel, false
+		Init(InfoLevel)
+		SetOutput(io.Discard)
 	})
 
 	Info("hidden")
@@ -87,4 +90,30 @@ func TestSetOutput(t *testing.T) {
 	if !strings.Contains(out.String(), "event name=mrp") {
 		t.Fatalf("SetOutput not effective: %q", out.String())
 	}
+}
+
+// TestSetOutputConcurrentWithLogging 并发替换输出配置与日志输出，-race 下验证无数据竞争
+func TestSetOutputConcurrentWithLogging(t *testing.T) {
+	t.Cleanup(func() {
+		Init(InfoLevel)
+		SetOutput(io.Discard)
+	})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			Info("concurrent probe %d", i)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			SetOutput(io.Discard)
+			SetOutput(&bytes.Buffer{})
+			Init(WarnLevel)
+			Init(InfoLevel)
+		}
+	}()
+	wg.Wait()
 }

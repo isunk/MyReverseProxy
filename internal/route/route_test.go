@@ -138,7 +138,7 @@ func TestPick_WildcardOrderPriority(t *testing.T) {
 	table, routes = build("*.example.com", "example.com")
 	expect(table, routes, "a.example.com", "*.example.com")
 	expect(table, routes, "example.com", "example.com")
-	table, routes = build("*.example.com")
+	table, _ = build("*.example.com")
 	expectMiss(table, "a.b.example.com")
 	expectMiss(table, "127.0.0.1")
 	table, routes = build("*")
@@ -282,8 +282,8 @@ func TestOutboundURL(t *testing.T) {
 			t.Fatalf("url.Parse(%q): %v", tc.inbound, err)
 		}
 		r := &Route{Prefix: tc.prefix, Target: target}
-		if got := r.OutboundURL(inbound, inbound.RawQuery).String(); got != tc.want {
-			t.Fatalf("OutboundURL(%q, %q) = %q, want %q", tc.prefix, tc.inbound, got, tc.want)
+		if got := r.OutboundURL(inbound).String(); got != tc.want {
+			t.Fatalf("OutboundURL(%q) with prefix %q = %q, want %q", tc.inbound, tc.prefix, got, tc.want)
 		}
 	}
 }

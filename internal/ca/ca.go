@@ -14,11 +14,11 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"mrp/internal/cache"
 	"mrp/internal/log"
+	"mrp/internal/singleflight"
 )
 
 const (
@@ -28,40 +28,19 @@ const (
 
 var serialLimit = new(big.Int).Lsh(big.NewInt(1), 128)
 
-// certCall 承载一次进行中的签发，让同域名并发握手等待同一结果而非重复签发
-type certCall struct {
-	done chan struct{}
-	cert *tls.Certificate
-	err  error
-}
-
-func newCertCall() *certCall { return &certCall{done: make(chan struct{})} }
-
-func (c *certCall) wait() (*tls.Certificate, error) {
-	<-c.done
-	return c.cert, c.err
-}
-
-func (c *certCall) deliver(cert *tls.Certificate, err error) {
-	c.cert, c.err = cert, err
-	close(c.done)
-}
-
 // Authority 按握手目标名（SNI 或构造的 hello）用持有的 CA 现场签发服务端证书，结果按域名缓存。
 type Authority struct {
 	cert     *x509.Certificate
 	key      crypto.Signer
-	mu       sync.Mutex
 	cache    *cache.Cache[*tls.Certificate]
-	inflight map[string]*certCall
+	inflight singleflight.Group[*tls.Certificate]
 }
 
 func New(cert *x509.Certificate, key crypto.Signer) *Authority {
 	return &Authority{
-		cert:     cert,
-		key:      key,
-		cache:    cache.New[*tls.Certificate](maxCachedCerts, certTTL),
-		inflight: map[string]*certCall{},
+		cert:  cert,
+		key:   key,
+		cache: cache.New[*tls.Certificate](maxCachedCerts, certTTL),
 	}
 }
 
@@ -74,12 +53,12 @@ func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certif
 	if cached, ok := a.cache.Get(serverName); ok {
 		return cached, nil
 	}
-	call, leader := a.begin(serverName)
+	call, leader := a.inflight.Begin(serverName)
 	if !leader {
-		return call.wait()
+		return call.Wait()
 	}
 	// defer 兜底：sign panic 被 net/http 层 recover 后若不注销 inflight，该域名的握手会永久阻塞在 wait 上
-	defer func() { a.end(serverName, call, cert, err) }()
+	defer func() { a.inflight.Finish(serverName, call, cert, err) }()
 	// 双检：Get 未命中到取得 leader 之间，可能已有上一轮签发完成并写入缓存
 	if cached, ok := a.cache.Get(serverName); ok {
 		return cached, nil
@@ -89,26 +68,6 @@ func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certif
 		a.cache.Put(serverName, cert)
 	}
 	return cert, err
-}
-
-// begin 登记一次进行中的签发，第二个返回值表示调用方是否为负责签发的首个等待者。
-func (a *Authority) begin(serverName string) (*certCall, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if call, ok := a.inflight[serverName]; ok {
-		return call, false
-	}
-	call := newCertCall()
-	a.inflight[serverName] = call
-	return call, true
-}
-
-// end 注销进行中的签发并广播结果，唤醒所有等待该域名的握手
-func (a *Authority) end(serverName string, call *certCall, cert *tls.Certificate, err error) {
-	a.mu.Lock()
-	delete(a.inflight, serverName)
-	a.mu.Unlock()
-	call.deliver(cert, err)
 }
 
 // ClearCache 清空已签发证书缓存，热加载后调用以丢弃旧状态

@@ -66,18 +66,20 @@ func (r *Recorder) Record(entry Entry) error {
 		r.stopped = true
 		return err
 	}
+	written := int64(len(data))
 	if r.wroteAny {
 		if err := r.writer.WriteByte(','); err != nil {
 			r.stopped = true
 			return err
 		}
+		written++
 	}
 	if _, err := r.writer.Write(data); err != nil {
 		r.stopped = true
 		return err
 	}
 	r.wroteAny = true
-	r.bytes += int64(len(data))
+	r.bytes += written
 	if r.limit > 0 && r.bytes >= r.limit {
 		r.stopped = true
 		return ErrLimitReached

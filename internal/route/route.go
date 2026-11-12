@@ -16,6 +16,7 @@ const (
 )
 
 // Route 一条路径前缀到转发目标的映射；handler 加载配置时构建完毕，运行期只做前缀匹配。
+// Status 非零时短路返回该状态码且 Target 必为 nil，否则 Target 必非空，两者互斥。
 type Route struct {
 	Prefix  string
 	Host    string
@@ -137,6 +138,8 @@ func NewTable() *Table {
 // Add 把归一后的虚拟服务器条目挂入对应域名分组，分组按首次声明顺序排列，同一 domain 值多次声明合并为一组；
 // 同一分组内 (protocol, port) 组合唯一，重复报错。
 func (t *Table) Add(domain string, entry *Entry, routes []*Route) error {
+	// 配置错误时整表废弃，提前挂载路由不影响既有生效表
+	entry.routes = routes
 	for _, group := range t.groups {
 		if group.pattern != domain {
 			continue
@@ -146,11 +149,9 @@ func (t *Table) Add(domain string, entry *Entry, routes []*Route) error {
 				return fmt.Errorf("domain %q server entry is duplicated protocol=%s port=%d", domain, protocolLabel(entry.Protocol), entry.Port)
 			}
 		}
-		entry.routes = routes
 		group.entries = append(group.entries, entry)
 		return nil
 	}
-	entry.routes = routes
 	t.groups = append(t.groups, newDomainGroup(domain, entry))
 	return nil
 }

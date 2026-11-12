@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"mrp/internal/capture"
+	"mrp/internal/frontend"
 	"mrp/internal/log"
 )
 
@@ -33,10 +34,33 @@ func (p *Proxy) Close() error {
 	return p.capture.Close()
 }
 
-// captureWriter 在响应回传客户端的同时记录状态码、消息头与 body 前缀，其余能力透传给底层 writer；Unwrap 保留 flusher 等接口。
+// capturedRequest 汇集一条请求的抓包上下文：目标五元组、开始时间与请求体前缀记录。
+type capturedRequest struct {
+	start         time.Time
+	protocol      string
+	port          int
+	domain        string
+	bodyPrefix    []byte
+	bodySize      int64
+	bodyTruncated bool
+}
+
+func newCapturedRequest(start time.Time, protocol string, port int, domain string, request *http.Request) *capturedRequest {
+	prefix, size, truncated := captureRequestBody(request)
+	return &capturedRequest{
+		start:         start,
+		protocol:      protocol,
+		port:          port,
+		domain:        domain,
+		bodyPrefix:    prefix,
+		bodySize:      size,
+		bodyTruncated: truncated,
+	}
+}
+
+// captureWriter 在响应回传客户端的同时记录状态码、消息头与 body 前缀，其余能力透传给底层 writer。
 type captureWriter struct {
-	http.ResponseWriter
-	status      int
+	frontend.StatusRecorder
 	wroteHeader bool
 	header      http.Header
 	prefix      []byte
@@ -45,7 +69,7 @@ type captureWriter struct {
 }
 
 func newCaptureWriter(writer http.ResponseWriter) *captureWriter {
-	return &captureWriter{ResponseWriter: writer, status: http.StatusOK}
+	return &captureWriter{StatusRecorder: frontend.StatusRecorder{ResponseWriter: writer, Status: http.StatusOK}}
 }
 
 func (w *captureWriter) WriteHeader(code int) {
@@ -53,9 +77,8 @@ func (w *captureWriter) WriteHeader(code int) {
 		return
 	}
 	w.wroteHeader = true
-	w.status = code
 	w.header = w.ResponseWriter.Header().Clone()
-	w.ResponseWriter.WriteHeader(code)
+	w.StatusRecorder.WriteHeader(code)
 }
 
 func (w *captureWriter) Write(data []byte) (int, error) {
@@ -71,10 +94,6 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 		w.prefix = append(w.prefix, data[:take]...)
 	}
 	return w.ResponseWriter.Write(data)
-}
-
-func (w *captureWriter) Unwrap() http.ResponseWriter {
-	return w.ResponseWriter
 }
 
 // captureRequestBody 读取请求 body 前缀并恢复完整 body 供转发：body 超过上限时只记前缀，其余字节经 MultiReader 原样续传；返回前缀、原始大小与是否截断。
@@ -133,38 +152,38 @@ func decodeContent(data []byte, encoding string) string {
 }
 
 // recordCapture 在响应回传后组装一条 HAR entry 并追加；记录失败或达上限时告警一次并停用，不影响转发。
-func (p *Proxy) recordCapture(start time.Time, protocol string, port int, domain string, request *http.Request, response *captureWriter, requestPrefix []byte, requestSize int64, requestTruncated bool) {
+func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, response *captureWriter) {
 	recorder := p.capture
 	if recorder == nil {
 		return
 	}
-	elapsed := float64(time.Since(start).Milliseconds())
+	elapsed := float64(time.Since(captured.start).Milliseconds())
 	var postData *capture.PostData
-	if len(requestPrefix) > 0 {
+	if len(captured.bodyPrefix) > 0 {
 		postData = &capture.PostData{
 			MimeType:  request.Header.Get("Content-Type"),
-			Text:      decodeContent(requestPrefix, request.Header.Get("Content-Encoding")),
-			Truncated: requestTruncated,
+			Text:      decodeContent(captured.bodyPrefix, request.Header.Get("Content-Encoding")),
+			Truncated: captured.bodyTruncated,
 		}
 	}
 	entry := capture.Entry{
-		StartedDateTime: start.UTC().Format(harTimeLayout),
+		StartedDateTime: captured.start.UTC().Format(harTimeLayout),
 		Time:            elapsed,
-		ServerIPAddress: domain,
+		ServerIPAddress: captured.domain,
 		ClientAddress:   request.RemoteAddr,
 		Request: capture.Request{
 			Method:      request.Method,
-			URL:         absoluteTarget(protocol, port, domain, request.URL),
+			URL:         absoluteTarget(captured.protocol, captured.port, captured.domain, request.URL),
 			HTTPVersion: request.Proto,
 			Cookies:     []capture.Cookie{},
 			Headers:     headersFrom(request.Header),
 			QueryString: []capture.Query{},
 			PostData:    postData,
-			BodySize:    requestSize,
+			BodySize:    captured.bodySize,
 		},
 		Response: capture.Response{
-			Status:      response.status,
-			StatusText:  http.StatusText(response.status),
+			Status:      response.Status,
+			StatusText:  http.StatusText(response.Status),
 			HTTPVersion: request.Proto,
 			Cookies:     []capture.Cookie{},
 			Headers:     headersFrom(response.header),

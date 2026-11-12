@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,28 +22,43 @@ const (
 
 const logTimeLayout = "01-02 15:04:05.000"
 
+// settings 汇集日志输出配置，经原子指针整体替换供 logf 无锁读取。
+type settings struct {
+	out   io.Writer
+	level Level
+	color bool
+}
+
 var (
-	logOut   io.Writer = os.Stdout
-	logFloor Level     = InfoLevel
-	logColor bool
-	logMu    sync.Mutex
+	active atomic.Pointer[settings]
+	logMu  sync.Mutex
 )
+
+func init() {
+	active.Store(&settings{out: os.Stdout, level: InfoLevel})
+}
 
 // Init 设定级别过滤与着色策略，着色仅在 stdout 为终端时启用。
 func Init(level Level) {
-	logFloor = level
-	logColor = isTerminal(os.Stdout)
+	current := active.Load()
+	active.Store(&settings{out: current.out, level: level, color: isTerminal(os.Stdout)})
 }
 
 // SetOutput 替换日志输出目标，测试用于丢弃输出或捕获内容。
 func SetOutput(writer io.Writer) {
-	logOut = writer
+	current := active.Load()
+	active.Store(&settings{out: writer, level: current.level, color: current.color})
 }
 
 func Debug(format string, args ...any) { logf(DebugLevel, format, args...) }
 func Info(format string, args ...any)  { logf(InfoLevel, format, args...) }
 func Warn(format string, args ...any)  { logf(WarnLevel, format, args...) }
 func Error(format string, args ...any) { logf(ErrorLevel, format, args...) }
+
+// DebugEnabled reports whether Debug-level messages will be emitted, letting callers skip expensive argument construction when Debug is filtered.
+func DebugEnabled() bool {
+	return active.Load().level <= DebugLevel
+}
 
 // Fatal 输出 ERROR 日志后终止进程，仅供启动期不可恢复失败使用，请求热路径禁止调用。
 func Fatal(format string, args ...any) {
@@ -51,13 +67,14 @@ func Fatal(format string, args ...any) {
 }
 
 func logf(level Level, format string, args ...any) {
-	if level < logFloor {
+	current := active.Load()
+	if level < current.level {
 		return
 	}
-	line := formatLogLine(time.Now(), level, fmt.Sprintf(format, args...), logColor)
+	line := formatLogLine(time.Now(), level, fmt.Sprintf(format, args...), current.color)
 	logMu.Lock()
 	defer logMu.Unlock()
-	_, _ = io.WriteString(logOut, line)
+	_, _ = io.WriteString(current.out, line)
 }
 
 func formatLogLine(now time.Time, level Level, message string, color bool) string {

@@ -18,7 +18,8 @@ const (
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 60 * time.Second
 
-	acceptBackoffMax = time.Second
+	acceptBackoffInitial = 5 * time.Millisecond
+	acceptBackoffMax     = time.Second
 )
 
 // oneConnListener 把已建立的连接包装为 Listener，让 http.Server 直接服务该连接，从而拿到 ConnState 回调判断是否发生 hijack。
@@ -58,7 +59,7 @@ func (c *BufferedConn) Read(p []byte) (int, error) { return c.Reader.Read(p) }
 
 // Serve 接受连接并逐条服务：单条连接服务结束（未发生 hijack）时关闭该连接；监听器已关闭即返回，其余 Accept 错误退避重试，避免 fd 短暂耗尽（EMFILE）等临时故障让代理静默拒绝连接；connections 为在服务连接计数以供退出前 drain。
 func Serve(listener net.Listener, handler http.Handler, connections *sync.WaitGroup) error {
-	backoff := 5 * time.Millisecond
+	backoff := acceptBackoffInitial
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -70,7 +71,7 @@ func Serve(listener net.Listener, handler http.Handler, connections *sync.WaitGr
 			backoff = min(backoff*2, acceptBackoffMax)
 			continue
 		}
-		backoff = 5 * time.Millisecond
+		backoff = acceptBackoffInitial
 		connections.Add(1)
 		go func() {
 			defer connections.Done()

@@ -155,6 +155,52 @@ func BenchmarkDirect_Warm(b *testing.B) {
 	}
 }
 
+// BenchmarkHTTP_Warm 稳态 HTTP 代理每请求耗时：无 TLS 握手、无 MITM，纯路由转发到 HTTP 上游，对照 BenchmarkMITM_Warm 量化 MITM 自身开销。
+func BenchmarkHTTP_Warm(b *testing.B) {
+	b.ReportAllocs()
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte("ok"))
+	}))
+	b.Cleanup(upstream.Close)
+
+	parsed, _ := url.Parse(upstream.URL)
+	_, port, _ := net.SplitHostPort(parsed.Host)
+
+	configPath := testutil.ConfigFile(b, "http-bench.yaml", fmt.Sprintf(`
+servers:
+  - domain: %s
+    routes:
+      - prefix: /
+        upstream: http://127.0.0.1:%s
+`, benchClientDomain, port))
+
+	proxy, err := New(configPath, NewTransport(nil), nil, nil, testNameservers(b))
+	if err != nil {
+		b.Fatalf("New: %v", err)
+	}
+	proxyURL := startListener(b, proxy)
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			Proxy:               http.ProxyURL(testutil.MustURL(proxyURL)),
+			MaxIdleConns:        8,
+			MaxIdleConnsPerHost: 4,
+		},
+	}
+
+	target := "http://" + benchClientDomain + "/"
+	if body := getAndDrain(b, client, target); body != "ok" {
+		b.Fatalf("warmup body = %q", body)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if body := getAndDrain(b, client, target); body != "ok" {
+			b.Fatalf("body = %q", body)
+		}
+	}
+}
+
 // BenchmarkTransport_POST_ExpectContinue 客户端带 Expect: 100-continue 的上行请求。Go 服务端读请求体会自动回 100，所以正常配置下这项保持在毫秒级；若上游读取 body 却不回 100，Transport 会白等满 ExpectContinueTimeout。
 func BenchmarkTransport_POST_ExpectContinue(b *testing.B) {
 	b.ReportAllocs()

@@ -298,7 +298,7 @@ func TestConnect_WildcardSuffixTunnelBoundary(t *testing.T) {
 	if err := handshake(conn, "api.example.org"); err != nil {
 		t.Fatalf("single-label should MITM with issued certificate: %v", err)
 	}
-	conn, code = connect("a.b.example.org")
+	_, code = connect("a.b.example.org")
 	if code != 502 {
 		t.Fatalf("multi-label CONNECT should tunnel out and fail dialing: want 502, got %d", code)
 	}
