@@ -78,18 +78,20 @@ type Query struct {
 	Value string `json:"value"`
 }
 
-// PostData 请求体：Text 为记入文件的前缀字节，BodySize 在外层 Request 记录原始大小。
+// PostData 请求体：Text 为记入文件的前缀字节（二进制时 base64 编码），BodySize 在外层 Request 记录原始大小。
 type PostData struct {
 	MimeType  string `json:"mimeType,omitempty"`
 	Text      string `json:"text,omitempty"`
+	Encoding  string `json:"_encoding,omitempty"`
 	Truncated bool   `json:"_truncated,omitempty"`
 }
 
-// Content 响应体：Size 为记入文件的前缀字节数，Truncated 标注是否被截断。
+// Content 响应体：Size 为记入文件的前缀字节数，Text 在二进制内容时 base64 编码并以 Encoding 标注，Truncated 标注是否被截断。
 type Content struct {
 	Size      int    `json:"size"`
 	MimeType  string `json:"mimeType,omitempty"`
 	Text      string `json:"text,omitempty"`
+	Encoding  string `json:"encoding,omitempty"`
 	Truncated bool   `json:"_truncated,omitempty"`
 }
 

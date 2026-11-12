@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"mrp/internal/capture"
 	"mrp/internal/frontend"
@@ -126,29 +128,50 @@ func headersFrom(header http.Header) []capture.Header {
 	return entries
 }
 
-// decodeContent 按 Content-Encoding 解压记录体：gzip/deflate 用标准库解为明文，
-// 其余编码（br/zstd 等）或解压失败保留原始字节；前缀截断导致流不完整时容忍错误，取已解压部分。
-func decodeContent(data []byte, encoding string) string {
-	if len(data) == 0 || encoding == "" {
-		return string(data)
+// decodeContent 按 Content-Encoding 解压记录体，再按内容判定文本或二进制：gzip/deflate 解为明文，
+// br/zstd 等不支持的编码保留原始压缩字节；最后对二进制内容 base64 编码，返回 HAR text 与 encoding 标注。
+// 前缀截断导致流不完整时容忍错误，取已解压部分。
+func decodeContent(data []byte, encoding string) (string, string) {
+	if len(data) == 0 {
+		return "", ""
 	}
-	encoding = strings.ToLower(encoding)
-	var reader io.ReadCloser
-	switch {
-	case strings.Contains(encoding, "gzip"):
-		gz, err := gzip.NewReader(bytes.NewReader(data))
-		if err != nil {
-			return string(data)
+	decoded := data
+	if encoding != "" {
+		switch enc := strings.ToLower(encoding); {
+		case strings.Contains(enc, "gzip"):
+			gz, err := gzip.NewReader(bytes.NewReader(data))
+			if err != nil {
+				return binaryContent(data)
+			}
+			out, _ := io.ReadAll(gz)
+			gz.Close()
+			decoded = out
+		case strings.Contains(enc, "deflate"):
+			reader := flate.NewReader(bytes.NewReader(data))
+			out, _ := io.ReadAll(reader)
+			reader.Close()
+			decoded = out
+		default:
+			// br/zstd 等不支持编码：decoded 保持原始压缩字节，后续按二进制 base64 处理
 		}
-		reader = gz
-	case strings.Contains(encoding, "deflate"):
-		reader = flate.NewReader(bytes.NewReader(data))
-	default:
-		return string(data)
 	}
-	defer reader.Close()
-	out, _ := io.ReadAll(reader)
-	return string(out)
+	if isTextual(decoded) {
+		return string(decoded), ""
+	}
+	return binaryContent(decoded)
+}
+
+// binaryContent 对二进制字节 base64 编码，返回 HAR text 与 encoding 标注。
+func binaryContent(data []byte) (string, string) {
+	return base64.StdEncoding.EncodeToString(data), "base64"
+}
+
+// isTextual 按 NULL 字节与 UTF-8 有效性判定内容是否文本：含 NULL 或非有效 UTF-8 视为二进制。
+func isTextual(data []byte) bool {
+	if bytes.IndexByte(data, 0) >= 0 {
+		return false
+	}
+	return utf8.Valid(data)
 }
 
 // recordCapture 在响应回传后组装一条 HAR entry 并追加；记录失败或达上限时告警一次并停用，不影响转发。
@@ -160,12 +183,15 @@ func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, 
 	elapsed := float64(time.Since(captured.start).Milliseconds())
 	var postData *capture.PostData
 	if len(captured.bodyPrefix) > 0 {
+		text, enc := decodeContent(captured.bodyPrefix, request.Header.Get("Content-Encoding"))
 		postData = &capture.PostData{
 			MimeType:  request.Header.Get("Content-Type"),
-			Text:      decodeContent(captured.bodyPrefix, request.Header.Get("Content-Encoding")),
+			Text:      text,
+			Encoding:  enc,
 			Truncated: captured.bodyTruncated,
 		}
 	}
+	responseText, responseEnc := decodeContent(response.prefix, response.header.Get("Content-Encoding"))
 	entry := capture.Entry{
 		StartedDateTime: captured.start.UTC().Format(harTimeLayout),
 		Time:            elapsed,
@@ -190,7 +216,8 @@ func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, 
 			Content: capture.Content{
 				Size:      len(response.prefix),
 				MimeType:  contentTypeOf(response.header),
-				Text:      decodeContent(response.prefix, response.header.Get("Content-Encoding")),
+				Text:      responseText,
+				Encoding:  responseEnc,
 				Truncated: response.truncated,
 			},
 			BodySize: response.total,

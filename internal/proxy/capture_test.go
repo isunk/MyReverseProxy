@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -281,6 +283,48 @@ func TestCapture_GzipResponseDecoded(t *testing.T) {
 	}
 }
 
+// 二进制响应（如图片）应以 base64 编码记入 HAR content.text，encoding 标注 "base64"，而非原始字节乱码
+func TestCapture_BinaryResponseBase64(t *testing.T) {
+	body := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01")
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "image/png")
+		writer.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		_, _ = writer.Write(body)
+	}))
+	t.Cleanup(upstream.Close)
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upstream.URL+"\n")
+	path := captureFilePath(t)
+	proxyURL, recorder := startCapturedProxy(t, configPath, path)
+	client := proxyClient(proxyURL)
+
+	resp, err := client.Get("http://api.example.com/img")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !bytes.Equal(got, body) {
+		t.Fatalf("client should receive raw binary, got %d bytes want %d", len(got), len(body))
+	}
+	if err := recorder.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	har := readHar(t, path)
+	entry := har.Log.Entries[0]
+	if entry.Response.Content.Encoding != "base64" {
+		t.Fatalf("encoding = %q, want base64", entry.Response.Content.Encoding)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(entry.Response.Content.Text)
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+	if !bytes.Equal(decoded, body) {
+		t.Fatalf("decoded base64 content != original body")
+	}
+}
+
 // 截断的 gzip 前缀（超出 body 上限）应容忍解压失败，保留已解压部分而非记录压缩乱码
 func TestCapture_GzipTruncatedDecoded(t *testing.T) {
 	plain := strings.Repeat("hello ", 3*captureBodyLimit/len("hello "))
@@ -290,16 +334,16 @@ func TestCapture_GzipTruncatedDecoded(t *testing.T) {
 	gz.Close()
 	encoded := buffer.Bytes()
 
-	if got := decodeContent(encoded, "gzip"); got != plain {
-		t.Fatalf("decodeContent(gzip) = %q, want full plaintext", got)
+	if text, enc := decodeContent(encoded, "gzip"); text != plain || enc != "" {
+		t.Fatalf("decodeContent(gzip) = (%q, %q), want full plaintext no encoding", text, enc)
 	}
-	if got := decodeContent(encoded[:len(encoded)/2], "gzip"); !strings.HasPrefix(plain, got) || got == "" {
-		t.Fatalf("truncated gzip should decode available prefix, got %d bytes", len(got))
+	if text, _ := decodeContent(encoded[:len(encoded)/2], "gzip"); !strings.HasPrefix(plain, text) || text == "" {
+		t.Fatalf("truncated gzip should decode available prefix, got %d bytes", len(text))
 	}
-	if got := decodeContent(encoded, "br"); got != string(encoded) {
-		t.Fatalf("unknown encoding should keep raw bytes, got %d bytes", len(got))
+	if text, enc := decodeContent(encoded, "br"); enc != "base64" {
+		t.Fatalf("unknown encoding should base64 binary content, got encoding=%q text=%d bytes", enc, len(text))
 	}
-	if got := decodeContent([]byte("plain"), ""); got != "plain" {
-		t.Fatalf("no encoding should keep raw bytes, got %q", got)
+	if text, enc := decodeContent([]byte("plain"), ""); text != "plain" || enc != "" {
+		t.Fatalf("no encoding should keep raw text, got (%q, %q)", text, enc)
 	}
 }
