@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -753,5 +754,104 @@ func BenchmarkUploadModes(b *testing.B) {
 		b.Run(entry.name+"/https-mitm", func(b *testing.B) {
 			benchUploadProxy(b, mitmHarness.mitmClient, mitmHarness.proxyTarget, size)
 		})
+	}
+}
+
+// downloadHarness 搭一条下载链路：上游按路径返回指定体积的响应体，直连与代理客户端共用，用于侧写下载吞吐与 DisableCompression 的影响。
+type downloadHarness struct {
+	directClient *http.Client
+	proxyClient  *http.Client
+	directURL    string
+	proxyTarget  string
+}
+
+func newDownloadHarness(b *testing.B) *downloadHarness {
+	b.Helper()
+	payloads := map[int][]byte{
+		1 << 20:  bytes.Repeat([]byte("x"), 1<<20),
+		16 << 20: bytes.Repeat([]byte("x"), 16<<20),
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		size, err := strconv.Atoi(strings.TrimPrefix(request.URL.Path, "/"))
+		if err != nil {
+			http.NotFound(writer, request)
+			return
+		}
+		payload, ok := payloads[size]
+		if !ok {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("Content-Length", strconv.Itoa(size))
+		_, _ = writer.Write(payload)
+	}))
+	b.Cleanup(upstream.Close)
+
+	_, port, _ := net.SplitHostPort(upstream.Listener.Addr().String())
+	configPath := testutil.ConfigFile(b, "download-bench.yaml", fmt.Sprintf(`
+servers:
+  - domain: %s
+    routes:
+      - prefix: /
+        upstream: http://127.0.0.1:%s
+`, benchClientDomain, port))
+	proxyInstance, err := New(configPath, NewTransport(nil), nil, nil, testNameservers(b))
+	if err != nil {
+		b.Fatalf("New: %v", err)
+	}
+	proxyURL := startListener(b, proxyInstance)
+	return &downloadHarness{
+		directClient: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: &http.Transport{MaxIdleConns: 256, MaxIdleConnsPerHost: 64},
+		},
+		proxyClient: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				Proxy:               http.ProxyURL(testutil.MustURL(proxyURL)),
+				MaxIdleConns:        256,
+				MaxIdleConnsPerHost: 64,
+			},
+		},
+		directURL:   upstream.URL,
+		proxyTarget: "http://" + benchClientDomain,
+	}
+}
+
+// BenchmarkDownloadModes 下载吞吐对照：直连与 HTTP 代理，按响应体积分档，b.SetBytes 报告 MB/s。
+func BenchmarkDownloadModes(b *testing.B) {
+	harness := newDownloadHarness(b)
+	sizes := []struct {
+		name string
+		size int
+	}{
+		{"1MB", 1 << 20},
+		{"16MB", 16 << 20},
+	}
+	for _, entry := range sizes {
+		size := entry.size
+		path := "/" + strconv.Itoa(size)
+		b.Run(entry.name+"/direct", func(b *testing.B) {
+			benchDownload(b, harness.directClient, harness.directURL+path, size)
+		})
+		b.Run(entry.name+"/proxy", func(b *testing.B) {
+			benchDownload(b, harness.proxyClient, harness.proxyTarget+path, size)
+		})
+	}
+}
+
+func benchDownload(b *testing.B, client *http.Client, target string, size int) {
+	b.SetBytes(int64(size))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resp, err := client.Get(target)
+		if err != nil {
+			b.Fatalf("download: %v", err)
+		}
+		_, err = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			b.Fatalf("download read: %v", err)
+		}
 	}
 }

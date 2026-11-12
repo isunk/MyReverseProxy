@@ -241,6 +241,8 @@ func NewTransport(dialContext func(context.Context, string, string) (net.Conn, e
 	transport.MaxIdleConnsPerHost = maxIdleConnectionsHost
 	transport.ReadBufferSize = transportBufferSize
 	transport.WriteBufferSize = transportBufferSize
+	// 透明代理不替客户端声明 Accept-Encoding：压缩由下游与上游端到端协商，mrp 只透传原始字节，避免自动解压耗 CPU 且丢失 Content-Length
+	transport.DisableCompression = true
 	// ClientSessionCache 为 nil 时 Go 禁用会话复用，每次新上游连接都要走完整 TLS 握手
 	transport.TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true, // mrp 位于设备与上游之间，上游证书校验交由设备端完成
