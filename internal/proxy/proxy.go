@@ -68,6 +68,7 @@ func newPassthroughProxy(transport *http.Transport) *httputil.ReverseProxy {
 			request.Out.Host = request.In.Host
 		},
 		Transport:    transport,
+		BufferPool:   route.BufferPool,
 		ErrorHandler: route.UpstreamErrorHandler,
 	}
 }
