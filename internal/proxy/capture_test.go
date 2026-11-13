@@ -109,8 +109,8 @@ func TestCapture_RecordsPlainHTTP(t *testing.T) {
 	if entry.ClientAddress == "" {
 		t.Fatalf("client address should be recorded")
 	}
-	if entry.ServerIPAddress != "api.example.com" {
-		t.Fatalf("serverIPAddress = %q, want api.example.com", entry.ServerIPAddress)
+	if entry.ServerName != "api.example.com" {
+		t.Fatalf("serverName = %q, want api.example.com", entry.ServerName)
 	}
 }
 
@@ -345,5 +345,43 @@ func TestCapture_GzipTruncatedDecoded(t *testing.T) {
 	}
 	if text, enc := decodeContent([]byte("plain"), ""); text != "plain" || enc != "" {
 		t.Fatalf("no encoding should keep raw text, got (%q, %q)", text, enc)
+	}
+}
+
+// 无 Content-Length 的 chunked 请求体超过记录上限时，bodySize 应在转发完成后回填为精确大小，而非前缀上限长度
+func TestCapture_ChunkedBodySizeAccurate(t *testing.T) {
+	payload := strings.Repeat("y", captureBodyLimit+4096)
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		n, _ := io.Copy(io.Discard, request.Body)
+		io.WriteString(writer, strconv.FormatInt(n, 10))
+	}))
+	t.Cleanup(upstream.Close)
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upstream.URL+"\n")
+	path := captureFilePath(t)
+	proxyURL, recorder := startCapturedProxy(t, configPath, path)
+	client := proxyClient(proxyURL)
+
+	// 用 NopCloser 包住 *strings.Reader 使客户端无法推断长度，强制走 chunked 传输
+	resp, err := client.Post("http://api.example.com/upload", "application/octet-stream", io.NopCloser(strings.NewReader(payload)))
+	if err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	received, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(received) != strconv.Itoa(len(payload)) {
+		t.Fatalf("upstream received %s bytes, want %d", received, len(payload))
+	}
+	if err := recorder.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	har := readHar(t, path)
+	entry := har.Log.Entries[0]
+	if entry.Request.BodySize != int64(len(payload)) {
+		t.Fatalf("bodySize = %d, want %d", entry.Request.BodySize, len(payload))
+	}
+	if entry.Request.PostData == nil || !entry.Request.PostData.Truncated {
+		t.Fatalf("large chunked body should be marked truncated")
 	}
 }

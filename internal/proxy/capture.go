@@ -25,15 +25,27 @@ const (
 
 // SetCapture 注入抓包记录器，nil 表示关闭抓包；须在开始接受请求前调用一次。
 func (p *Proxy) SetCapture(recorder *capture.Recorder) {
-	p.capture = recorder
+	p.capture.Store(recorder)
 }
 
 // Close 关闭抓包记录器补全 HAR 文件尾部，未开启时为空操作。
 func (p *Proxy) Close() error {
-	if p.capture == nil {
-		return nil
+	if recorder := p.capture.Load(); recorder != nil {
+		return recorder.Close()
 	}
-	return p.capture.Close()
+	return nil
+}
+
+// countingReadCloser 统计从底层读出的字节数，供 Content-Length 未知的请求体在转发完成后回填精确大小。
+type countingReadCloser struct {
+	io.Reader
+	count int64
+}
+
+func (c *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := c.Reader.Read(p)
+	c.count += int64(n)
+	return n, err
 }
 
 // capturedRequest 汇集一条请求的抓包上下文：目标五元组、开始时间与请求体前缀记录。
@@ -45,10 +57,11 @@ type capturedRequest struct {
 	bodyPrefix    []byte
 	bodySize      int64
 	bodyTruncated bool
+	bodyTail      *countingReadCloser
 }
 
 func newCapturedRequest(start time.Time, protocol string, port int, domain string, request *http.Request) *capturedRequest {
-	prefix, size, truncated := captureRequestBody(request)
+	prefix, size, truncated, tail := captureRequestBody(request)
 	return &capturedRequest{
 		start:         start,
 		protocol:      protocol,
@@ -57,6 +70,7 @@ func newCapturedRequest(start time.Time, protocol string, port int, domain strin
 		bodyPrefix:    prefix,
 		bodySize:      size,
 		bodyTruncated: truncated,
+		bodyTail:      tail,
 	}
 }
 
@@ -98,10 +112,10 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-// captureRequestBody 读取请求 body 前缀并恢复完整 body 供转发：body 超过上限时只记前缀，其余字节经 MultiReader 原样续传；返回前缀、原始大小与是否截断。
-func captureRequestBody(request *http.Request) (prefix []byte, bodySize int64, truncated bool) {
+// captureRequestBody 读取请求 body 前缀并恢复完整 body 供转发：body 超过上限时只记前缀，其余字节经 MultiReader 原样续传；返回前缀、原始大小、是否截断与剩余体计数器（仅 Content-Length 未知时非 nil，供转发完成后回填精确大小）。
+func captureRequestBody(request *http.Request) (prefix []byte, size int64, truncated bool, tail *countingReadCloser) {
 	if request.Body == nil || request.Body == http.NoBody {
-		return nil, request.ContentLength, false
+		return nil, request.ContentLength, false, nil
 	}
 	raw, _ := io.ReadAll(io.LimitReader(request.Body, captureBodyLimit+1))
 	truncated = len(raw) > captureBodyLimit
@@ -110,11 +124,13 @@ func captureRequestBody(request *http.Request) (prefix []byte, bodySize int64, t
 	} else {
 		prefix = raw
 	}
-	request.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), request.Body))
 	if request.ContentLength >= 0 {
-		return prefix, request.ContentLength, truncated
+		request.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), request.Body))
+		return prefix, request.ContentLength, truncated, nil
 	}
-	return prefix, int64(len(prefix)), truncated
+	tail = &countingReadCloser{Reader: request.Body}
+	request.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), tail))
+	return prefix, int64(len(raw)), truncated, tail
 }
 
 // headersFrom 把 http.Header 展开为 HAR 头列表，同名多值逐条展开。
@@ -176,11 +192,15 @@ func isTextual(data []byte) bool {
 
 // recordCapture 在响应回传后组装一条 HAR entry 并追加；记录失败或达上限时告警一次并停用，不影响转发。
 func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, response *captureWriter) {
-	recorder := p.capture
+	recorder := p.capture.Load()
 	if recorder == nil {
 		return
 	}
 	elapsed := float64(time.Since(captured.start).Milliseconds())
+	bodySize := captured.bodySize
+	if captured.bodyTail != nil {
+		bodySize += captured.bodyTail.count
+	}
 	var postData *capture.PostData
 	if len(captured.bodyPrefix) > 0 {
 		text, enc := decodeContent(captured.bodyPrefix, request.Header.Get("Content-Encoding"))
@@ -195,7 +215,7 @@ func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, 
 	entry := capture.Entry{
 		StartedDateTime: captured.start.UTC().Format(harTimeLayout),
 		Time:            elapsed,
-		ServerIPAddress: captured.domain,
+		ServerName:      captured.domain,
 		ClientAddress:   request.RemoteAddr,
 		Request: capture.Request{
 			Method:      request.Method,
@@ -205,7 +225,7 @@ func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, 
 			Headers:     headersFrom(request.Header),
 			QueryString: []capture.Query{},
 			PostData:    postData,
-			BodySize:    captured.bodySize,
+			BodySize:    bodySize,
 		},
 		Response: capture.Response{
 			Status:      response.Status,

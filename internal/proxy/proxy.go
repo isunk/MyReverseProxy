@@ -39,7 +39,7 @@ type Proxy struct {
 	authority   *ca.Authority
 	passthrough *httputil.ReverseProxy
 	nameservers *dns.Resolver
-	capture     *capture.Recorder
+	capture     atomic.Pointer[capture.Recorder]
 
 	// reloadMu 串行化 reload：WatchFile 轮询与 SIGHUP 可并发触发，不加锁时两个 reload 的 Load→Store 交错会让旧配置覆盖新配置
 	reloadMu sync.Mutex
@@ -170,7 +170,7 @@ func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) 
 	logRequest := func(status int) {
 		log.Info("request domain=%s protocol=%s port=%d method=%s path=%s status=%d elapsed=%s", domain, protocol, port, request.Method, request.URL.Path, status, time.Since(start))
 	}
-	if p.capture == nil {
+	if p.capture.Load() == nil {
 		status := &frontend.StatusRecorder{ResponseWriter: writer, Status: http.StatusOK}
 		defer func() { logRequest(status.Status) }()
 		handler.ServeHTTP(status, request)

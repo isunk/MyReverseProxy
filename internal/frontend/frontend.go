@@ -124,6 +124,13 @@ func (w *StatusRecorder) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Flush 转发到底层，使流式响应（如 SSE、长轮询）的 Flusher 能力不被包装层遮蔽。
+func (w *StatusRecorder) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 func (w *StatusRecorder) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }

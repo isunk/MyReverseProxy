@@ -31,6 +31,7 @@ type Entry struct {
 	Cache           Cache    `json:"cache"`
 	Timings         Timings  `json:"timings"`
 	ServerIPAddress string   `json:"serverIPAddress,omitempty"`
+	ServerName      string   `json:"_serverName,omitempty"`
 	ClientAddress   string   `json:"_clientAddress,omitempty"`
 }
 
