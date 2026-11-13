@@ -81,16 +81,16 @@ type Query struct {
 
 // PostData 请求体：Text 为记入文件的前缀字节（二进制时 base64 编码），BodySize 在外层 Request 记录原始大小。
 type PostData struct {
-	MimeType  string `json:"mimeType,omitempty"`
+	MimeType  string `json:"mimeType"`
 	Text      string `json:"text,omitempty"`
 	Encoding  string `json:"_encoding,omitempty"`
 	Truncated bool   `json:"_truncated,omitempty"`
 }
 
-// Content 响应体：Size 为记入文件的前缀字节数，Text 在二进制内容时 base64 编码并以 Encoding 标注，Truncated 标注是否被截断。
+// Content 响应体：Size 为内容字节长，Text 在二进制或压缩内容时 base64 编码并以 Encoding 标注，Truncated 标注是否被截断。
 type Content struct {
 	Size      int    `json:"size"`
-	MimeType  string `json:"mimeType,omitempty"`
+	MimeType  string `json:"mimeType"`
 	Text      string `json:"text,omitempty"`
 	Encoding  string `json:"encoding,omitempty"`
 	Truncated bool   `json:"_truncated,omitempty"`
@@ -101,7 +101,11 @@ type Cache struct{}
 
 // Timings 耗时分解：mrp 仅记录总的 wait，其余置零。
 type Timings struct {
+	Blocked float64 `json:"blocked"`
+	DNS     float64 `json:"dns"`
+	Connect float64 `json:"connect"`
 	Send    float64 `json:"send"`
 	Wait    float64 `json:"wait"`
 	Receive float64 `json:"receive"`
+	SSL     float64 `json:"ssl"`
 }

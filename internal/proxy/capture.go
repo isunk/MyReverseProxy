@@ -2,15 +2,13 @@ package proxy
 
 import (
 	"bytes"
-	"compress/flate"
-	"compress/gzip"
 	"encoding/base64"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"mrp/internal/capture"
 	"mrp/internal/frontend"
@@ -144,48 +142,41 @@ func headersFrom(header http.Header) []capture.Header {
 	return entries
 }
 
-// decodeContent 按 Content-Encoding 解压记录体后按内容判定文本或二进制，返回 HAR text 与 encoding 标注；前缀截断时容忍错误取已解压部分。
-func decodeContent(data []byte, encoding string) (string, string) {
+// decodeContent 按 MIME 类型与 Content-Encoding 决定 HAR 内容表示：明文文本（无编码的文本型 MIME）按原文记录，其余（压缩或二进制）一律 base64，不做解压、不篡改 content-type 与 size。
+func decodeContent(data []byte, encoding string, mimeType string) (string, string) {
 	if len(data) == 0 {
 		return "", ""
 	}
-	decoded := data
-	if encoding != "" {
-		switch enc := strings.ToLower(encoding); {
-		case strings.Contains(enc, "gzip"):
-			gz, err := gzip.NewReader(bytes.NewReader(data))
-			if err != nil {
-				return binaryContent(data)
-			}
-			out, _ := io.ReadAll(gz)
-			gz.Close()
-			decoded = out
-		case strings.Contains(enc, "deflate"):
-			reader := flate.NewReader(bytes.NewReader(data))
-			out, _ := io.ReadAll(reader)
-			reader.Close()
-			decoded = out
-		default: // br/zstd 等不支持编码：压缩字节不可当文本，直接按二进制处理
-			return binaryContent(data)
-		}
+	if (encoding == "" || strings.EqualFold(encoding, "identity")) && isTextMimeType(mimeType) {
+		return string(data), ""
 	}
-	if isTextual(decoded) {
-		return string(decoded), ""
+	return binaryContent(data)
+}
+
+// isTextMimeType 判定 MIME 类型是否属于明文文本：text/* 与常见文本型 application/*、SVG 等；用于决定 HAR content 按明文还是 base64 记录。
+func isTextMimeType(mimeType string) bool {
+	mediaType, _, err := mime.ParseMediaType(mimeType)
+	if err != nil {
+		mediaType = strings.TrimSpace(mimeType)
 	}
-	return binaryContent(decoded)
+	mediaType = strings.ToLower(mediaType)
+	if strings.HasPrefix(mediaType, "text/") {
+		return true
+	}
+	switch mediaType {
+	case "application/json", "application/ld+json", "application/x-ndjson",
+		"application/javascript", "application/x-javascript", "application/ecmascript",
+		"application/xml", "application/xhtml+xml", "application/x-www-form-urlencoded",
+		"application/graphql", "application/manifest+json", "application/sql",
+		"image/svg+xml":
+		return true
+	}
+	return false
 }
 
 // binaryContent 对二进制字节 base64 编码，返回 HAR text 与 encoding 标注。
 func binaryContent(data []byte) (string, string) {
 	return base64.StdEncoding.EncodeToString(data), "base64"
-}
-
-// isTextual 按 NULL 字节与 UTF-8 有效性判定内容是否文本：含 NULL 或非有效 UTF-8 视为二进制。
-func isTextual(data []byte) bool {
-	if bytes.IndexByte(data, 0) >= 0 {
-		return false
-	}
-	return utf8.Valid(data)
 }
 
 // recordCapture 在响应回传后组装一条 HAR entry 并追加；记录失败或达上限时告警一次并停用，不影响转发。
@@ -201,7 +192,7 @@ func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, 
 	}
 	var postData *capture.PostData
 	if len(captured.bodyPrefix) > 0 {
-		text, enc := decodeContent(captured.bodyPrefix, request.Header.Get("Content-Encoding"))
+		text, enc := decodeContent(captured.bodyPrefix, request.Header.Get("Content-Encoding"), request.Header.Get("Content-Type"))
 		postData = &capture.PostData{
 			MimeType:  request.Header.Get("Content-Type"),
 			Text:      text,
@@ -209,7 +200,7 @@ func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, 
 			Truncated: captured.bodyTruncated,
 		}
 	}
-	responseText, responseEnc := decodeContent(response.prefix, response.header.Get("Content-Encoding"))
+	responseText, responseEnc := decodeContent(response.prefix, response.header.Get("Content-Encoding"), contentTypeOf(response.header))
 	entry := capture.Entry{
 		StartedDateTime: captured.start.UTC().Format(harTimeLayout),
 		Time:            elapsed,

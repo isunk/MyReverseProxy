@@ -125,3 +125,70 @@ func TestRecorder_ConcurrentRecord(t *testing.T) {
 		t.Fatalf("entries = %d, want %d", len(har.Log.Entries), count)
 	}
 }
+
+// TestHar_RequiredFieldsPresent 校验生成的 entry 覆盖 HAR 1.2 规范所有必填字段：content.mimeType 与 timings 的 blocked/dns/connect/ssl 必须随 JSON 输出，不得因 omitempty 缺失。
+func TestHar_RequiredFieldsPresent(t *testing.T) {
+	entry := Entry{
+		StartedDateTime: "2026-01-01T00:00:00.000Z",
+		Time:            10,
+		Request: Request{
+			Method:      "GET",
+			URL:         "http://a.example.com/",
+			HTTPVersion: "HTTP/1.1",
+			Cookies:     []Cookie{},
+			Headers:     []Header{},
+			QueryString: []Query{},
+			HeadersSize: -1,
+			BodySize:    0,
+		},
+		Response: Response{
+			Status:      200,
+			StatusText:  "OK",
+			HTTPVersion: "HTTP/1.1",
+			Cookies:     []Cookie{},
+			Headers:     []Header{},
+			Content:     Content{Size: 3, MimeType: "text/plain", Text: "abc"},
+			RedirectURL: "",
+			HeadersSize: -1,
+			BodySize:    3,
+		},
+		Cache:   Cache{},
+		Timings: Timings{Blocked: 0, DNS: 0, Connect: 0, Send: 0, Wait: 10, Receive: 0, SSL: 0},
+	}
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	request := root["request"].(map[string]any)
+	response := root["response"].(map[string]any)
+	content := response["content"].(map[string]any)
+	timings := root["timings"].(map[string]any)
+	for _, key := range []string{"method", "url", "httpVersion", "cookies", "headers", "queryString", "headersSize", "bodySize"} {
+		if _, ok := request[key]; !ok {
+			t.Errorf("request.%s missing", key)
+		}
+	}
+	for _, key := range []string{"status", "statusText", "httpVersion", "cookies", "headers", "content", "redirectURL", "headersSize", "bodySize"} {
+		if _, ok := response[key]; !ok {
+			t.Errorf("response.%s missing", key)
+		}
+	}
+	for _, key := range []string{"size", "mimeType"} {
+		if _, ok := content[key]; !ok {
+			t.Errorf("content.%s missing", key)
+		}
+	}
+	for _, key := range []string{"blocked", "dns", "connect", "send", "wait", "receive", "ssl"} {
+		if _, ok := timings[key]; !ok {
+			t.Errorf("timings.%s missing", key)
+		}
+	}
+	if _, ok := root["cache"]; !ok {
+		t.Errorf("entry.cache missing")
+	}
+}
