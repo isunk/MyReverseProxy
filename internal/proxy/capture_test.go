@@ -348,6 +348,23 @@ func TestCapture_GzipTruncatedDecoded(t *testing.T) {
 	}
 }
 
+// 不支持编码的内容即使字节恰为有效 UTF-8（无 NULL）也按二进制 base64 处理，不得当文本。
+func TestCapture_UnsupportedEncodingNeverText(t *testing.T) {
+	// 有效 UTF-8 且无 NULL 的字节序列，覆盖旧逻辑误判为文本的分支
+	asciiLike := []byte("Brotli compressed stream that looks like text without null bytes")
+	if !isTextual(asciiLike) {
+		t.Fatalf("test fixture should be textual to exercise the bug")
+	}
+	text, enc := decodeContent(asciiLike, "br")
+	if enc != "base64" {
+		t.Fatalf("decodeContent(br-like) encoding = %q, want base64 (never text)", enc)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(text)
+	if err != nil || !bytes.Equal(decoded, asciiLike) {
+		t.Fatalf("decodeContent(br-like) text should be base64 of original bytes, got %d bytes err=%v", len(decoded), err)
+	}
+}
+
 // 无 Content-Length 的 chunked 请求体超过记录上限时，bodySize 应在转发完成后回填为精确大小，而非前缀上限长度
 func TestCapture_ChunkedBodySizeAccurate(t *testing.T) {
 	payload := strings.Repeat("y", captureBodyLimit+4096)
