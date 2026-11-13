@@ -306,7 +306,7 @@ adb forward tcp:9000 tcp:9000
 - 打开：Chrome DevTools（F12 → Network → 导入 HAR）、Charles（File → Import）、Fiddler（File → Import Sessions）
 - 记录含 `Authorization` 等敏感头与业务数据，文件保留在设备本地，安全由使用者自行管理
 
-正常退出（SIGINT/SIGTERM）自动补全 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，下次以相同 `--capture` 路径启动时自动补全并重命名为 `<名>.recovered.har`，日志会打印恢复路径。
+正常退出（SIGINT/SIGTERM）自动补全 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，可手动补全或重新开始抓包。
 
 ## 从源码构建
 

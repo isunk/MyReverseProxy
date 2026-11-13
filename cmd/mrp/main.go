@@ -106,9 +106,6 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 		return nil, err
 	}
 	if opts.capturePath != "" {
-		if recovered := capture.RecoverPrevious(opts.capturePath); recovered != "" {
-			log.Info("capture recovered previous file path=%s", recovered)
-		}
 		recorder, err := capture.New(opts.capturePath, capture.FileSizeLimit)
 		if err != nil {
 			log.Warn("capture disabled path=%s err=%v", opts.capturePath, err)
