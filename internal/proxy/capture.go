@@ -144,8 +144,7 @@ func headersFrom(header http.Header) []capture.Header {
 	return entries
 }
 
-// decodeContent 按 Content-Encoding 解压记录体，再按内容判定文本或二进制：gzip/deflate 解为明文，
-// br/zstd 等不支持的编码保留原始压缩字节；最后对二进制内容 base64 编码，返回 HAR text 与 encoding 标注。
+// decodeContent 按 Content-Encoding 解压记录体，再按内容判定文本或二进制：gzip/deflate 解为明文，br/zstd 等不支持的编码保留原始压缩字节；最后对二进制内容 base64 编码，返回 HAR text 与 encoding 标注。
 // 前缀截断导致流不完整时容忍错误，取已解压部分。
 func decodeContent(data []byte, encoding string) (string, string) {
 	if len(data) == 0 {
@@ -167,8 +166,7 @@ func decodeContent(data []byte, encoding string) (string, string) {
 			out, _ := io.ReadAll(reader)
 			reader.Close()
 			decoded = out
-		default:
-			// br/zstd 等不支持编码：decoded 保持原始压缩字节，后续按二进制 base64 处理
+		default: // br/zstd 等不支持编码：decoded 保持原始压缩字节，后续按二进制 base64 处理
 		}
 	}
 	if isTextual(decoded) {

@@ -38,7 +38,7 @@ func absoluteTarget(protocol string, port int, domain string, requestURL *url.UR
 	return protocol + "://" + net.JoinHostPort(domain, strconv.Itoa(port)) + requestURL.RequestURI()
 }
 
-// hostAndPort 拆分 Host 为名称与端口，端口缺失或非法时补 fallback；无端口的 [::1] 括号形态剥掉括号，使域名键与配置写法及 JoinHostPort 语义对齐。
+// hostAndPort 拆分 Host 为名称与端口，端口缺失或非法时补 fallback；无端口的 [::1] 括号形态剥掉括号。
 func hostAndPort(host string, fallback int) (string, int) {
 	name, port, err := net.SplitHostPort(host)
 	if err != nil || name == "" {
@@ -50,7 +50,7 @@ func hostAndPort(host string, fallback int) (string, int) {
 	return name, fallback
 }
 
-// hostOnly 取 Host 头的主机名部分并小写化，便于与路由表键对齐。
+// hostOnly 取 Host 头的主机名部分并小写化。
 func hostOnly(host string) string {
 	name, _, err := net.SplitHostPort(host)
 	if err == nil {

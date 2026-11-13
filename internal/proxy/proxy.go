@@ -19,6 +19,7 @@ import (
 	"mrp/internal/dns"
 	"mrp/internal/frontend"
 	"mrp/internal/log"
+	"mrp/internal/netutil"
 	"mrp/internal/route"
 )
 
@@ -41,8 +42,7 @@ type Proxy struct {
 	nameservers *dns.Resolver
 	capture     atomic.Pointer[capture.Recorder]
 
-	// reloadMu 串行化 reload：WatchFile 轮询与 SIGHUP 可并发触发，不加锁时两个 reload 的 Load→Store 交错会让旧配置覆盖新配置
-	reloadMu sync.Mutex
+	reloadMu sync.Mutex // 串行化 reload：WatchFile 轮询与 SIGHUP 可并发触发，不加锁时两个 reload 的 Load→Store 交错会让旧配置覆盖新配置
 }
 
 func New(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *ca.Authority, nameservers *dns.Resolver) (*Proxy, error) {
@@ -68,7 +68,7 @@ func newPassthroughProxy(transport *http.Transport) *httputil.ReverseProxy {
 			request.Out.Host = request.In.Host
 		},
 		Transport:    transport,
-		BufferPool:   route.BufferPool,
+		BufferPool:   netutil.BufferPool,
 		ErrorHandler: route.UpstreamErrorHandler,
 	}
 }
@@ -79,9 +79,9 @@ func passthroughURL(inbound *http.Request) *url.URL {
 		outbound := *inbound.URL
 		return &outbound
 	}
-	protocol := "http"
+	protocol := route.ProtocolHTTP
 	if inbound.TLS != nil {
-		protocol = "https"
+		protocol = route.ProtocolHTTPS
 	}
 	if parsed, err := url.Parse(protocol + "://" + inbound.Host + inbound.URL.RequestURI()); err == nil {
 		return parsed
@@ -90,7 +90,7 @@ func passthroughURL(inbound *http.Request) *url.URL {
 	return &outbound
 }
 
-// reload 重载配置：路由与 DNS 服务器无变化时保留现状，任一项变化则替换并清理派生状态；加锁串行化保证读文件、比指纹、换表、清缓存的顺序一致。
+// reload 重载配置：路由与 DNS 服务器无变化时保留现状，任一项变化则替换并清理派生状态。
 func (p *Proxy) reload() error {
 	p.reloadMu.Lock()
 	defer p.reloadMu.Unlock()
@@ -235,7 +235,7 @@ func (p *Proxy) Reload() error {
 	return p.reload()
 }
 
-// NewTransport 构建上游连接池：关闭环境代理防回环、放宽同主机连接复用，并开启 TLS 会话复用，避免每条新上游连接重跑完整握手。
+// NewTransport 构建上游连接池：禁用环境代理防回环、放宽同主机连接复用、开启 TLS 会话复用。
 func NewTransport(dialContext func(context.Context, string, string) (net.Conn, error)) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil // 禁用环境代理，避免代理流量经上游代理回环到自身
@@ -246,8 +246,7 @@ func NewTransport(dialContext func(context.Context, string, string) (net.Conn, e
 	transport.MaxIdleConnsPerHost = maxIdleConnectionsHost
 	transport.ReadBufferSize = transportBufferSize
 	transport.WriteBufferSize = transportBufferSize
-	// 透明代理不替客户端声明 Accept-Encoding：压缩由下游与上游端到端协商，mrp 只透传原始字节，避免自动解压耗 CPU 且丢失 Content-Length
-	transport.DisableCompression = true
+	transport.DisableCompression = true // 不替客户端声明 Accept-Encoding：压缩由下游与上游端到端协商，mrp 只透传原始字节，避免自动解压耗 CPU 且丢失 Content-Length
 	// ClientSessionCache 为 nil 时 Go 禁用会话复用，每次新上游连接都要走完整 TLS 握手
 	transport.TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true, // mrp 位于设备与上游之间，上游证书校验交由设备端完成

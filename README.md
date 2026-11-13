@@ -6,7 +6,7 @@
 
 - **自定义反向代理**：匹配规则支持域名（含通配符 `*` / `*.suffix`）、端口与路径前缀，可改写 Host 与请求/响应头，支持短路响应与静态文件托管
 - **HTTPS 解密**：自签 CA 按目标域名动态签发证书，命中域名的 HTTPS 流量解密后路由；其余域名保持端到端加密，内容不可见
-- **SOCKS5 代理**：与 HTTP 代理共用单端口，无认证 CONNECT 字节透传到任意 TCP 目标
+- **SOCKS5 代理**：与 HTTP 代理共用单端口，无认证 CONNECT 字节透传到任意 TCP 目标，UDP ASSOCIATE 中继 UDP 数据报
 - **DNS 代理解析**：上游域名解析支持指定 DNS 服务器，按序故障切换
 - **配置热加载**：路由与 DNS 配置修改即时生效
 - **抓包**：把 MITM 解密后的 HTTPS 与直连明文 HTTP 记录为 HAR 文件，离线用 Chrome DevTools / Charles / Fiddler 分析
@@ -20,7 +20,7 @@
 - **HTTPS**：客户端以 CONNECT 请求进入，CONNECT 目标即请求域名，按域名是否命中配置分为两种模式：
     - **MITM（命中域名）**：客户端发来带 SNI 的 TLS ClientHello，代理用自签 CA 现场签发 SAN 为该 SNI 的证书代替目标完成握手，客户端因信任导入的 `ca.crt` 校验通过；代理得到明文 HTTP 后按域名与路径前缀匹配路由，解析上游域名后转发，可改写 Host 与消息头。CA 无需预登记拦截域名，新增域名即签即用；未提供 CA 时命中域名的 CONNECT 返回 502
     - **tunnel（未命中域名）**：代理与目标建立 TCP 连接并回 200 后，客户端与目标端到端协商 TLS，证书链逐字节原样，代理只搬运字节，内容不可见，无需 CA 参与
-- **SOCKS5**：从连接首字节 `0x05` 区分，仅无认证 CONNECT，字节透传到任意 TCP 目标，不查路由表、不做 MITM；详见[流量处理与协议兼容性](#流量处理与协议兼容性)
+- **SOCKS5**：从连接首字节 `0x05` 区分，无认证 CONNECT 字节透传到任意 TCP 目标、UDP ASSOCIATE 中继 UDP 数据报（绑定本机回环），不查路由表、不做 MITM；详见[流量处理与协议兼容性](#流量处理与协议兼容性)
 
 配置即开关：`servers` 登记域名即对该域名 MITM，删掉回落 tunnel，热加载即时生效；留空即全量 tunnel。
 
@@ -65,6 +65,15 @@ sequenceDiagram
         mrp->>Tgt: 原样搬运字节
         Tgt-->>mrp: 字节流回传
         mrp-->>App: 原样回传
+    else SOCKS5：UDP ASSOCIATE
+        App->>mrp: "UDP ASSOCIATE 请求"
+        mrp->>mrp: 绑定 127.0.0.1 临时端口
+        mrp-->>App: "成功 + 中继地址（127.0.0.1:port）"
+        App->>mrp: "SOCKS5 UDP 头 + 数据报"
+        mrp->>Tgt: 转发 UDP 数据报（按目标建会话）
+        Tgt-->>mrp: 数据报回传
+        mrp-->>App: "SOCKS5 UDP 头 + 数据报"
+        Note over App,Tgt: 不查路由表、不做 MITM，空闲超时释放会话
     else 明文 HTTP
         App->>mrp: "GET http://api.target-app.com/v1/hello"
         mrp->>mrp: 按 Host 头匹配路由
@@ -87,18 +96,20 @@ mrp 在同一个监听端口按「入口 → 判据 → 处置方式」归类，
 | 明文 HTTP | 非 CONNECT 的 HTTP 请求 | L7 解析后路由 / 改写 / 透传 | 明文可见 |
 | HTTPS·MITM | CONNECT 且命中 `servers` | 终止客户端 TLS，内层按 HTTP/1.1 解析后转发，与上游重建 TLS | 明文可见 |
 | TCP 隧道 | CONNECT 且未命中，目标任意端口 | 字节透传（443 的 CONNECT 即 HTTPS·隧道特例） | 端到端加密 |
-| SOCKS5 | 首字节 `0x05`，无认证 CONNECT | 字节透传 | 端到端加密 |
-| UDP | —— | 不介入 | —— |
+| SOCKS5 CONNECT | 首字节 `0x05`，无认证 CONNECT | 字节透传 | 端到端加密 |
+| SOCKS5 UDP ASSOCIATE | 首字节 `0x05`，无认证 UDP ASSOCIATE | UDP 数据报中继（绑定回环） | 端到端加密 |
+| UDP（其余） | —— | 不介入 | —— |
 
-五类入口收敛为三种处置本质：
+六类入口收敛为三种处置本质：
 
-- **字节透传**：代理对已建立的两端做 `io.Copy` 双向搬运，不解析内容、协议无关、无需 CA。TCP 隧道、HTTPS·隧道、SOCKS5 三者能力完全一致。
+- **字节透传**：代理对已建立的两端做 `io.Copy` 双向搬运，不解析内容、协议无关、无需 CA。TCP 隧道、HTTPS·隧道、SOCKS5 CONNECT 三者能力完全一致。
 - **HTTP 解析**：代理按 HTTP/1.1 语义解析后转发，可路由与改写。明文 HTTP 与 MITM 内层能力一致，受 HTTP/1.1 约束。
-- **不介入**：UDP 及走 UDP 的 QUIC / HTTP/3 完全不经代理。
+- **UDP 中继**：代理按 SOCKS5 UDP 头解析数据报头后原样搬运负载，协议无关、无需 CA，与 TCP 字节透传等价但按数据报而非字节流。
+- **不介入**：未匹配任何规则、走 UDP 的 QUIC / HTTP/3 等完全不经代理。
 
 ### 协议能力
 
-字节透传列记「端到端透明」表示代理不感知该特性、由客户端与目标自行协商；HTTP 解析列才是代理真正处理的行为。SOCKS5 列仅含已实现的 CONNECT（TCP），协议规范的 UDP ASSOCIATE 未实现（返回 `0x07`），故 UDP 流量不在此列。
+字节透传列记「端到端透明」表示代理不感知该特性、由客户端与目标自行协商；HTTP 解析列才是代理真正处理的行为。SOCKS5 列仅含已实现的 CONNECT（TCP）与 UDP ASSOCIATE（UDP 中继），UDP 中继不依赖客户端与目标的 UDP 兼容性。
 
 | 协议 / 特性 | 字节透传（隧道·SOCKS5） | HTTP 解析（明文·MITM） |
 |-------------|------------------------|------------------------|
@@ -113,6 +124,7 @@ mrp 在同一个监听端口按「入口 → 判据 → 处置方式」归类，
 | HTTP/2 | 支持 | 降级为 HTTP/1.1 |
 | HTTP/3（QUIC） | 不介入 | 不介入 |
 | 任意 TCP（SSH/MySQL/RDP/SMTP） | 支持 | 不适用 |
+| 任意 UDP（DNS/RTP/自定义） | UDP ASSOCIATE 支持，其余不介入 | 不适用 |
 
 ### 边界与注意点
 
@@ -120,8 +132,9 @@ mrp 在同一个监听端口按「入口 → 判据 → 处置方式」归类，
 - **HTTP 解析的收敛点**：MITM 内层 `NextProtos` 只有 `http/1.1`，普通 HTTP/2 站点降级为 HTTP/1.1（站点可用、多路复用丢失），gRPC 强依赖 h2 而失败。
 - **MITM 的证书代价**：自签证书与固定值不匹配、也不交付客户端证书，pinning 与 mTLS 在 MITM 下失败；tunnel 下两端都端到端正常。
 - **TCP 命中陷阱**：CONNECT 到任意端口时，若目标域名登记了 `servers`（未限定 `port`），会被当作 HTTPS 走 MITM，非 TLS 的纯 TCP 协议会因 TLS 握手失败。解法：给该 server 加 `port: 443`（或实际 HTTPS 端口），使非该端口的 CONNECT 走隧道；纯 TCP 协议应确保其目标域名不登记在 `servers`。
-- **SOCKS5**：与 HTTP 共用端口、从首字节 `0x05` 区分，仅无认证 CONNECT，不查路由表、不 MITM；BIND 与 UDP ASSOCIATE 返回命令不支持（`0x07`），故 SOCKS5 的 UDP 不可用；IP 直连按 IP 拨号、不经域名解析。
-- **UDP**：绝不经过代理。QUIC/HTTP/3、UDP DNS、RTP 等直连出口；QUIC 不通时客户端回退 TCP 的 HTTP/1.1 / HTTP/2，再按上表处理。
+- **SOCKS5**：与 HTTP 共用端口、从首字节 `0x05` 区分，无认证 CONNECT 字节透传、UDP ASSOCIATE 中继 UDP（中继 socket 绑定 `127.0.0.1` 临时端口，仅本机客户端可达），不查路由表、不 MITM；BIND 返回命令不支持（`0x07`）；IP 直连按 IP 拨号、不经域名解析；UDP ASSOCIATE 的 FRAG 非零数据报丢弃，会话空闲 30s 自动释放。
+- **UDP 中继**：SOCKS5 UDP ASSOCIATE 按数据报原样搬运，不解析内容、无需 CA；QUIC/HTTP/3、UDP DNS 等未匹配规则的 UDP 仍直连出口；QUIC 不通时客户端回退 TCP 的 HTTP/1.1 / HTTP/2，再按上表处理。
+- **仅 HTTP/HTTPS 配置**：配置只支持 `servers`（http/https 反向代理）与 `nameservers`，不提供 TCP/UDP 端口转发（无 `forwards` 段）；CONNECT 隧道与 SOCKS5 字节透传是运行时能力，不经路由表、无需配置。
 
 ## 使用流程
 
@@ -198,7 +211,7 @@ servers:
 ```
 
 - `servers[].domain`：按域名匹配，HTTPS 取 CONNECT 目标主机、HTTP 取 Host 头；支持通配符 `*`（匹配任意域名，含 IP 字面量）与 `*.suffix`（匹配单层子域 `label.suffix`，不匹配裸域与多层子域）。多 server 命中时按 `servers` 声明顺序先声明先生效，通配符与精确域名遵循同一规则
-- `servers[].protocol` / `port`：可选，限定协议与目标端口，省略匹配任意；protocol 仅 `http` / `https`（TCP 隧道与 SOCKS5 字节透传不查路由表，无需配置），port 取值 1-65535
+- `servers[].protocol` / `port`：可选，限定协议与目标端口，省略匹配任意；protocol 仅 `http` / `https`（配置仅支持 HTTP/HTTPS，TCP 隧道与 SOCKS5 字节透传不查路由表、无需配置），port 取值 1-65535
 - `routes[].prefix`：最长路径前缀匹配，以 `/` 开头
 - `routes[].upstream`：上游地址或本地目录（静态托管，目录命中回退 `index.html`）；与 `status` 互斥
 - `routes[].status`：200-599 短路响应，204/304 不得带 `body`
@@ -330,8 +343,9 @@ cmd/mrp/        入口：命令行解析、信号处理、构建代理实例
 internal/
   config/       YAML 配置结构与解析
   route/        路由表、前缀匹配、路径改写（含编码保真）
-  proxy/        反向代理核心：请求转发、CONNECT 隧道、SOCKS5、MITM 编排、热加载、抓包
+  proxy/        反向代理核心：请求转发、CONNECT 隧道、SOCKS5（CONNECT+UDP ASSOCIATE）、MITM 编排、热加载、抓包
   frontend/     单端口监听与协议嗅探（HTTP/SOCKS5）、单连接复用（MITM 内层服务）
+  netutil/      通用网络原语：BufferPool、双向 Relay、ServeListener（Accept 退避）
   ca/           自签 CA 按名字现场签发证书（域名 SAN / IP SAN），并发合并
   capture/      HAR 抓包：增量写盘、body 截断、文件上限
   dns/          上游 DNS 解析与故障切换、结果缓存

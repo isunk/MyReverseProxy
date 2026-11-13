@@ -56,6 +56,27 @@ func EchoServer(t testing.TB) string {
 	return listener.Addr().String()
 }
 
+// UDPEchoServer 启动原样回显的 UDP 服务，返回监听地址。
+func UDPEchoServer(t testing.TB) string {
+	t.Helper()
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	go func() {
+		buffer := make([]byte, 64<<10)
+		for {
+			n, addr, err := conn.ReadFrom(buffer)
+			if err != nil {
+				return
+			}
+			_, _ = conn.WriteTo(buffer[:n], addr)
+		}
+	}()
+	return conn.LocalAddr().String()
+}
+
 // MustURL 解析 URL，失败即 panic，测试里省去错误分支。
 func MustURL(value string) *url.URL {
 	parsed, err := url.Parse(value)

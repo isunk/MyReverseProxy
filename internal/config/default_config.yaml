@@ -1,5 +1,8 @@
 # mrp 反向代理路由配置
 #
+# 仅支持 HTTP/HTTPS 反向代理（protocol 只允许 http/https），不提供 TCP/UDP 端口转发；
+# CONNECT 隧道与 SOCKS5 字节透传不经路由表、无需在配置中声明。
+#
 # servers:
 #   - domain: api.target-app.com # （必填）域名
 #     protocol: https # （可选）协议，仅 http 或 https，省略匹配任意；TCP 隧道与 SOCKS5 不经路由表，无需配置

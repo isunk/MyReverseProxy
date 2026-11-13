@@ -23,7 +23,7 @@ type Config struct {
 type Server struct {
 	Domain   string  `yaml:"domain"`
 	Port     int     `yaml:"port"`
-	Protocol string  `yaml:"protocol"`
+	Protocol string  `yaml:"protocol"` // 仅支持 HTTP/HTTPS 反向代理，不提供 TCP/UDP 端口转发。
 	Routes   []Route `yaml:"routes"`
 }
 

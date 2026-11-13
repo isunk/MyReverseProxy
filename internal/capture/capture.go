@@ -1,5 +1,4 @@
-// Package capture 把代理可见的明文交互记录为 HAR 1.2 文件：Recorder 以增量方式追加 entry，
-// 打开时写头部、每条 entry 追加一个 JSON 对象，Close 时补全尾部使文件成为合法 JSON。
+// Package capture 把代理可见的明文交互记录为 HAR 1.2 文件：Recorder 以增量方式追加 entry，打开时写头部、每条 entry 追加一个 JSON 对象，Close 时补全尾部使文件成为合法 JSON。
 package capture
 
 import (
@@ -14,16 +13,12 @@ const (
 	creatorName    = "mrp"
 	creatorVersion = "1.0.0"
 
-	// FileSizeLimit 抓包文件累计写入上限，达到后停止追加。
-	FileSizeLimit = 256 << 20
+	FileSizeLimit = 256 << 20 // 抓包文件累计写入上限，达到后停止追加
 )
 
-// header 打开文件时写入的前端，entries 数组随后由 Record 增量填充，末尾由 Close 补全。
-const header = `{"log":{"version":"1.2","creator":{"name":"` + creatorName + `","version":"` + creatorVersion + `"},"pages":[],"entries":[`
+const header = `{"log":{"version":"1.2","creator":{"name":"` + creatorName + `","version":"` + creatorVersion + `"},"pages":[],"entries":[` // 打开文件时写入的前端，entries 数组随后由 Record 增量填充，末尾由 Close 补全
 
-// ErrLimitReached 文件累计达到 limit 时由 Record 返回，调用方据此告警一次；此后 Record 短路返回 nil。
-var ErrLimitReached = errors.New("capture file size limit reached")
-
+var ErrLimitReached = errors.New("capture file size limit reached") // 文件累计达到 limit 时由 Record 返回，调用方据此告警一次；此后 Record 短路返回 nil
 // Recorder 序列化并发写盘：mu 串行化 Record 保证单条 entry 完整不交错；写失败或达到 limit 后 stopped 置位，后续 Record 直接短路。
 type Recorder struct {
 	file     *os.File

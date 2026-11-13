@@ -44,7 +44,7 @@ func New(cert *x509.Certificate, key crypto.Signer) *Authority {
 	}
 }
 
-// GetCertificate 按客户端 SNI 取证书：命中缓存即返回，同域名并发握手合并为一次签发。ECDSA 生成与签名耗时，须在锁外执行。
+// GetCertificate 按客户端 SNI 取证书：命中缓存即返回，同域名并发握手合并为一次签发。
 func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certificate, err error) {
 	serverName := strings.ToLower(hello.ServerName)
 	if serverName == "" {
@@ -57,8 +57,7 @@ func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certif
 	if !leader {
 		return call.Wait()
 	}
-	// defer 兜底：sign panic 被 net/http 层 recover 后若不注销 inflight，该域名的握手会永久阻塞在 wait 上
-	defer func() { a.inflight.Finish(serverName, call, cert, err) }()
+	defer func() { a.inflight.Finish(serverName, call, cert, err) }() // 兜底：sign panic 被 net/http 层 recover 后若不注销 inflight，该域名的握手会永久阻塞在 wait 上
 	// 双检：Get 未命中到取得 leader 之间，可能已有上一轮签发完成并写入缓存
 	if cached, ok := a.cache.Get(serverName); ok {
 		return cached, nil
@@ -75,7 +74,7 @@ func (a *Authority) ClearCache() {
 	a.cache.Clear()
 }
 
-// sign 现场签发单个域名的证书：密钥不复用，NotBefore 回拨一小时容忍时钟偏移，证书链带 CA 根证书。
+// sign 现场签发单个域名的证书：密钥不复用，NotBefore 回拨一小时，证书链带 CA 根证书。
 func (a *Authority) sign(serverName string) (*tls.Certificate, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

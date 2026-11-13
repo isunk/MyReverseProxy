@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
-	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -12,7 +11,7 @@ import (
 	"mrp/internal/ca"
 	"mrp/internal/frontend"
 	"mrp/internal/log"
-	"mrp/internal/route"
+	"mrp/internal/netutil"
 )
 
 const (
@@ -44,17 +43,15 @@ func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 		return nil, false
 	}
-	// 保留 http.Server 内部 bufio.Reader 预读的数据（客户端紧跟 CONNECT 发送的字节）
-	return &frontend.BufferedConn{Conn: client, Reader: bufioRW.Reader}, true
+	return &frontend.BufferedConn{Conn: client, Reader: bufioRW.Reader}, true // 保留 http.Server 内部 bufio.Reader 预读的数据（客户端紧跟 CONNECT 发送的字节）
 }
 
 // serveConnect 按 CONNECT 目标分发：命中虚拟服务器走 MITM，否则透传隧道；transferred 为 true 表示连接已移交内层服务，调用方不得再关闭。
 func (p *Proxy) serveConnect(client net.Conn, protocol string, port int, domain string) (transferred bool) {
 	if !p.table.Load().Has(protocol, port, domain) {
 		log.Info("tunnel started domain=%s port=%d", domain, port)
-		// 隧道按规范化目标拨号：Host 缺端口补协议默认端口，IPv6 裸地址补括号，否则 SplitHostPort 报错使目标不可达
 		p.tunnel(client, domain, port)
-		return false
+		return false // 隧道按规范化目标拨号：Host 缺端口补协议默认端口，IPv6 裸地址补括号，否则 SplitHostPort 报错使目标不可达
 	}
 	if p.tlsConfig == nil {
 		log.Warn("mitm skipped domain=%s port=%d: no ca certificate", domain, port)
@@ -68,13 +65,14 @@ func (p *Proxy) serveConnect(client net.Conn, protocol string, port int, domain 
 	return frontend.ServeSingleConn(frontend.New(p.Handler()), tls.Server(client, mitmTLSConfig(p.tlsConfig, p.authority, domain)))
 }
 
-// mitmTLSConfig 为单条 MITM 隧道构造 TLS 配置：客户端对 IP 直连不发 SNI，握手回调拿不到目标，故在按名字签发的配置上把 SNI 缺失请求回退到 CONNECT 目标签名；静态证书或无 CA 的构造原样返回。
+// mitmTLSConfig 为单条 MITM 隧道构造 TLS 配置：SNI 缺失时回退到 CONNECT 目标域名再签发；静态证书或无 CA 的构造原样返回。
 func mitmTLSConfig(template *tls.Config, authority *ca.Authority, domain string) *tls.Config {
 	if template.GetCertificate == nil || authority == nil {
 		return template
 	}
 	connConfig := template.Clone()
 	connConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		// 客户端对 IP 直连不发 SNI，握手回调拿不到目标，故回退到 CONNECT 目标域名再签发
 		if hello.ServerName == "" {
 			hello.ServerName = domain
 		}
@@ -83,11 +81,16 @@ func mitmTLSConfig(template *tls.Config, authority *ca.Authority, domain string)
 	return connConfig
 }
 
-// tunnel 在客户端与目标之间双向搬运字节，不做任何内容检查或改写。
-func (p *Proxy) tunnel(client net.Conn, domain string, port int) {
+// dialTunnel 以隧道超时经 nameservers 拨号目标。
+func (p *Proxy) dialTunnel(host string, port int) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tunnelDialTimeout)
 	defer cancel()
-	upstream, err := p.nameservers.DialContext(ctx, "tcp", net.JoinHostPort(domain, strconv.Itoa(port)))
+	return p.nameservers.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+}
+
+// tunnel 在客户端与目标之间双向搬运字节，不做任何内容检查或改写。
+func (p *Proxy) tunnel(client net.Conn, domain string, port int) {
+	upstream, err := p.dialTunnel(domain, port)
 	if err != nil {
 		log.Error("upstream dial failed domain=%s port=%d err=%v", domain, port, err)
 		_, _ = client.Write([]byte(connectBadGateway))
@@ -97,18 +100,5 @@ func (p *Proxy) tunnel(client net.Conn, domain string, port int) {
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return
 	}
-	relay(client, upstream)
-}
-
-// relay 在 client 与 upstream 之间双向搬运字节：client→upstream 起协程，主协程跑 upstream→client；拷贝缓冲复用路由池，任一方向结束后返回，由调用方关闭 client 打断对端读取使协程退出。
-func relay(client, upstream net.Conn) {
-	upstreamBuf := route.BufferPool.Get()
-	clientBuf := route.BufferPool.Get()
-	go func() {
-		defer route.BufferPool.Put(upstreamBuf)
-		_, _ = io.CopyBuffer(upstream, client, upstreamBuf)
-		upstream.Close()
-	}()
-	defer route.BufferPool.Put(clientBuf)
-	_, _ = io.CopyBuffer(client, upstream, clientBuf)
+	netutil.Relay(client, upstream)
 }

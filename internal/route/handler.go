@@ -7,30 +7,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 
 	"mrp/internal/log"
+	"mrp/internal/netutil"
 )
-
-// copyBufferSize 与 httputil.ReverseProxy 默认拷贝缓冲一致，供复用池按该尺寸分配。
-const copyBufferSize = 32 << 10
-
-// BufferPool 复用 ReverseProxy 响应体拷贝缓冲，路由代理与透传代理共用：sync.Pool 并发安全，避免每条流式响应各分配一次 32KB。
-var BufferPool httputil.BufferPool = &bufferPool{}
-
-// bufferPool 用 *[]byte 承载切片头，避免 sync.Pool 按 any 装箱切片时不必要的小分配；底层的 32KB 数组仍整体复用。
-type bufferPool struct {
-	pool sync.Pool
-}
-
-func (p *bufferPool) Get() []byte {
-	if ptr, ok := p.pool.Get().(*[]byte); ok {
-		return *ptr
-	}
-	return make([]byte, copyBufferSize)
-}
-
-func (p *bufferPool) Put(buf []byte) { p.pool.Put(&buf) }
 
 // HeaderRewrite 转发时改写的消息头：Request 写入发往上游，Response 覆盖下游返回，Set 语义覆盖同名。
 type HeaderRewrite struct {
@@ -59,7 +39,7 @@ func (r *Route) buildProxy(transport *http.Transport) *httputil.ReverseProxy {
 	proxy := &httputil.ReverseProxy{
 		Rewrite:      r.rewriteRequest,
 		Transport:    transport,
-		BufferPool:   BufferPool,
+		BufferPool:   netutil.BufferPool,
 		ErrorHandler: UpstreamErrorHandler,
 	}
 	// 没有响应头改写时不挂载钩子，避免每次响应空跑

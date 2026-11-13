@@ -12,34 +12,53 @@ import (
 	"mrp/internal/testutil"
 )
 
-func TestSocks5ReadConnect(t *testing.T) {
-	ipv4 := bytes.NewReader(append([]byte{0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1}, 0x1A, 0xE1))
-	host, port, rep := socks5ReadConnect(bufio.NewReader(ipv4))
+func TestSocks5ReadCommand(t *testing.T) {
+	read := func(data []byte) (byte, byte, byte) {
+		return socks5ReadCommand(bufio.NewReader(bytes.NewReader(data)))
+	}
+	cases := []struct {
+		name    string
+		data    []byte
+		command byte
+		atyp    byte
+		rep     byte
+	}{
+		{"connect_ipv4", []byte{0x05, 0x01, 0x00, 0x01}, socks5CommandConnect, socks5AtypIPv4, socks5RepSuccess},
+		{"connect_domain", []byte{0x05, 0x01, 0x00, 0x03}, socks5CommandConnect, socks5AtypDomain, socks5RepSuccess},
+		{"udp_associate", []byte{0x05, 0x03, 0x00, 0x01}, socks5CommandUDPAssociate, socks5AtypIPv4, socks5RepSuccess},
+		{"bind_unsupported", []byte{0x05, 0x02, 0x00, 0x01}, 0, 0, socks5RepCommandUnsupported},
+		{"bad_version", []byte{0x04, 0x01, 0x00, 0x01}, 0, 0, socks5RepGeneralFailure},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			command, atyp, rep := read(tc.data)
+			if command != tc.command || atyp != tc.atyp || rep != tc.rep {
+				t.Fatalf("got command=%d atyp=%d rep=%d, want %d/%d/%d", command, atyp, rep, tc.command, tc.atyp, tc.rep)
+			}
+		})
+	}
+}
+
+func TestSocks5ReadAddr(t *testing.T) {
+	ipv4 := []byte{127, 0, 0, 1, 0x1A, 0xE1}
+	host, port, rep := socks5ReadAddr(bufio.NewReader(bytes.NewReader(ipv4)), socks5AtypIPv4)
 	if rep != socks5RepSuccess || host != "127.0.0.1" || port != 6881 {
 		t.Fatalf("ipv4 = %q:%d rep=%d, want 127.0.0.1:6881 success", host, port, rep)
 	}
 
-	domain := append([]byte{0x05, 0x01, 0x00, 0x03, 0x03, 'a', 'p', 'i'}, 0x00, 0x50)
-	host, port, rep = socks5ReadConnect(bufio.NewReader(bytes.NewReader(domain)))
+	domain := []byte{0x03, 'a', 'p', 'i', 0x00, 0x50}
+	host, port, rep = socks5ReadAddr(bufio.NewReader(bytes.NewReader(domain)), socks5AtypDomain)
 	if rep != socks5RepSuccess || host != "api" || port != 80 {
 		t.Fatalf("domain = %q:%d rep=%d, want api:80 success", host, port, rep)
 	}
 
-	ipv6 := append([]byte{0x05, 0x01, 0x00, 0x04,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, 0x00, 0x50)
-	host, port, rep = socks5ReadConnect(bufio.NewReader(bytes.NewReader(ipv6)))
+	ipv6 := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x00, 0x50}
+	host, port, rep = socks5ReadAddr(bufio.NewReader(bytes.NewReader(ipv6)), socks5AtypIPv6)
 	if rep != socks5RepSuccess || host != "::1" || port != 80 {
 		t.Fatalf("ipv6 = %q:%d rep=%d, want ::1:80 success", host, port, rep)
 	}
 
-	bind := []byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
-	_, _, rep = socks5ReadConnect(bufio.NewReader(bytes.NewReader(bind)))
-	if rep != socks5RepCommandUnsupported {
-		t.Fatalf("bind rep = %d, want command unsupported", rep)
-	}
-
-	unknown := []byte{0x05, 0x01, 0x00, 0x05, 0, 0, 0, 0, 0, 0}
-	_, _, rep = socks5ReadConnect(bufio.NewReader(bytes.NewReader(unknown)))
+	_, _, rep = socks5ReadAddr(bufio.NewReader(bytes.NewReader([]byte{0x05, 0, 0, 0, 0, 0})), 0x05)
 	if rep != socks5RepAtypUnsupported {
 		t.Fatalf("unknown atyp rep = %d, want atyp unsupported", rep)
 	}

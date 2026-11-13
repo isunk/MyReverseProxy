@@ -2,7 +2,6 @@ package frontend
 
 import (
 	"bufio"
-	"errors"
 	stdlog "log"
 	"net"
 	"net/http"
@@ -11,15 +10,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"mrp/internal/log"
+	"mrp/internal/netutil"
 )
 
 const (
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 60 * time.Second
-
-	acceptBackoffInitial = 5 * time.Millisecond
-	acceptBackoffMax     = time.Second
 )
 
 // oneConnListener 把已建立的连接包装为 Listener，让 http.Server 直接服务该连接，从而拿到 ConnState 回调判断是否发生 hijack。
@@ -57,35 +53,18 @@ type BufferedConn struct {
 
 func (c *BufferedConn) Read(p []byte) (int, error) { return c.Reader.Read(p) }
 
-// socks5Version 是 SOCKS5 协议版本字节，用于在单端口上从连接首字节区分 SOCKS5 与 HTTP 请求。
-const socks5Version = 0x05
+const socks5Version = 0x05 // 在单端口上从连接首字节区分 SOCKS5 与 HTTP 请求
 
-// Serve 接受连接并逐条服务：单条连接服务结束（未发生 hijack）时关闭该连接；监听器已关闭即返回，其余 Accept 错误退避重试，避免 fd 短暂耗尽（EMFILE）等临时故障让代理静默拒绝连接；connections 为在服务连接计数以供退出前 drain。
+// Serve 接受连接并逐条服务：单条连接服务结束（未发生 hijack）时关闭该连接；监听器已关闭即返回；连接处理交给 handle，Accept 循环与连接计数由 netutil.ServeListener 统一承担。
 func Serve(listener net.Listener, handler http.Handler, socks5 func(net.Conn), connections *sync.WaitGroup) error {
-	backoff := acceptBackoffInitial
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return err
-			}
-			log.Error("accept failed retry=%s err=%v", backoff, err)
-			time.Sleep(backoff)
-			backoff = min(backoff*2, acceptBackoffMax)
-			continue
-		}
-		backoff = acceptBackoffInitial
-		connections.Add(1)
-		go func() {
-			defer connections.Done()
-			serveConn(handler, socks5, conn)
-		}()
-	}
+	return netutil.ServeListener(listener, func(conn net.Conn) {
+		serveConn(handler, socks5, conn)
+	}, connections)
 }
 
-// serveConn 嗅探连接首字节选择协议：为 SOCKS5 版本号时交给 SOCKS5 处理器，否则按 HTTP 服务；未发生 hijack 的 HTTP 连接在此关闭。嗅探读首字节设 readHeaderTimeout 超时，避免慢速连接在进入 http.Server 前永久占用 goroutine。
+// serveConn 嗅探连接首字节选择协议：为 SOCKS5 版本号时交给 SOCKS5 处理器，否则按 HTTP 服务；未发生 hijack 的 HTTP 连接在此关闭。
 func serveConn(handler http.Handler, socks5 func(net.Conn), conn net.Conn) {
-	_ = conn.SetReadDeadline(time.Now().Add(readHeaderTimeout))
+	_ = conn.SetReadDeadline(time.Now().Add(readHeaderTimeout)) // 避免慢速连接在进入 http.Server 前永久占用 goroutine
 	buffered := bufio.NewReader(conn)
 	first, err := buffered.Peek(1)
 	if err != nil {
@@ -98,8 +77,7 @@ func serveConn(handler http.Handler, socks5 func(net.Conn), conn net.Conn) {
 		return
 	}
 	_ = conn.SetReadDeadline(time.Time{})
-	// ServeSingleConn 会给传入 server 的 ConnState 赋值，复用同一实例会在并发连接间相互覆盖，故每条连接新建。
-	if !ServeSingleConn(New(handler), &BufferedConn{Conn: conn, Reader: buffered}) {
+	if !ServeSingleConn(New(handler), &BufferedConn{Conn: conn, Reader: buffered}) { // ServeSingleConn 会给传入 server 的 ConnState 赋值，复用同一实例会在并发连接间相互覆盖，故每条连接新建
 		conn.Close()
 	}
 }
@@ -129,8 +107,7 @@ func New(handler http.Handler) *http.Server {
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
-		// 去掉标准 log 的日期前缀，底层错误按各自级别落到 stderr，不与控制台日志格式混用
-		ErrorLog: httpErrorLog,
+		ErrorLog:          httpErrorLog, // 去掉标准 log 的日期前缀，底层错误按各自级别落到 stderr，不与控制台日志格式混用
 	}
 }
 

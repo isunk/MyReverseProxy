@@ -34,8 +34,7 @@ type Resolver struct {
 	system         *net.Resolver
 	cache          *cache.Cache[[]string]
 
-	// inflight 合并同域并发解析：TTL 过期瞬间多个请求只发一次 DNS 查询
-	inflight singleflight.Group[[]string]
+	inflight singleflight.Group[[]string] // 合并同域并发解析：TTL 过期瞬间多个请求只发一次 DNS 查询
 }
 
 type state struct {
@@ -72,8 +71,7 @@ func (r *Resolver) Update(entries []string) (bool, error) {
 	}
 	r.current.Store(&state{addresses: addresses, resolvers: r.buildResolvers(addresses)})
 	r.cache.Clear()
-	// 变化详情用 Debug 级：启动时 main 已打 Info 级 nameservers 日志，热加载由上层总日志覆盖
-	log.Debug("nameservers updated addresses=%s", describeAddresses(addresses))
+	log.Debug("nameservers updated addresses=%s", describeAddresses(addresses)) // 变化详情用 Debug 级：启动时 main 已打 Info 级 nameservers 日志，热加载由上层总日志覆盖
 	return true, nil
 }
 
@@ -82,7 +80,7 @@ func (r *Resolver) Addresses() []string {
 	return slices.Clone(r.current.Load().addresses)
 }
 
-// Describe 渲染当前生效服务器列表用于日志展示：空列表表示按系统默认 DNS 解析。
+// Describe 渲染当前生效服务器列表用于日志展示。
 func (r *Resolver) Describe() string {
 	return describeAddresses(r.Addresses())
 }
@@ -99,6 +97,16 @@ func (r *Resolver) DialContext(ctx context.Context, network, address string) (ne
 	return r.dialHost(ctx, network, host, port)
 }
 
+// Resolve 返回 host 的解析目标（host:port 形式），与 DialContext 共用同一解析链路：IP 字面量直接返回，域名经自定义 DNS、缓存与并发合并解析；供非 TCP 通道（SOCKS5 UDP）解析目标。
+func (r *Resolver) Resolve(ctx context.Context, host string, port int) ([]string, error) {
+	portText := strconv.Itoa(port)
+	if net.ParseIP(host) != nil {
+		return []string{net.JoinHostPort(host, portText)}, nil
+	}
+	targets, _, err := r.lookup(ctx, host, portText)
+	return targets, err
+}
+
 // dialHost 先取缓存的解析结果，未命中才发 DNS 查询，再逐个尝试解析出的地址。
 func (r *Resolver) dialHost(ctx context.Context, network, host, port string) (net.Conn, error) {
 	targets, fromCache, err := r.lookup(ctx, host, port)
@@ -109,8 +117,7 @@ func (r *Resolver) dialHost(ctx context.Context, network, host, port string) (ne
 	if conn != nil || !fromCache {
 		return conn, lastError
 	}
-	// 缓存的地址已连不上：视为解析结果过期，丢弃后立即重解析一次
-	r.dropCached(host, port)
+	r.dropCached(host, port) // 缓存的地址已连不上：视为解析结果过期，丢弃后立即重解析一次
 	fresh, _, err := r.lookup(ctx, host, port)
 	if err != nil {
 		return nil, err

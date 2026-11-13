@@ -179,6 +179,30 @@ func TestPick_GroupWithoutPathMatch(t *testing.T) {
 	}
 }
 
+// TestPick_FallThroughToLaterGroup 前序分组命中但无路径路由时继续查后续分组，后续分组的路径路由可达
+func TestPick_FallThroughToLaterGroup(t *testing.T) {
+	table := NewTable()
+	wildcardRoute := &Route{Prefix: "/api"}
+	exactRoute := &Route{Prefix: "/"}
+	if err := table.Add("*.example.com", &Entry{}, []*Route{wildcardRoute}); err != nil {
+		t.Fatalf("Add wildcard: %v", err)
+	}
+	if err := table.Add("www.example.com", &Entry{}, []*Route{exactRoute}); err != nil {
+		t.Fatalf("Add exact: %v", err)
+	}
+	// 前序通配分组覆盖 /api，后续精确分组覆盖其余路径
+	if picked, ok := table.Pick("", 0, "www.example.com", "/api"); !ok || picked != wildcardRoute {
+		t.Fatalf("want wildcard /api, got %v ok=%v", picked, ok)
+	}
+	if picked, ok := table.Pick("", 0, "www.example.com", "/other"); !ok || picked != exactRoute {
+		t.Fatalf("path must fall through to later group, got %v ok=%v", picked, ok)
+	}
+	// 无后续分组可命中时仍返回未命中
+	if _, ok := table.Pick("", 0, "unlisted.org", "/other"); ok {
+		t.Fatal("unknown domain should not match")
+	}
+}
+
 // TestFingerprint_DeclarationOrder 指纹按声明顺序生成：相同内容相同指纹，声明顺序变化改变指纹
 func TestFingerprint_DeclarationOrder(t *testing.T) {
 	build := func(domains ...string) *Table {

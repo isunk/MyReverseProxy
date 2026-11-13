@@ -23,8 +23,7 @@ import (
 const (
 	defaultListenPort = 9000
 
-	// shutdownGracePeriod 是收到退出信号后等待 in-flight 连接自行结束的时间窗口，超时强制退出；长连接（隧道、空闲 keep-alive）通常不会在此窗口内自然结束。
-	shutdownGracePeriod = 10 * time.Second
+	shutdownGracePeriod = 10 * time.Second // 收到退出信号后等待 in-flight 连接自行结束的时间窗口，超时强制退出；长连接（隧道、空闲 keep-alive）通常不会在此窗口内自然结束
 )
 
 // startupOptions 命令行解析结果，构建代理实例所需的全部启动参数。
@@ -114,8 +113,7 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 			log.Info("capture started path=%s", opts.capturePath)
 		}
 	}
-	// 首次 reload 已让配置文件里的 nameservers 生效；未配置时为空，按系统默认 DNS 解析
-	log.Info("dns configured nameservers=%s ttl=%s", nameservers.Describe(), opts.dnsTTL)
+	log.Info("dns configured nameservers=%s ttl=%s", nameservers.Describe(), opts.dnsTTL) // 首次 reload 已让配置文件里的 nameservers 生效；未配置时为空，按系统默认 DNS 解析
 	return proxyInstance, nil
 }
 
@@ -137,7 +135,7 @@ func main() {
 	run(listener, proxyInstance)
 }
 
-// run 在唯一代理端口上常驻服务：监听不随配置热加载变化，仅轮询配置热加载并等待信号；退出信号先关闭监听停止新连接，再等待 in-flight 连接在宽限期内 drain 后返回。
+// run 在唯一代理端口上常驻服务：监听不随配置热加载变化，仅轮询配置热加载并等待信号；退出信号先关闭监听器停止新连接，再等待 in-flight 连接在宽限期内 drain 后返回。
 func run(listener net.Listener, proxyInstance *proxy.Proxy) {
 	var connections sync.WaitGroup
 	serveDone := make(chan struct{})
@@ -145,8 +143,7 @@ func run(listener net.Listener, proxyInstance *proxy.Proxy) {
 		frontend.Serve(listener, proxyInstance.Handler(), proxyInstance.Socks5(), &connections)
 		close(serveDone)
 	}()
-	// stop 传 nil 表示热加载常驻到进程退出，由下面的退出信号关闭监听来结束
-	go proxyInstance.WatchFile(time.Second, nil)
+	go proxyInstance.WatchFile(time.Second, nil) // stop 传 nil 表示热加载常驻到进程退出，由下面的退出信号关闭监听来结束
 	serveSignals(listener, proxyInstance, &connections, serveDone)
 }
 
@@ -166,8 +163,7 @@ func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy, connections
 		if err := listener.Close(); err != nil {
 			log.Debug("listener close failed err=%v", err)
 		}
-		// 等 Serve 退出 accept 循环：保证所有 Add 都已发生在随后的 Wait 之前。
-		<-serveDone
+		<-serveDone // 等 Serve 退出 accept 循环：保证所有 Add 都已发生在随后的 Wait 之前
 		drained := drainConnections(connections, shutdownGracePeriod, sigCh)
 		if err := proxyInstance.Close(); err != nil {
 			log.Debug("capture close failed err=%v", err)

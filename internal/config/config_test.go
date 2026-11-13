@@ -330,3 +330,21 @@ func TestLoadTable_AcceptsUTF8BOM(t *testing.T) {
 		t.Fatalf("Load(bom): %v", err)
 	}
 }
+
+func TestLoadForwards_Rejected(t *testing.T) {
+	config := "servers: []\nforwards:\n  - protocol: tcp\n    listen: \"0.0.0.0:3306\"\n    target: \"192.168.1.100:3306\"\n"
+	if _, _, err := Load(testutil.ConfigFile(t, "forwards.yaml", config)); err == nil {
+		t.Fatal("Load accepted unsupported forwards section")
+	}
+}
+
+func TestDefaultConfig_DocumentsHTTPSOnly(t *testing.T) {
+	for _, line := range []string{
+		"仅支持 HTTP/HTTPS",
+		"TCP/UDP 端口转发",
+	} {
+		if !strings.Contains(string(defaultConfig), line) {
+			t.Fatalf("defaultConfig missing %q", line)
+		}
+	}
+}

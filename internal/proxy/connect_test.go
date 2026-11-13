@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"mrp/internal/ca"
 	"mrp/internal/testutil"
@@ -36,6 +37,36 @@ func readConnectResponse(t *testing.T, reader *bufio.Reader) int {
 		}
 	}
 	return code
+}
+
+// CONNECT 未命中路由且 MITM 开启时只走透传隧道：拨号失败仅回 502，不得再落入 MITM 分支补写 200 或启动 TLS 服务。
+func TestConnect_TunnelDoesNotFallThroughToMITM(t *testing.T) {
+	caCert, caKey := testutil.AuthorityCA(t)
+	tlsConfig := &tls.Config{
+		GetCertificate: ca.New(caCert, caKey).GetCertificate,
+		NextProtos:     []string{"http/1.1"},
+		MinVersion:     tls.VersionTLS12,
+	}
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers:\n  - domain: \"*.example.org\"\n    routes:\n      - prefix: /\n        upstream: http://unused\n")
+	proxyURL, _ := startProxy(t, configPath, tlsConfig)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	target := "a.b.example.org:443" // 多层子域未命中 *.example.org，走透传隧道，拨号失败
+	fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	reader := bufio.NewReader(conn)
+	if code := readConnectResponse(t, reader); code != http.StatusBadGateway {
+		t.Fatalf("want 502, got %d", code)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	if next, err := reader.ReadByte(); err == nil {
+		t.Fatalf("tunnel failure must not fall through to MITM: got extra byte %q", next)
+	}
 }
 
 // CONNECT 目标缺端口时隧道必须按补齐后的 host:port 拨号（老式 CONNECT/1.0 客户端），从而暴露把原始 Host 直接交给拨号链路的问题。在 443 上起回显服务验证可达性，特权端口不可绑定的环境跳过。
