@@ -79,7 +79,7 @@ func startListener(t testing.TB, proxy *Proxy) string {
 	}
 	var connections sync.WaitGroup
 	t.Cleanup(func() { listener.Close() })
-	go frontend.Serve(listener, proxy.Handler(), &connections)
+	go frontend.Serve(listener, proxy.Handler(), proxy.Socks5(), &connections)
 	return "http://" + listener.Addr().String()
 }
 

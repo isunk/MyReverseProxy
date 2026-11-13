@@ -2,7 +2,7 @@
 #
 # servers:
 #   - domain: api.target-app.com # （必填）域名
-#     protocol: https # （可选）协议，http 或 https，默认匹配任意
+#     protocol: https # （可选）协议，仅 http 或 https，省略匹配任意；TCP 隧道与 SOCKS5 不经路由表，无需配置
 #     port: 443 # （可选）端口，1-65535，默认匹配任意
 #     routes:
 #       - prefix: /v1/ # （必填）路径前缀，以 / 开头，最长匹配

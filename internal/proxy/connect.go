@@ -97,14 +97,18 @@ func (p *Proxy) tunnel(client net.Conn, domain string, port int) {
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return
 	}
-	// 双向拷贝：client→upstream 起协程，主协程跑 upstream→client；拷贝缓冲复用路由池，任一方向结束后 tunnel 返回，由调用方关闭 client 打断对端读取使协程退出。
+	relay(client, upstream)
+}
+
+// relay 在 client 与 upstream 之间双向搬运字节：client→upstream 起协程，主协程跑 upstream→client；拷贝缓冲复用路由池，任一方向结束后返回，由调用方关闭 client 打断对端读取使协程退出。
+func relay(client, upstream net.Conn) {
 	upstreamBuf := route.BufferPool.Get()
 	clientBuf := route.BufferPool.Get()
 	go func() {
 		defer route.BufferPool.Put(upstreamBuf)
-		io.CopyBuffer(upstream, client, upstreamBuf)
+		_, _ = io.CopyBuffer(upstream, client, upstreamBuf)
 		upstream.Close()
 	}()
 	defer route.BufferPool.Put(clientBuf)
-	io.CopyBuffer(client, upstream, clientBuf)
+	_, _ = io.CopyBuffer(client, upstream, clientBuf)
 }

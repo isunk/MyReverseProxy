@@ -142,7 +142,7 @@ func run(listener net.Listener, proxyInstance *proxy.Proxy) {
 	var connections sync.WaitGroup
 	serveDone := make(chan struct{})
 	go func() {
-		frontend.Serve(listener, proxyInstance.Handler(), &connections)
+		frontend.Serve(listener, proxyInstance.Handler(), proxyInstance.Socks5(), &connections)
 		close(serveDone)
 	}()
 	// stop 传 nil 表示热加载常驻到进程退出，由下面的退出信号关闭监听来结束

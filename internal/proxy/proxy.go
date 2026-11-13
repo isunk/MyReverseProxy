@@ -130,6 +130,11 @@ func (p *Proxy) Handler() http.Handler {
 	return http.HandlerFunc(p.serveRequest)
 }
 
+// Socks5 返回 SOCKS5 CONNECT 连接处理器，供前端嗅探到 SOCKS5 握手时调用。
+func (p *Proxy) Socks5() func(net.Conn) {
+	return p.serveSocks5
+}
+
 // routeHandler 选出本次请求的处理器：命中路由走该路由，否则透传原始目标；Debug 级日志一行呈现入站 URL 与改写后实际发出的 URL。
 func (p *Proxy) routeHandler(request *http.Request, protocol string, port int, domain string) http.Handler {
 	targetRoute, matched := p.table.Load().Pick(protocol, port, domain, request.URL.Path)

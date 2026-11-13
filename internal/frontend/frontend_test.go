@@ -62,7 +62,7 @@ func TestServe_RetriesTransientAcceptErrors(t *testing.T) {
 
 	var connections sync.WaitGroup
 	serveDone := make(chan error, 1)
-	go func() { serveDone <- Serve(listener, handler, &connections) }()
+	go func() { serveDone <- Serve(listener, handler, nil, &connections) }()
 
 	clientConn.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := fmt.Fprintf(clientConn, "GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"); err != nil {
@@ -103,7 +103,7 @@ func TestServe_ReturnsOnListenerClose(t *testing.T) {
 	var connections sync.WaitGroup
 	serveDone := make(chan error, 1)
 	go func() {
-		serveDone <- Serve(listener, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), &connections)
+		serveDone <- Serve(listener, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), nil, &connections)
 	}()
 	listener.Close()
 	select {
@@ -131,7 +131,7 @@ func TestServe_TracksInFlightConnections(t *testing.T) {
 
 	var connections sync.WaitGroup
 	serveDone := make(chan error, 1)
-	go func() { serveDone <- Serve(listener, handler, &connections) }()
+	go func() { serveDone <- Serve(listener, handler, nil, &connections) }()
 
 	conn, err := net.Dial("tcp", listener.Addr().String())
 	if err != nil {

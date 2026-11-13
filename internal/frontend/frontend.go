@@ -57,8 +57,11 @@ type BufferedConn struct {
 
 func (c *BufferedConn) Read(p []byte) (int, error) { return c.Reader.Read(p) }
 
+// socks5Version 是 SOCKS5 协议版本字节，用于在单端口上从连接首字节区分 SOCKS5 与 HTTP 请求。
+const socks5Version = 0x05
+
 // Serve 接受连接并逐条服务：单条连接服务结束（未发生 hijack）时关闭该连接；监听器已关闭即返回，其余 Accept 错误退避重试，避免 fd 短暂耗尽（EMFILE）等临时故障让代理静默拒绝连接；connections 为在服务连接计数以供退出前 drain。
-func Serve(listener net.Listener, handler http.Handler, connections *sync.WaitGroup) error {
+func Serve(listener net.Listener, handler http.Handler, socks5 func(net.Conn), connections *sync.WaitGroup) error {
 	backoff := acceptBackoffInitial
 	for {
 		conn, err := listener.Accept()
@@ -75,11 +78,29 @@ func Serve(listener net.Listener, handler http.Handler, connections *sync.WaitGr
 		connections.Add(1)
 		go func() {
 			defer connections.Done()
-			// ServeSingleConn 会给传入 server 的 ConnState 赋值，复用同一实例会在并发连接间相互覆盖，故每条连接新建。
-			if !ServeSingleConn(New(handler), conn) {
-				conn.Close()
-			}
+			serveConn(handler, socks5, conn)
 		}()
+	}
+}
+
+// serveConn 嗅探连接首字节选择协议：为 SOCKS5 版本号时交给 SOCKS5 处理器，否则按 HTTP 服务；未发生 hijack 的 HTTP 连接在此关闭。嗅探读首字节设 readHeaderTimeout 超时，避免慢速连接在进入 http.Server 前永久占用 goroutine。
+func serveConn(handler http.Handler, socks5 func(net.Conn), conn net.Conn) {
+	_ = conn.SetReadDeadline(time.Now().Add(readHeaderTimeout))
+	buffered := bufio.NewReader(conn)
+	first, err := buffered.Peek(1)
+	if err != nil {
+		conn.Close()
+		return
+	}
+	if first[0] == socks5Version && socks5 != nil {
+		_ = conn.SetReadDeadline(time.Time{})
+		socks5(&BufferedConn{Conn: conn, Reader: buffered})
+		return
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+	// ServeSingleConn 会给传入 server 的 ConnState 赋值，复用同一实例会在并发连接间相互覆盖，故每条连接新建。
+	if !ServeSingleConn(New(handler), &BufferedConn{Conn: conn, Reader: buffered}) {
+		conn.Close()
 	}
 }
 
