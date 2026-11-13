@@ -56,6 +56,7 @@ func (p *Proxy) serveSocks5(client net.Conn) {
 	if err := socks5WriteReply(client, socks5RepSuccess); err != nil {
 		return
 	}
+	log.Info("socks5 connect started host=%s port=%d", host, port)
 	relay(client, upstream)
 }
 

@@ -105,7 +105,7 @@ mrp 在同一个监听端口按「入口 → 判据 → 处置方式」归类，
 | HTTP/1.x 常规请求、keep-alive | 端到端透明 | 支持 |
 | 分块编码 chunked | 端到端透明 | 支持 |
 | WebSocket（`ws` / `wss`） | 端到端透明 | 支持（Upgrade 透传） |
-| 服务端推送 SSE | 端到端透明（实时） | 部分（无 FlushInterval，短事件有延迟） |
+| 服务端推送 SSE | 端到端透明（实时） | 支持（SSE 自动即时刷新） |
 | TLS 证书链 | 端到端原样 | 被自签证书替换 |
 | 证书固定 pinning | 支持 | 失败（自签证书与固定值不匹配） |
 | 客户端证书 mTLS | 支持 | 失败（客户端证书不交付上游） |
@@ -117,9 +117,9 @@ mrp 在同一个监听端口按「入口 → 判据 → 处置方式」归类，
 ### 边界与注意点
 
 - **字节透传为何全绿**：隧道 / SOCKS5 只搬运字节，证书链、客户端证书、gRPC、HTTP/2、任意 TCP 协议端到端原样可用。
-- **HTTP 解析的收敛点**：MITM 内层 `NextProtos` 只有 `http/1.1`，普通 HTTP/2 站点降级为 HTTP/1.1（站点可用、多路复用丢失），gRPC 强依赖 h2 而失败；SSE 依赖响应方持续 Flush，转发层未设 FlushInterval，事件攒够缓冲才下发、短事件有延迟。
+- **HTTP 解析的收敛点**：MITM 内层 `NextProtos` 只有 `http/1.1`，普通 HTTP/2 站点降级为 HTTP/1.1（站点可用、多路复用丢失），gRPC 强依赖 h2 而失败。
 - **MITM 的证书代价**：自签证书与固定值不匹配、也不交付客户端证书，pinning 与 mTLS 在 MITM 下失败；tunnel 下两端都端到端正常。
-- **TCP 命中陷阱**：CONNECT 到任意端口时，若目标域名登记了 `servers`，会被当作 HTTPS 走 MITM，非 TLS 的纯 TCP 协议会因 TLS 握手失败；纯 TCP 应确保其目标域名不登记在 `servers`。
+- **TCP 命中陷阱**：CONNECT 到任意端口时，若目标域名登记了 `servers`（未限定 `port`），会被当作 HTTPS 走 MITM，非 TLS 的纯 TCP 协议会因 TLS 握手失败。解法：给该 server 加 `port: 443`（或实际 HTTPS 端口），使非该端口的 CONNECT 走隧道；纯 TCP 协议应确保其目标域名不登记在 `servers`。
 - **SOCKS5**：与 HTTP 共用端口、从首字节 `0x05` 区分，仅无认证 CONNECT，不查路由表、不 MITM；BIND 与 UDP ASSOCIATE 返回命令不支持（`0x07`），故 SOCKS5 的 UDP 不可用；IP 直连按 IP 拨号、不经域名解析。
 - **UDP**：绝不经过代理。QUIC/HTTP/3、UDP DNS、RTP 等直连出口；QUIC 不通时客户端回退 TCP 的 HTTP/1.1 / HTTP/2，再按上表处理。
 
@@ -306,7 +306,7 @@ adb forward tcp:9000 tcp:9000
 - 打开：Chrome DevTools（F12 → Network → 导入 HAR）、Charles（File → Import）、Fiddler（File → Import Sessions）
 - 记录含 `Authorization` 等敏感头与业务数据，文件保留在设备本地，安全由使用者自行管理
 
-正常退出（SIGINT/SIGTERM）自动补全 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，用编辑器在末尾补齐 `]}}` 保存即可打开。
+正常退出（SIGINT/SIGTERM）自动补全 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，下次以相同 `--capture` 路径启动时自动补全并重命名为 `<名>.recovered.har`，日志会打印恢复路径。
 
 ## 从源码构建
 

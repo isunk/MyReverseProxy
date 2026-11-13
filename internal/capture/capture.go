@@ -4,9 +4,11 @@ package capture
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -34,6 +36,48 @@ type Recorder struct {
 	bytes    int64
 	limit    int64
 	stopped  bool
+}
+
+// tailSuffix 是 HAR 文件合法闭合的尾部标记。
+var tailSuffix = []byte("]}}")
+
+// RecoverPrevious 检查已有抓包文件是否因异常退出缺少 JSON 尾部，若是则补全 ]}} 并重命名保留，返回保留文件路径；文件不存在或已闭合时返回空。
+func RecoverPrevious(path string) string {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		return ""
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	tail := make([]byte, 16)
+	offset := info.Size() - int64(len(tail))
+	if offset < 0 {
+		offset = 0
+	}
+	n, _ := file.ReadAt(tail, offset)
+	file.Close()
+	if bytes.HasSuffix(tail[:n], tailSuffix) {
+		return ""
+	}
+	file, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return ""
+	}
+	_, _ = file.Write(tailSuffix)
+	file.Close()
+	recovered := recoveredPath(path)
+	if err := os.Rename(path, recovered); err != nil {
+		return ""
+	}
+	return recovered
+}
+
+func recoveredPath(path string) string {
+	ext := filepath.Ext(path)
+	base := path[:len(path)-len(ext)]
+	return base + ".recovered" + ext
 }
 
 // New 创建（或截断）输出文件并写 HAR 头部；创建失败返回 error，由调用方降级为抓包关闭。
