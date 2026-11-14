@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"mrp/internal/ca"
+	"mrp/internal/log"
 	"mrp/internal/testutil"
 )
 
@@ -374,5 +376,86 @@ func TestConnect_NestedConnectViaMITM(t *testing.T) {
 	line, err := reader.ReadString('\n')
 	if err != nil || line != "PING\n" {
 		t.Fatalf("echo: got %q err=%v", line, err)
+	}
+}
+
+// lockedBuffer 并发安全地累积日志输出，供异步握手路径的日志断言使用。
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// waitFor 含义出现或超时，返回是否命中。
+func waitFor(duration time.Duration, condition func() bool) bool {
+	deadline := time.Now().Add(duration)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return condition()
+}
+
+// 客户端未信任代理 CA 证书时 MITM 握手失败：日志须给出可操作的友好提示而非晦涩的底层 TLS 错误。
+func TestConnect_MITMHandshakeUntrustedCA(t *testing.T) {
+	caCert, caKey := testutil.AuthorityCA(t)
+	authority := ca.New(caCert, caKey)
+	tlsConfig := &tls.Config{
+		GetCertificate: authority.GetCertificate,
+		NextProtos:     []string{"http/1.1"},
+		MinVersion:     tls.VersionTLS12,
+	}
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers:\n  - domain: \"*\"\n    routes:\n      - prefix: /\n        upstream: http://unused\n")
+	servers := testNameservers(t)
+	proxy, err := New(configPath, NewTransport(servers.DialContext), tlsConfig, authority, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	proxyURL := startListener(t, proxy)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	var out lockedBuffer
+	log.SetOutput(&out)
+	t.Cleanup(func() { log.SetOutput(io.Discard) })
+
+	proxyConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxyConn.Close()
+	fmt.Fprintf(proxyConn, "CONNECT untrusted.example.org:443 HTTP/1.1\r\nHost: untrusted.example.org:443\r\n\r\n")
+	if code := readConnectResponse(t, bufio.NewReader(proxyConn)); code != 200 {
+		t.Fatalf("CONNECT: want 200, got %d", code)
+	}
+	// 客户端用空根池（不含代理 CA）校验服务端证书，握手必然失败并回送 bad certificate alert
+	innerConn := tls.Client(proxyConn, &tls.Config{
+		ServerName: "untrusted.example.org",
+		RootCAs:    x509.NewCertPool(),
+	})
+	if err := innerConn.HandshakeContext(t.Context()); err == nil {
+		innerConn.Close()
+		t.Fatal("handshake should fail with untrusted CA")
+	}
+	if !waitFor(2*time.Second, func() bool {
+		return strings.Contains(out.String(), "client does not trust proxy ca certificate")
+	}) {
+		t.Fatalf("want friendly untrusted-ca hint in log, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), "install and trust the ca certificate") {
+		t.Fatalf("want install hint in log, got %q", out.String())
 	}
 }

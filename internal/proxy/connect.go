@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -15,9 +16,10 @@ import (
 )
 
 const (
-	connectEstablished = "HTTP/1.1 200 Connection Established\r\n\r\n"
-	connectBadGateway  = "HTTP/1.1 502 Bad Gateway\r\n\r\n"
-	tunnelDialTimeout  = 10 * time.Second
+	connectEstablished   = "HTTP/1.1 200 Connection Established\r\n\r\n"
+	connectBadGateway    = "HTTP/1.1 502 Bad Gateway\r\n\r\n"
+	tunnelDialTimeout    = 10 * time.Second
+	mitmHandshakeTimeout = 10 * time.Second
 )
 
 func (p *Proxy) handleConnect(writer http.ResponseWriter, request *http.Request) {
@@ -62,7 +64,13 @@ func (p *Proxy) serveConnect(client net.Conn, protocol string, port int, domain 
 	if _, err := client.Write([]byte(connectEstablished)); err != nil {
 		return false
 	}
-	return frontend.ServeSingleConn(frontend.New(p.Handler()), tls.Server(client, mitmTLSConfig(p.tlsConfig, p.authority, domain)))
+	tlsConn := tls.Server(client, mitmTLSConfig(p.tlsConfig, p.authority, domain))
+	if err := tlsHandshake(tlsConn); err != nil {
+		logMitmHandshakeError(domain, port, err)
+		tlsConn.Close()
+		return false
+	}
+	return frontend.ServeSingleConn(frontend.New(p.Handler()), tlsConn)
 }
 
 // mitmTLSConfig 为单条 MITM 隧道构造 TLS 配置：SNI 缺失时回退到 CONNECT 目标域名再签发；静态证书或无 CA 的构造原样返回。
@@ -79,6 +87,31 @@ func mitmTLSConfig(template *tls.Config, authority *ca.Authority, domain string)
 		return authority.GetCertificate(hello)
 	}
 	return connConfig
+}
+
+// untrustedCAAlerts 列出客户端因校验证书失败（典型为未安装/信任代理 CA）而回送的 TLS alert 文本，与 crypto/tls alert 字符串对齐。
+var untrustedCAAlerts = map[string]bool{
+	"tls: bad certificate":               true,
+	"tls: unsupported certificate":       true,
+	"tls: unknown certificate":           true,
+	"tls: unknown certificate authority": true,
+}
+
+// tlsHandshake 在握手超时内完成 MITM TLS 握手，超时后清除 deadline 交还连接给 http.Server 继续读写应用数据。
+func tlsHandshake(conn *tls.Conn) error {
+	_ = conn.SetDeadline(time.Now().Add(mitmHandshakeTimeout))
+	defer conn.SetDeadline(time.Time{})
+	return conn.Handshake()
+}
+
+// logMitmHandshakeError 识别握手失败原因：客户端未信任代理 CA 证书时给出可操作提示，其余仍原样记录。
+func logMitmHandshakeError(domain string, port int, err error) {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "remote error" && untrustedCAAlerts[opErr.Err.Error()] {
+		log.Warn("mitm handshake failed domain=%s port=%d reason=client does not trust proxy ca certificate hint=install and trust the ca certificate err=%v", domain, port, err)
+		return
+	}
+	log.Warn("mitm handshake failed domain=%s port=%d err=%v", domain, port, err)
 }
 
 // dialTunnel 以隧道超时经 nameservers 拨号目标。
