@@ -32,7 +32,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 | `internal/route/path.go` | `buildOutPath`/`singleJoiningSlash`（路径拼接与编码对齐） | 路由匹配逻辑 |
 | `internal/proxy/proxy.go` | `Proxy` 结构、`reload` 编排、`Handler`/`Socks5`/`routeHandler`/`routeTarget`/`serveRequest`、`WatchFile` 热加载、`Reload`、`NewTransport`、`resetCaches`、`newPassthroughProxy`/`passthroughURL` | CONNECT 隧道与 MITM 握手细节、目标解析 |
 | `internal/proxy/target.go` | `targetOf`/`normalizeProtocol`/`normalizeDomain`/`absoluteTarget`/`hostAndPort`/`hostOnly`/`trimIPv6Brackets`/`defaultPort`/`effectivePort`（请求目标解析） | 路由决策逻辑 |
-| `internal/proxy/connect.go` | `handleConnect`/`hijackConn`/`serveConnect`/`dialTunnel`/`tunnel`/`mitmTLSConfig`/`tlsHandshake`/`logMitmHandshakeError` | 路由决策逻辑 |
+| `internal/proxy/connect.go` | `handleConnect`/`hijackConn`/`serveConnect`/`dialTunnel`/`tunnel`/`mitmTLSConfig` | 路由决策逻辑 |
 | `internal/proxy/capture.go` | `SetCapture`/`Close`、`headersFrom`、`decodeContent`/`isTextMimeType`/`binaryContent`、`recordCapture`/`contentTypeOf`（HAR entry 组装与内容解码） | 路由决策逻辑 |
 | `internal/proxy/body.go` | `countingReadCloser`、`forwardedBody`、`newCapturedRequest`、`captureWriter`/`newCaptureWriter`、`captureRequestBody`（请求/响应体透传与抓包计数） | 路由决策逻辑 |
 | `internal/proxy/resolver.go` | `resolver` 接口（`Update`/`Resolve`/`DialContext`/`ClearCache`），proxy 依赖抽象以注入测试替身 | 路由决策逻辑 |

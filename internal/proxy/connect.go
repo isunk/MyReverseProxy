@@ -65,11 +65,19 @@ func (p *Proxy) serveConnect(client net.Conn, protocol string, port int, domain 
 		return false
 	}
 	tlsConn := tls.Server(client, mitmTLSConfig(p.tlsConfig, p.authority, domain))
-	if err := tlsHandshake(tlsConn); err != nil {
-		logMitmHandshakeError(domain, port, err)
+	// MITM 握手带超时以防慢速客户端挂起；失败时识别客户端未信任 CA 并给出可操作提示
+	_ = tlsConn.SetDeadline(time.Now().Add(mitmHandshakeTimeout))
+	if err := tlsConn.Handshake(); err != nil {
+		var opErr *net.OpError
+		if errors.As(err, &opErr) && opErr.Op == "remote error" && untrustedCAAlerts[opErr.Err.Error()] {
+			log.Warn("mitm handshake failed domain=%s port=%d reason=client does not trust proxy ca certificate hint=install and trust the ca certificate err=%v", domain, port, err)
+		} else {
+			log.Warn("mitm handshake failed domain=%s port=%d err=%v", domain, port, err)
+		}
 		tlsConn.Close()
 		return false
 	}
+	tlsConn.SetDeadline(time.Time{})
 	return frontend.ServeSingleConn(frontend.New(p.Handler()), tlsConn)
 }
 
@@ -95,23 +103,6 @@ var untrustedCAAlerts = map[string]bool{
 	"tls: unsupported certificate":       true,
 	"tls: unknown certificate":           true,
 	"tls: unknown certificate authority": true,
-}
-
-// tlsHandshake 在握手超时内完成 MITM TLS 握手，超时后清除 deadline 交还连接给 http.Server 继续读写应用数据。
-func tlsHandshake(conn *tls.Conn) error {
-	_ = conn.SetDeadline(time.Now().Add(mitmHandshakeTimeout))
-	defer conn.SetDeadline(time.Time{})
-	return conn.Handshake()
-}
-
-// logMitmHandshakeError 识别握手失败原因：客户端未信任代理 CA 证书时给出可操作提示，其余仍原样记录。
-func logMitmHandshakeError(domain string, port int, err error) {
-	var opErr *net.OpError
-	if errors.As(err, &opErr) && opErr.Op == "remote error" && untrustedCAAlerts[opErr.Err.Error()] {
-		log.Warn("mitm handshake failed domain=%s port=%d reason=client does not trust proxy ca certificate hint=install and trust the ca certificate err=%v", domain, port, err)
-		return
-	}
-	log.Warn("mitm handshake failed domain=%s port=%d err=%v", domain, port, err)
 }
 
 // dialTunnel 以隧道超时经 nameservers 拨号目标。
