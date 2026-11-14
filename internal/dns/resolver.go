@@ -18,7 +18,7 @@ import (
 const (
 	nameserverDefaultPort = "53"
 	dialerTimeout         = 5 * time.Second
-	KeepAlive             = 30 * time.Second
+	keepAlive             = 30 * time.Second
 	AttemptTimeout        = time.Second
 	TTL                   = 30 * time.Second
 	maxCached             = 512
@@ -51,7 +51,7 @@ func New(attemptTimeout, ttl time.Duration, entries []string) (*Resolver, error)
 		attemptTimeout: attemptTimeout,
 		ttl:            ttl,
 		udpDialer:      &net.Dialer{Timeout: dialerTimeout},
-		tcpDialer:      &net.Dialer{Timeout: dialerTimeout, KeepAlive: KeepAlive},
+		tcpDialer:      &net.Dialer{Timeout: dialerTimeout, KeepAlive: keepAlive},
 		system:         &net.Resolver{PreferGo: true},
 		cache:          cache.New[[]string](maxCached, ttl),
 	}
