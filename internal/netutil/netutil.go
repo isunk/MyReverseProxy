@@ -1,5 +1,5 @@
 // Package netutil 提供跨包复用的网络基础组件：拷贝缓冲池、双向字节搬运与 TCP Accept 循环。
-// 无内部依赖，供 route、proxy、frontend 等包共享。
+// 仅供 route、proxy、frontend 等包共享；自身仅依赖 log。
 package netutil
 
 import (

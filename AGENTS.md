@@ -5,7 +5,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 ## 命名风格
 
 - 遵循 Go 惯例 camelCase：类型名大驼峰，变量、字段、函数、方法小驼峰。不用下划线分隔。
-  - 正例：`transport`、`listenAddr`、`handler`、`handleConnect`、`byDomain`、`oneConnListener`、`statusRecorder`、`target`、`route.Table.InstallHandlers`
+  - 正例：`transport`、`listenAddr`、`handler`、`handleConnect`、`group`、`oneConnListener`、`statusRecorder`、`target`、`route.Table.InstallHandlers`
   - 反例：`trVerify`（缩写）、`transport_verify`（下划线）、`route_table`（下划线）
 - 单词尽量完整，避免缩写：`transport` 不写 `tr`、`entry` 不写 `r`、`server` 不写 `s`。循环局部变量允许使用 `i`、`k`、`v` 等约定单字母，紧邻上下文允许 `r`（request）、`w`（writer）、`c`（conn）。
 - 类型名大驼峰导出或小驼峰非导出（如 `route.Table`、`route.Entry`、`route.HeaderRewrite`、`cache.Cache`、`frontend.StatusRecorder`、`frontend.BufferedConn`、`dns.Resolver`、`ca.Authority`）。
@@ -20,31 +20,36 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 - `mrp.hta` 为 UTF-8 编码的 Windows HTA 部署面板（MRP Helper），仓库按原始字节存储。渲染路径刻意保持全 ASCII：中文用数字实体、圆点用 `fromCharCode`，规避 HTA 宿主在不同系统区域设置下的编码错位；链接不带 `href`（`NAVIGABLE=no` 下 `javascript:` 会被交给默认浏览器），`@` 事件统一 `preventDefault`。双击运行生效，拖入浏览器仅显示界面、动作不可用。修改后自检：仍是 UTF-8 无 BOM、渲染文本全 ASCII（无中文字面量）。
 
-代码按业界标准布局分层：`cmd/mrp` 是入口，业务逻辑全部在 `internal/*`，包之间单向依赖（`log`、`cache`、`capture`、`singleflight` 无内部依赖；`route`→`log`；`config`→`route,log`；`dns`→`cache,log,singleflight`；`ca`→`cache,log,singleflight`；`frontend`→`log`；`proxy`→`ca,capture,config,dns,frontend,log,route`），禁止反向引用形成环。
+代码按业界标准布局分层：`cmd/mrp` 是入口，业务逻辑全部在 `internal/*`，包之间单向依赖（`log`、`cache`、`capture`、`singleflight` 无内部依赖；`netutil`→`log`；`route`→`log,netutil`；`config`→`route,log`；`dns`→`cache,log,singleflight`；`ca`→`cache,log,singleflight`；`frontend`→`netutil`；`proxy`→`ca,capture,config,frontend,log,netutil,route`），禁止反向引用形成环。
 
 | 文件 | 职责 | 不应包含 |
 |------|------|----------|
 | `cmd/mrp/main.go` | flags 解析（`parseStartupOptions`，含唯一监听端口 `--port` 与 `defaultListenPort=9000`）、`buildProxy`、信号循环、`run` | 路由/转发逻辑、监听细节、`os.Exit`（不可恢复失败走 `log.Fatal`） |
-| `internal/config/config.go` | YAML 配置结构（`Config`/`Server`/`Route`/`Headers`）、`Load`、`Parse`、`Ensure`、`buildTable`、`buildServerEntry`、`buildRoutes`、`protocolLabel` | 任何运行期依赖、转发逻辑 |
-| `internal/route/route.go` | `Route`、`Entry`、`Table`（含 `byDomain`）、`Pick`/`Has`/`Add`/`InstallHandlers`/`Fingerprint` | I/O、日志以外的运行期编排 |
-| `internal/route/target.go` | `Target`、`ParseTarget`/`parseTargetHost`/`validPort`/`isLocalPath` | I/O、日志以外的运行期编排 |
-| `internal/route/handler.go` | `HeaderRewrite`、`setHeaders`、`buildHandler`/`buildProxy`/`rewriteRequest`、`UpstreamErrorHandler`、`staticHandler`、`statusHandler` | 路由匹配逻辑 |
-| `internal/route/path.go` | `trimEncodedPrefix`/`joinOutPath`/`singleJoiningSlash`（路径拼接与编码对齐） | 路由匹配逻辑 |
-| `internal/proxy/proxy.go` | `Proxy` 结构、`reload` 编排、`Handler`/`routeHandler`/`serveRequest`、`WatchFile` 热加载、`Reload`、`NewTransport`、`resetCaches` | CONNECT 隧道与 MITM 握手细节、目标解析 |
-| `internal/proxy/target.go` | `targetOf`/`hostAndPort`/`hostOnly`/`defaultPort`/`effectivePort`（请求目标解析） | 路由决策逻辑 |
-| `internal/proxy/connect.go` | `handleConnect`/`hijackConn`/`serveConnect`/`tunnel`/`mitmTLSConfig` | 路由决策逻辑 |
-| `internal/proxy/capture.go` | `SetCapture`/`Close`、`captureWriter`、`captureRequestBody`、`headersFrom`、`recordCapture`（HAR entry 组装） | 路由决策逻辑 |
+| `internal/config/config.go` | YAML 配置结构（`Config`/`Server`/`Route`/`Headers`）、`Load`、`Parse`、`Ensure`、`buildTable`、`validateDomainPattern`、`buildServerEntry`、`buildRoutes` | 任何运行期依赖、转发逻辑 |
+| `internal/route/route.go` | `Route`、`Entry`、`Table`（`groups []*DomainGroup`）、`DomainGroup`、`Pick`/`Has`/`Add`/`InstallHandlers`/`Fingerprint`/`protocolLabel`/`pathHasPrefix` | I/O、日志以外的运行期编排 |
+| `internal/route/target.go` | `Target`、`ParseTarget`/`validateURLHost`/`parseTargetHost`/`validPort`/`isLocalPath` | I/O、日志以外的运行期编排 |
+| `internal/route/handler.go` | `HeaderRewrite`、`setHeaders`、`buildHandler`/`buildProxy`/`rewriteRequest`/`OutboundURL`、`UpstreamErrorHandler`、`staticHandler`、`statusHandler` | 路由匹配逻辑 |
+| `internal/route/path.go` | `buildOutPath`/`singleJoiningSlash`（路径拼接与编码对齐） | 路由匹配逻辑 |
+| `internal/proxy/proxy.go` | `Proxy` 结构、`reload` 编排、`Handler`/`Socks5`/`routeHandler`/`routeTarget`/`serveRequest`、`WatchFile` 热加载、`Reload`、`NewTransport`、`resetCaches`、`newPassthroughProxy`/`passthroughURL` | CONNECT 隧道与 MITM 握手细节、目标解析 |
+| `internal/proxy/target.go` | `targetOf`/`normalizeProtocol`/`normalizeDomain`/`absoluteTarget`/`hostAndPort`/`hostOnly`/`trimIPv6Brackets`/`defaultPort`/`effectivePort`（请求目标解析） | 路由决策逻辑 |
+| `internal/proxy/connect.go` | `handleConnect`/`hijackConn`/`serveConnect`/`dialTunnel`/`tunnel`/`mitmTLSConfig` | 路由决策逻辑 |
+| `internal/proxy/capture.go` | `SetCapture`/`Close`、`headersFrom`、`decodeContent`/`isTextMimeType`/`binaryContent`、`recordCapture`/`contentTypeOf`（HAR entry 组装与内容解码） | 路由决策逻辑 |
+| `internal/proxy/body.go` | `countingReadCloser`、`forwardedBody`、`newCapturedRequest`、`captureWriter`/`newCaptureWriter`、`captureRequestBody`（请求/响应体透传与抓包计数） | 路由决策逻辑 |
+| `internal/proxy/resolver.go` | `resolver` 接口（`Update`/`Resolve`/`DialContext`/`ClearCache`），proxy 依赖抽象以注入测试替身 | 路由决策逻辑 |
+| `internal/proxy/socks.go` | `serveSocks5`/`serveSocks5Connect`、`socks5Greeting`/`socks5ReadCommand`/`socks5ReadAddr`/`socks5DecodeHost`/`socks5WriteReply` | 路由决策逻辑 |
+| `internal/proxy/socks_udp.go` | `serveSocks5UDP`/`socks5UDPRelay`/`socks5UDPSession`、`dialUDP`、`parseSocks5UDPHeader`/`encodeSocks5UDPResponse` | 路由决策逻辑 |
 | `internal/frontend/frontend.go` | `Serve`（始终明文监听，协议由请求内容推导）、`ServeSingleConn`、`oneConnListener`、`BufferedConn`、`StatusRecorder`、`New` | 路由决策逻辑 |
 | `internal/ca/ca.go` | `Authority` 现场签发、`GetCertificate`、`ClearCache`、`Load` 证书加载与 CA 校验 | 路由决策逻辑 |
-| `internal/dns/resolver.go` | 上游 DNS 解析与故障切换、`Resolver`（`New`/`Update`/`Addresses`/`DialContext`/`ClearCache`/`CacheSize`）、解析结果缓存 | 路由决策逻辑 |
+| `internal/dns/resolver.go` | 上游 DNS 解析与故障切换、`Resolver`（`New`/`Update`/`Addresses`/`Describe`/`DialContext`/`Resolve`/`ClearCache`/`CacheSize`）、解析结果缓存 | 路由决策逻辑 |
 | `internal/cache/cache.go` | 通用 `Cache` 并发缓存（`New`/`Get`/`Set`/`Evict`/`Clear`） | 具体业务逻辑 |
 | `internal/singleflight/singleflight.go` | 泛型并发合并 `Group`（`Begin`/`Wait`/`WaitContext`/`Finish`），ca 签发与 dns 解析共用 | 缓存与具体业务逻辑 |
 | `internal/capture/capture.go` | `Recorder` 增量写盘（`New`/`Record`/`Close`/`Path`）、文件大小上限、停用短路 | 具体业务逻辑 |
 | `internal/capture/har.go` | HAR 1.2 结构体（`Har`/`Log`/`Entry`/`Request`/`Response`/`Content` 等） | 具体业务逻辑 |
 | `internal/log/log.go` | console 日志（`Debug`/`Info`/`Warn`/`Error`/`Fatal` 模板字符串、`Init` 级别过滤、`DebugEnabled` 门控、按级别整行着色、TTY 检测、`SetOutput`、`ParseLevel`） | 路由/转发逻辑 |
-| `internal/testutil/` | 跨包共享测试替身：`ConfigFile`、`SelfSignedCert`、`AuthorityCA`、`WriteCertFiles`、`NewStub`（DNS）、`EchoServer`、`FreePort`、`MustURL` | 生产代码依赖（不得被非测试代码引用） |
+| `internal/netutil/netutil.go` | `BufferPool`（32KB 拷贝缓冲池）、`Relay`（双向字节搬运）、`ServeListener`（Accept 循环与退避）、`UDPBufferSize` | 具体业务逻辑 |
+| `internal/testutil/` | 跨包共享测试替身：`ConfigFile`、`SelfSignedCert`、`AuthorityCA`、`WriteCertFiles`、`NewStub`/`NewStubWithTTL`（DNS）、`EchoServer`、`UDPEchoServer`、`FreePort`、`MustURL`、`ClosedUDPPort`/`SilentUDPPort` | 生产代码依赖（不得被非测试代码引用） |
 
-每个包内配套 `<name>_test.go` 测试；`internal/proxy` 按主题拆分为 `proxy_test.go`、`connect_test.go`、`reload_test.go`、`transport_test.go`、`proxy_bench_test.go`（HTTP/MITM/隧道性能基准）。新增文件时保持单一职责，文件名单词式小写。
+每个包内配套 `<name>_test.go` 测试；`internal/proxy` 按主题拆分为 `proxy_test.go`、`connect_test.go`、`reload_test.go`、`transport_test.go`、`capture_test.go`、`socks_test.go`、`socks_udp_test.go`、`proxy_bench_test.go`（HTTP/MITM/隧道性能基准）。新增文件时保持单一职责，文件名单词式小写。
 
 ## 代码风格
 
