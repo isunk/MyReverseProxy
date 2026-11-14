@@ -161,8 +161,8 @@ func buildRoutes(index int, server Server) ([]*route.Route, error) {
 		if status != 0 && (status < 200 || status > 599) {
 			return nil, fmt.Errorf("%s prefix %q status %d must be 200-599", where, prefix, status)
 		}
-		// 204/304 按协议不得携带消息体，Go 服务端会静默丢弃 body，配置了也无效
-		if configured.Body != "" && (status == 204 || status == 304) {
+		// 204/205/304 按协议不得携带消息体：204/304 Go 服务端会静默丢弃 body，205 会实际发送，配置了均无效
+		if configured.Body != "" && (status == 204 || status == 205 || status == 304) {
 			return nil, fmt.Errorf("%s prefix %q status %d must not carry a body", where, prefix, status)
 		}
 		if seen[prefix] {

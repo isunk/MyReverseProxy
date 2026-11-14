@@ -92,6 +92,20 @@ func TestRecorder_CloseIdempotent(t *testing.T) {
 	}
 }
 
+// TestRecorder_CloseStopsRecord 验证 Close 后 Record 直接短路返回 nil，不再向已关闭的缓冲写入而静默丢数据。
+func TestRecorder_CloseStopsRecord(t *testing.T) {
+	recorder, err := New(filepath.Join(t.TempDir(), "capture.har"), FileSizeLimit)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := recorder.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := recorder.Record(Entry{Request: Request{Method: "GET", URL: "http://c/"}}); err != nil {
+		t.Fatalf("Record after Close should short-circuit: %v", err)
+	}
+}
+
 func TestRecorder_ConcurrentRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "capture.har")
 	recorder, err := New(path, FileSizeLimit)

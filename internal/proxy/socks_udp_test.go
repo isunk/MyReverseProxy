@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"io"
 	"net"
 	"strconv"
@@ -145,6 +146,69 @@ func TestSocks5_UDPAssociateRelays(t *testing.T) {
 	response, ok := parseSocks5UDPHeader(buffer[:n])
 	if !ok || string(response.data) != string(payload) {
 		t.Fatalf("response = %+v ok=%v, want payload %q", response, ok, payload)
+	}
+}
+
+// TestSocks5_UDPAssociateSurvivesControlData 验证 TCP 控制连接收到数据（keepalive 等）不会拆除 UDP 中继：控制协程须循环读到 EOF 才判定关闭。
+func TestSocks5_UDPAssociateSurvivesControlData(t *testing.T) {
+	echoAddr := testutil.UDPEchoServer(t)
+	servers := testNameservers(t)
+	proxy, err := New(testutil.ConfigFile(t, "r.yaml", "servers: []\n"), NewTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	proxyURL := startListener(t, proxy)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	tcpConn, relayAddr := socks5UDPAssociate(t, addr)
+	defer tcpConn.Close()
+
+	// 向控制连接发送 keepalive 字节：修复前 Read(1) 读到数据即判定关闭并拆除中继
+	if _, err := tcpConn.Write([]byte{0x00}); err != nil {
+		t.Fatalf("write control keepalive: %v", err)
+	}
+
+	echoHost, echoPort, err := net.SplitHostPort(echoAddr)
+	if err != nil {
+		t.Fatalf("split echo addr: %v", err)
+	}
+	relayConn, err := net.Dial("udp", relayAddr)
+	if err != nil {
+		t.Fatalf("dial relay: %v", err)
+	}
+	defer relayConn.Close()
+
+	port, err := strconv.Atoi(echoPort)
+	if err != nil {
+		t.Fatalf("atoi echo port: %v", err)
+	}
+	header := []byte{0x00, 0x00, 0x00, 0x01}
+	header = append(header, net.ParseIP(echoHost).To4()...)
+	header = append(header, byte(port>>8), byte(port))
+	payload := []byte("still alive after keepalive")
+	packet := append(header, payload...)
+	if _, err := relayConn.Write(packet); err != nil {
+		t.Fatalf("write relay: %v", err)
+	}
+	_ = relayConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buffer := make([]byte, 64<<10)
+	n, err := relayConn.Read(buffer)
+	if err != nil {
+		t.Fatalf("read relay after keepalive: %v", err)
+	}
+	response, ok := parseSocks5UDPHeader(buffer[:n])
+	if !ok || string(response.data) != string(payload) {
+		t.Fatalf("response = %+v ok=%v, want payload %q", response, ok, payload)
+	}
+}
+
+// TestDialUDPTarget_EmptyResolveReturnsError 验证解析器返回空地址列表时 dialUDPTarget 返回错误而非 (nil, nil)，防止调用方构造 nil 会话套接字。
+func TestDialUDPTarget_EmptyResolveReturnsError(t *testing.T) {
+	relay := newSocks5UDPRelay(&net.UDPConn{}, func(context.Context, string, int) ([]string, error) {
+		return nil, nil
+	})
+	if _, err := relay.dialUDPTarget("example.com", 80); err == nil {
+		t.Fatal("dialUDPTarget accepted empty resolve result")
 	}
 }
 

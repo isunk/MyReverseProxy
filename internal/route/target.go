@@ -22,11 +22,12 @@ func ParseTarget(upstream string) (*Target, error) {
 		if err != nil {
 			return nil, fmt.Errorf("upstream %q is invalid: %w", upstream, err)
 		}
+		parsed.Scheme = strings.ToLower(parsed.Scheme) // RFC 3986 scheme 大小写不敏感，统一小写供拨号与路由比较
 		if parsed.Scheme != ProtocolHTTP && parsed.Scheme != ProtocolHTTPS {
 			return nil, fmt.Errorf("upstream %q scheme %q is not supported", upstream, parsed.Scheme)
 		}
-		if parsed.Host == "" {
-			return nil, fmt.Errorf("upstream %q is missing host", upstream)
+		if err := validateURLHost(parsed, upstream); err != nil {
+			return nil, err
 		}
 		return &Target{URL: parsed, Summary: parsed.String()}, nil
 	}
@@ -34,6 +35,21 @@ func ParseTarget(upstream string) (*Target, error) {
 		return &Target{Root: upstream, Summary: upstream}, nil
 	}
 	return parseTargetHost(upstream)
+}
+
+// validateURLHost 校验 URL 形式的 Host：主机名非空、端口若给出须为 1-65535 的纯十进制；空端口形态（host:、[IPv6]:）也拒绝，避免配置错误延迟到请求期拨号失败。
+func validateURLHost(parsed *url.URL, upstream string) error {
+	if parsed.Hostname() == "" {
+		return fmt.Errorf("upstream %q is missing host", upstream)
+	}
+	if port := parsed.Port(); port != "" {
+		if !validPort(port) {
+			return fmt.Errorf("upstream %q port must be 1-65535", upstream)
+		}
+	} else if strings.HasSuffix(parsed.Host, ":") {
+		return fmt.Errorf("upstream %q port must be 1-65535", upstream)
+	}
+	return nil
 }
 
 // parseTargetHost 解析省略 scheme 的 host[:port] 简写统一按 http 转发，支持 host、host:port、[IPv6]:port 写法。

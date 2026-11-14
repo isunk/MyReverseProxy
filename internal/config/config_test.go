@@ -60,6 +60,7 @@ func TestLoadTable_Errors(t *testing.T) {
 		"status_1xx":      "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: 100",
 		"status_600":      "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: 600",
 		"status_204_body": "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: 204\n        body: gone",
+		"status_205_body": "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: 205\n        body: reset",
 		"status_304_body": "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: 304\n        body: etag",
 	}
 	for name, content := range cases {
@@ -72,12 +73,12 @@ func TestLoadTable_Errors(t *testing.T) {
 	}
 }
 
-// status 路由的合法边界：200-599 且 204/304 不得带 body，其余组合可用
+// status 路由的合法边界：200-599 且 204/205/304 不得带 body，其余组合可用
 func TestLoadTable_StatusBoundary(t *testing.T) {
-	valid := []int{200, 204, 304, 404, 500, 599}
+	valid := []int{200, 204, 205, 304, 404, 500, 599}
 	for _, status := range valid {
 		body := ""
-		if status != 204 && status != 304 {
+		if status != 204 && status != 205 && status != 304 {
 			body = "\n        body: OK"
 		}
 		content := "servers:\n  - domain: a\n    routes:\n      - prefix: /\n        status: " + strconv.Itoa(status) + body + "\n"

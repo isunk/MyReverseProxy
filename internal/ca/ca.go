@@ -84,11 +84,12 @@ func (a *Authority) sign(serverName string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: serverName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(certTTL),
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(certTTL),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}

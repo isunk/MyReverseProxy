@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -51,13 +52,19 @@ func (p *Proxy) serveSocks5UDP(client net.Conn) {
 	go func() {
 		defer close(tcpDone)
 		_ = client.SetReadDeadline(time.Time{})
-		_, _ = client.Read(make([]byte, 1)) // 阻塞至 TCP 控制连接关闭
+		buffer := make([]byte, 1)
+		for {
+			if _, err := client.Read(buffer); err != nil {
+				return // 读到 EOF/错误才算控制连接关闭；收到数据（如 keepalive）不拆除中继
+			}
+		}
 	}()
 	select {
 	case <-tcpDone:
 		relay.close()
 		<-relayDone
 	case <-relayDone:
+		relay.close() // 中继先结束（空闲超时或出错）同样清理全部会话套接字与读回协程，避免泄漏
 		client.Close()
 		<-tcpDone
 	}
@@ -82,6 +89,7 @@ type socks5UDPRelay struct {
 	mu         sync.Mutex
 	sessions   map[string]*socks5UDPSession
 	resolve    func(context.Context, string, int) ([]string, error)
+	closed     atomic.Bool
 }
 
 // socks5UDPSession 一个客户端→目标方向的 UDP 会话：target 为已连接目标的对端套接字，atyp/addr/port 为客户端请求中的原始目标表示，供响应头回写；key 为目标地址键，供 O(1) 移除。
@@ -117,6 +125,8 @@ func (r *socks5UDPRelay) readLoop() {
 }
 
 // forwardPacket 解析 SOCKS5 UDP 报文头并按目标转发净荷，无该目标的会话时创建并启动读回协程。
+// 只有 readLoop 单 goroutine 调用本方法，故同一 key 不会并发创建会话；拨号（含 DNS 解析）在锁外进行，
+// 避免阻塞 removeSession 与 close 的清理路径。
 func (r *socks5UDPRelay) forwardPacket(packet []byte) {
 	header, ok := parseSocks5UDPHeader(packet)
 	if !ok || header.frag != 0 {
@@ -125,11 +135,17 @@ func (r *socks5UDPRelay) forwardPacket(packet []byte) {
 	key := net.JoinHostPort(header.host, strconv.Itoa(header.port))
 	r.mu.Lock()
 	session := r.sessions[key]
+	r.mu.Unlock()
 	if session == nil {
 		targetConn, err := r.dialUDPTarget(header.host, header.port)
 		if err != nil {
-			r.mu.Unlock()
 			log.Error("socks5 udp dial failed target=%s err=%v", key, err)
+			return
+		}
+		r.mu.Lock()
+		if r.closed.Load() { // 拨号期间中继已被关闭（TCP 控制连接结束）：丢弃新拨出的套接字
+			r.mu.Unlock()
+			_ = targetConn.Close()
 			return
 		}
 		session = &socks5UDPSession{
@@ -141,16 +157,17 @@ func (r *socks5UDPRelay) forwardPacket(packet []byte) {
 			port:   header.port,
 		}
 		r.sessions[key] = session
+		r.mu.Unlock()
 		go session.readLoop()
 	}
-	r.mu.Unlock()
 	_, _ = session.target.Write(header.data)
 }
 
-// dialUDPTarget 解析目标并经自定义 DNS 拨号：resolve 为 nil 时回退系统 DNS；解析出多个地址时逐个尝试，返回第一个成功连接。
+// dialUDPTarget 解析目标并经自定义 DNS 拨号：resolve 为 nil 时回退系统 DNS；解析出多个地址时逐个尝试，返回第一个成功连接；无可用地址时返回错误而非空连接。
 func (r *socks5UDPRelay) dialUDPTarget(host string, port int) (*net.UDPConn, error) {
+	address := net.JoinHostPort(host, strconv.Itoa(port))
 	if r.resolve == nil {
-		return dialUDP(net.JoinHostPort(host, strconv.Itoa(port)))
+		return dialUDP(address)
 	}
 	targets, err := r.resolve(context.Background(), host, port)
 	if err != nil {
@@ -163,6 +180,9 @@ func (r *socks5UDPRelay) dialUDPTarget(host string, port int) (*net.UDPConn, err
 			return conn, nil
 		}
 		lastError = err
+	}
+	if lastError == nil {
+		lastError = fmt.Errorf("no addresses resolved for %s", address)
 	}
 	return nil, lastError
 }
@@ -205,8 +225,9 @@ func (r *socks5UDPRelay) removeSession(session *socks5UDPSession) {
 	}
 }
 
-// close 关闭中继套接字并清理全部会话，使读循环退出。
+// close 关闭中继套接字并清理全部会话，使读循环退出；置位 closed 供拨号中的前向转发丢弃新套接字。
 func (r *socks5UDPRelay) close() {
+	r.closed.Store(true)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_ = r.conn.Close()

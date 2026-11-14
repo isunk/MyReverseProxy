@@ -249,7 +249,7 @@ func TestHostAndPort_IPv6Brackets(t *testing.T) {
 		{"::1", 443, "::1", 443},
 		{"example.com", 443, "example.com", 443},
 		{"example.com:0", 443, "example.com", 443},
-		{":443", 443, ":443", 443},
+		{":443", 443, "", 443},
 	}
 	for _, tc := range cases {
 		name, port := hostAndPort(tc.host, tc.fallback)
@@ -262,6 +262,34 @@ func TestHostAndPort_IPv6Brackets(t *testing.T) {
 	}
 	if got := hostOnly("[::1]:8080"); got != "::1" {
 		t.Fatalf("hostOnly bracketed with port: got %q", got)
+	}
+}
+
+func TestTargetOf_Normalization(t *testing.T) {
+	cases := []struct {
+		name         string
+		request      *http.Request
+		wantProtocol string
+		wantPort     int
+		wantDomain   string
+	}{
+		{"connect_fqdn", &http.Request{Method: http.MethodConnect, Host: "API.Example.COM.:443"}, "https", 443, "api.example.com"},
+		{"connect_bare_ipv6", &http.Request{Method: http.MethodConnect, Host: "[::1]:443"}, "https", 443, "::1"},
+		{"origin_form_fqdn", &http.Request{Method: http.MethodGet, Host: "API.Example.COM.", URL: &url.URL{Path: "/x"}}, "http", 80, "api.example.com"},
+		{"origin_form_default_port", &http.Request{Method: http.MethodGet, Host: "api.example.com", URL: &url.URL{Path: "/x"}}, "http", 80, "api.example.com"},
+		{"absolute_upper_scheme", &http.Request{Method: http.MethodGet, URL: &url.URL{Scheme: "HTTPS", Host: "API.Example.COM:8443", Path: "/x"}}, "https", 8443, "api.example.com"},
+		{"absolute_upper_scheme_default_port", &http.Request{Method: http.MethodGet, URL: &url.URL{Scheme: "HTTP", Host: "api.example.com", Path: "/x"}}, "http", 80, "api.example.com"},
+		{"absolute_out_of_range_port", &http.Request{Method: http.MethodGet, URL: &url.URL{Scheme: "http", Host: "up-a:99999", Path: "/x"}}, "http", 80, "up-a"},
+		{"absolute_bad_port", &http.Request{Method: http.MethodGet, URL: &url.URL{Scheme: "http", Host: "up-a:bad", Path: "/x"}}, "http", 80, "up-a"},
+		{"origin_form_empty_hostname", &http.Request{Method: http.MethodGet, Host: ":8080", URL: &url.URL{Path: "/x"}}, "http", 8080, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			protocol, port, domain := targetOf(tc.request)
+			if protocol != tc.wantProtocol || port != tc.wantPort || domain != tc.wantDomain {
+				t.Fatalf("targetOf = (%q, %d, %q), want (%q, %d, %q)", protocol, port, domain, tc.wantProtocol, tc.wantPort, tc.wantDomain)
+			}
+		})
 	}
 }
 

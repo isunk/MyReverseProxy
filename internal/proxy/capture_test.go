@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -21,11 +22,52 @@ import (
 
 	"mrp/internal/ca"
 	"mrp/internal/capture"
+	"mrp/internal/log"
 	"mrp/internal/testutil"
 )
 
 func captureFilePath(t *testing.T) string {
 	return filepath.Join(t.TempDir(), "capture.har")
+}
+
+// closerFunc 便于测试构造 io.Closer 替身。
+type closerFunc func() error
+
+func (f closerFunc) Close() error { return f() }
+
+// errReader 恒定返回读取错误，模拟请求体读取中断。
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("body read interrupted") }
+
+// TestCaptureRequestBody_ReadErrorWarns 验证请求体读取错误时记录告警而非静默吞掉，HAR 记录与转发仍基于已读部分继续。
+func TestCaptureRequestBody_ReadErrorWarns(t *testing.T) {
+	var out strings.Builder
+	log.SetOutput(&out)
+	t.Cleanup(func() { log.SetOutput(io.Discard) })
+	request := &http.Request{Body: io.NopCloser(errReader{}), ContentLength: -1}
+	prefix, _, _, _ := captureRequestBody(request)
+	if len(prefix) != 0 {
+		t.Fatalf("prefix = %d bytes, want 0", len(prefix))
+	}
+	if !strings.Contains(out.String(), "request body read failed") {
+		t.Fatalf("expected warn log, got %q", out.String())
+	}
+}
+
+// TestForwardedBody_CloseForwardsToOriginal 验证替换后的请求体 Close 转发到底层 body：未完整读完的 *http.body 需被关闭以归还连接复用。
+func TestForwardedBody_CloseForwardsToOriginal(t *testing.T) {
+	var closed bool
+	body := &forwardedBody{Reader: strings.NewReader("payload"), original: closerFunc(func() error { closed = true; return nil })}
+	if err := body.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !closed {
+		t.Fatal("Close did not forward to original body")
+	}
+	if data, err := io.ReadAll(body); err != nil || string(data) != "payload" {
+		t.Fatalf("Read after close = %q err=%v, want payload", data, err)
+	}
 }
 
 func readHar(t *testing.T, path string) capture.Har {

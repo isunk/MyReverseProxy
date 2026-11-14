@@ -52,7 +52,11 @@ func (p *Proxy) serveSocks5(client net.Conn) {
 		}
 		p.serveSocks5Connect(client, host, port)
 	case socks5CommandUDPAssociate:
-		_, _, _ = socks5ReadAddr(reader, atyp) // UDP ASSOCIATE 请求中的 DST.ADDR/PORT 是客户端预期来源，通常为 0.0.0.0:0，仅消费不校验
+		_, _, addrRep := socks5ReadAddr(reader, atyp)
+		if addrRep != socks5RepSuccess {
+			_ = socks5WriteReply(client, addrRep)
+			return
+		}
 		p.serveSocks5UDP(client)
 	}
 }
@@ -103,7 +107,7 @@ func socks5ReadCommand(reader *bufio.Reader) (command, atyp, rep byte) {
 	if _, err := io.ReadFull(reader, header); err != nil {
 		return 0, 0, socks5RepGeneralFailure
 	}
-	if header[0] != socks5Version {
+	if header[0] != socks5Version || header[2] != 0 { // header[2] 为 RSV，RFC 1928 要求置零，非零按协议错误处理
 		return 0, 0, socks5RepGeneralFailure
 	}
 	switch header[1] {

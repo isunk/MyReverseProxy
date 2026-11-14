@@ -16,7 +16,6 @@ import (
 	"mrp/internal/ca"
 	"mrp/internal/capture"
 	"mrp/internal/config"
-	"mrp/internal/dns"
 	"mrp/internal/frontend"
 	"mrp/internal/log"
 	"mrp/internal/netutil"
@@ -39,13 +38,13 @@ type Proxy struct {
 	tlsConfig   *tls.Config
 	authority   *ca.Authority
 	passthrough *httputil.ReverseProxy
-	nameservers *dns.Resolver
+	nameservers resolver
 	capture     atomic.Pointer[capture.Recorder]
 
 	reloadMu sync.Mutex // 串行化 reload：WatchFile 轮询与 SIGHUP 可并发触发，不加锁时两个 reload 的 Load→Store 交错会让旧配置覆盖新配置
 }
 
-func New(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *ca.Authority, nameservers *dns.Resolver) (*Proxy, error) {
+func New(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *ca.Authority, nameservers resolver) (*Proxy, error) {
 	p := &Proxy{
 		configPath:  configPath,
 		transport:   transport,

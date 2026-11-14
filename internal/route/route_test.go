@@ -320,6 +320,8 @@ func TestParseTarget(t *testing.T) {
 	}{
 		"http://up-a":      {scheme: "http", host: "up-a"},
 		"https://up-a":     {scheme: "https", host: "up-a"},
+		"HTTP://up-a":      {scheme: "http", host: "up-a"},
+		"HTTPS://up-a:443": {scheme: "https", host: "up-a:443"},
 		"up-a":             {scheme: "http", host: "up-a"},
 		"up-a:8080":        {scheme: "http", host: "up-a:8080"},
 		"[::1]:8080":       {scheme: "http", host: "[::1]:8080"},
@@ -351,7 +353,7 @@ func TestParseTarget(t *testing.T) {
 			t.Fatalf("ParseTarget(%q).URL = %v, want scheme=%q host=%q", upstream, target.URL, want.scheme, want.host)
 		}
 	}
-	for _, upstream := range []string{"ftp://x", "http://", "up-a:0", "up-a:bad", "::1"} {
+	for _, upstream := range []string{"ftp://x", "http://", "http://:8080", "http://up-a:bad", "http://up-a:99999", "http://up-a:", "up-a:0", "up-a:bad", "::1"} {
 		if _, err := ParseTarget(upstream); err == nil {
 			t.Fatalf("ParseTarget(%q) accepted", upstream)
 		}

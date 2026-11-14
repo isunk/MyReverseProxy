@@ -82,13 +82,14 @@ func (r *Recorder) Record(entry Entry) error {
 	return nil
 }
 
-// Close 补全 entries 数组与根对象尾部、flush 并关闭文件；幂等，停用后仍能补尾。
+// Close 补全 entries 数组与根对象尾部、flush 并关闭文件；幂等，停用后仍能补尾。置位 stopped 使 Close 之后到达的 Record 直接短路，避免向已关闭的缓冲写入而静默丢数据。
 func (r *Recorder) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.file == nil {
 		return nil
 	}
+	r.stopped = true
 	if _, err := r.writer.WriteString(`]}}`); err != nil {
 		r.file.Close()
 		r.file = nil

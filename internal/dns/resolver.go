@@ -142,18 +142,23 @@ func (r *Resolver) connect(ctx context.Context, network, address string) (net.Co
 }
 
 // lookup 命中未过期缓存即返回；否则合并同域并发解析（首个请求发起 DNS 查询，其余等待同一结果）并写入缓存。第二个返回值标记结果来自缓存，调用方据此决定是否重试。
-func (r *Resolver) lookup(ctx context.Context, host, port string) ([]string, bool, error) {
+func (r *Resolver) lookup(ctx context.Context, host, port string) (targets []string, fromCache bool, err error) {
 	key := net.JoinHostPort(host, port)
-	if targets, ok := r.cache.Get(key); ok {
-		return targets, true, nil
+	if cached, ok := r.cache.Get(key); ok {
+		return cached, true, nil
 	}
 	call, leader := r.inflight.Begin(key)
 	if !leader {
-		targets, err := call.WaitContext(ctx)
+		targets, err = call.WaitContext(ctx)
 		return targets, false, err
 	}
-	targets, err := r.resolve(ctx, host, port)
-	r.inflight.Finish(key, call, targets, err)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("dns resolve %s panic: %v", key, recovered)
+		}
+		r.inflight.Finish(key, call, targets, err)
+	}() // 兜底：resolve panic 时转为错误返回并注销 inflight，避免同域并发解析永久阻塞在 Wait、单次解析异常不中断进程
+	targets, err = r.resolve(ctx, host, port)
 	if err != nil {
 		return nil, false, err
 	}

@@ -28,6 +28,7 @@ func TestSocks5ReadCommand(t *testing.T) {
 		{"udp_associate", []byte{0x05, 0x03, 0x00, 0x01}, socks5CommandUDPAssociate, socks5AtypIPv4, socks5RepSuccess},
 		{"bind_unsupported", []byte{0x05, 0x02, 0x00, 0x01}, 0, 0, socks5RepCommandUnsupported},
 		{"bad_version", []byte{0x04, 0x01, 0x00, 0x01}, 0, 0, socks5RepGeneralFailure},
+		{"bad_rsv", []byte{0x05, 0x01, 0x01, 0x01}, 0, 0, socks5RepGeneralFailure},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,6 +101,41 @@ func socks5Connect(t *testing.T, proxyAddr, target string) net.Conn {
 		t.Fatalf("connect reply rep = %d, want success", reply[1])
 	}
 	return conn
+}
+
+// TestSocks5_UDPAssociateBadAtypRejected 验证 UDP ASSOCIATE 请求带非法 ATYP 时写回 0x08（与 CONNECT 分支一致），而非静默进入中继。
+func TestSocks5_UDPAssociateBadAtypRejected(t *testing.T) {
+	servers := testNameservers(t)
+	proxy, err := New(testutil.ConfigFile(t, "r.yaml", "servers: []\n"), NewTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	proxyURL := startListener(t, proxy)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		t.Fatalf("write greeting: %v", err)
+	}
+	reply := make([]byte, 2)
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		t.Fatalf("read greeting reply: %v", err)
+	}
+	request := []byte{0x05, 0x03, 0x00, 0x05} // UDP ASSOCIATE + 非法 ATYP 0x05
+	if _, err := conn.Write(request); err != nil {
+		t.Fatalf("write associate: %v", err)
+	}
+	reply = make([]byte, 10)
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		t.Fatalf("read associate reply: %v", err)
+	}
+	if reply[1] != socks5RepAtypUnsupported {
+		t.Fatalf("associate reply rep = %d, want %d (atyp unsupported)", reply[1], socks5RepAtypUnsupported)
+	}
 }
 
 func TestSocks5_ConnectRelaysTCP(t *testing.T) {
