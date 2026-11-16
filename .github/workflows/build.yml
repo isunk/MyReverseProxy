@@ -21,10 +21,12 @@ jobs:
             goos: linux
             goarch: arm64
             ext: ""
+            upx: true
           - os: windows-latest
             goos: windows
             goarch: amd64
             ext: ".exe"
+            upx: false
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -45,6 +47,17 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           go build -trimpath -ldflags "-s -w" -o "mrp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}" ./cmd/mrp
+
+      - name: Install UPX
+        if: ${{ matrix.upx }}
+        run: |
+          curl -fsSL -o upx.tar.xz https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz
+          tar -xf upx.tar.xz
+          echo "$GITHUB_WORKSPACE/upx-4.2.4-amd64_linux" >> "$GITHUB_PATH"
+
+      - name: Compress with UPX
+        if: ${{ matrix.upx }}
+        run: upx -9 --lzma "mrp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
