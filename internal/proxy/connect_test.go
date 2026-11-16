@@ -247,6 +247,72 @@ func TestConnect_IPDomainMITM(t *testing.T) {
 	}
 }
 
+// 客户端复用 TLS 会话票证：同一 domain 的连续 MITM 连接第二次握手应命中会话恢复，避免每次重新完整握手。
+func TestMITM_SessionResumption(t *testing.T) {
+	upstream := recordingServer(t, "resume")
+	caCert, caKey := testutil.AuthorityCA(t)
+	certPath, keyPath := testutil.WriteCertFiles(t, caCert, caKey)
+	tlsConfig, authority, err := ca.Load(certPath, keyPath, true)
+	if err != nil {
+		t.Fatalf("ca.Load: %v", err)
+	}
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers:\n  - domain: resume.example.org\n    routes:\n      - prefix: /\n        upstream: "+upstream.URL+"\n")
+	servers := testNameservers(t)
+	proxy, err := New(configPath, NewTransport(servers.DialContext), tlsConfig, authority, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	addr := strings.TrimPrefix(startListener(t, proxy), "http://")
+
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	lru := tls.NewLRUClientSessionCache(1)
+
+	dial := func() *tls.Conn {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(conn, "CONNECT resume.example.org:443 HTTP/1.1\r\nHost: resume.example.org:443\r\n\r\n")
+		if code := readConnectResponse(t, bufio.NewReader(conn)); code != 200 {
+			t.Fatalf("CONNECT: want 200, got %d", code)
+		}
+		inner := tls.Client(conn, &tls.Config{
+			RootCAs:            roots,
+			ServerName:         "resume.example.org",
+			NextProtos:         []string{"http/1.1"},
+			ClientSessionCache: lru,
+		})
+		if err := inner.HandshakeContext(t.Context()); err != nil {
+			t.Fatalf("handshake: %v", err)
+		}
+		return inner
+	}
+
+	// 第一次连接完整握手，并通过一次 HTTP 往返读取服务端下发的会话票证，使客户端缓存该会话
+	first := dial()
+	fmt.Fprintf(first, "GET /resume-path HTTP/1.1\r\nHost: resume.example.org\r\nConnection: close\r\n\r\n")
+	resp, err := http.ReadResponse(bufio.NewReader(first), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("read first response: %v", err)
+	}
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatalf("drain first response: %v", err)
+	}
+	resp.Body.Close()
+	if first.ConnectionState().DidResume {
+		t.Fatal("first handshake must not resume")
+	}
+	first.Close()
+
+	second := dial()
+	if !second.ConnectionState().DidResume {
+		t.Fatal("second handshake must resume via shared session ticket key")
+	}
+	second.Close()
+}
+
 // 配置 domain 为 * 的 HTTPS 路由：任意域名的 CONNECT 均走 MITM 并按 CONNECT 目标域名签发证书，内层请求照常路由转发
 func TestConnect_WildcardDomainMITM(t *testing.T) {
 	upstream := recordingServer(t, "wild")

@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -138,11 +139,29 @@ func Load(certPath, keyPath string, explicitPair bool) (*tls.Config, *Authority,
 		return nil, nil, errors.New("private key type is not supported")
 	}
 	authority := New(caCert, signer)
-	return &tls.Config{
+	cfg := &tls.Config{
 		GetCertificate: authority.GetCertificate,
 		NextProtos:     []string{"http/1.1"},
 		MinVersion:     tls.VersionTLS12,
-	}, authority, nil
+	}
+	// MITM 按连接 Clone 模板；若不固定会话票证密钥，每个克隆各自随机生成密钥，客户端跨连接的会话恢复必然失败，每次都要重新完整握手
+	keys, err := sessionTicketKeys()
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg.SetSessionTicketKeys(keys)
+	return cfg, authority, nil
+}
+
+// sessionTicketKeys 生成固定会话票证密钥供所有 MITM 连接共享，实现客户端 TLS 会话跨连接恢复。
+func sessionTicketKeys() ([][32]byte, error) {
+	keys := make([][32]byte, 2)
+	for i := range keys {
+		if _, err := io.ReadFull(rand.Reader, keys[i][:]); err != nil {
+			return nil, err
+		}
+	}
+	return keys, nil
 }
 
 func fileExists(path string) bool {
