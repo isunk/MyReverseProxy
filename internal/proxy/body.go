@@ -6,12 +6,10 @@ import (
 	"net/http"
 	"time"
 
+	"mrp/internal/capture"
 	"mrp/internal/frontend"
 	"mrp/internal/log"
 )
-
-// captureBodyLimit 单个请求/响应 body 记入 HAR 的最大字节数，超出部分截断。
-const captureBodyLimit = 1 << 20
 
 // countingReadCloser 统计从底层读出的字节数，供 Content-Length 未知的请求体在转发完成后回填精确大小。
 type countingReadCloser struct {
@@ -62,11 +60,10 @@ func newCapturedRequest(start time.Time, protocol string, port int, domain strin
 // captureWriter 在响应回传客户端的同时记录状态码、消息头与 body 前缀，其余能力透传给底层 writer。
 type captureWriter struct {
 	frontend.StatusRecorder
-	wroteHeader bool
-	header      http.Header
-	prefix      []byte
-	total       int64
-	truncated   bool
+	header    http.Header
+	prefix    []byte
+	total     int64
+	truncated bool
 }
 
 func newCaptureWriter(writer http.ResponseWriter) *captureWriter {
@@ -74,24 +71,23 @@ func newCaptureWriter(writer http.ResponseWriter) *captureWriter {
 }
 
 func (w *captureWriter) WriteHeader(code int) {
-	if w.wroteHeader {
+	if w.StatusRecorder.WroteHeader() {
 		return
 	}
-	w.wroteHeader = true
 	w.header = w.ResponseWriter.Header().Clone()
 	w.StatusRecorder.WriteHeader(code)
 }
 
 func (w *captureWriter) Write(data []byte) (int, error) {
-	if !w.wroteHeader {
+	if !w.StatusRecorder.WroteHeader() {
 		w.WriteHeader(http.StatusOK)
 	}
 	w.total += int64(len(data))
-	if w.total > captureBodyLimit {
+	if w.total > capture.BodyLimit {
 		w.truncated = true
 	}
-	if len(w.prefix) < captureBodyLimit {
-		take := min(captureBodyLimit-len(w.prefix), len(data))
+	if len(w.prefix) < capture.BodyLimit {
+		take := min(capture.BodyLimit-len(w.prefix), len(data))
 		w.prefix = append(w.prefix, data[:take]...)
 	}
 	return w.ResponseWriter.Write(data)
@@ -103,15 +99,15 @@ func captureRequestBody(request *http.Request) (prefix []byte, size int64, trunc
 		return nil, request.ContentLength, false, nil
 	}
 	original := request.Body
-	raw, readErr := io.ReadAll(io.LimitReader(original, captureBodyLimit+1))
+	raw, readErr := io.ReadAll(io.LimitReader(original, capture.BodyLimit+1))
 	if readErr != nil {
 		// 客户端中断或连接错误时以已读部分继续转发，仅告警抓包不完整，避免因抓包影响代理主流程
 		log.Warn("request body read failed err=%v", readErr)
 	}
-	truncated = len(raw) > captureBodyLimit
+	truncated = len(raw) > capture.BodyLimit
 	prefix = raw
 	if truncated {
-		prefix = raw[:captureBodyLimit]
+		prefix = raw[:capture.BodyLimit]
 	}
 	if request.ContentLength >= 0 {
 		request.Body = &forwardedBody{Reader: io.MultiReader(bytes.NewReader(raw), original), original: original}

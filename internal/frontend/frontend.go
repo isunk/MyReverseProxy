@@ -128,6 +128,11 @@ func (w *StatusRecorder) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// WroteHeader 返回是否已写入响应头，供嵌入方判断是否需要克隆头快照。
+func (w *StatusRecorder) WroteHeader() bool {
+	return w.wroteHeader
+}
+
 // Flush 转发到底层，使流式响应（如 SSE、长轮询）的 Flusher 能力不被包装层遮蔽。
 func (w *StatusRecorder) Flush() {
 	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {

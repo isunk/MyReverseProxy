@@ -168,8 +168,3 @@ func socks5DecodeHost(atyp byte, raw []byte) (string, bool) {
 		return "", false
 	}
 }
-
-// socks5WriteReply 回写 SOCKS5 响应，BND.ADDR 固定填 IPv4 0.0.0.0:0。
-func socks5WriteReply(writer io.Writer, rep byte) error {
-	return socks5WriteReplyAddr(writer, rep, net.IPv4zero, 0) // 0.0.0.0:0 为占位值，RFC 允许省略，客户端不依赖该值
-}

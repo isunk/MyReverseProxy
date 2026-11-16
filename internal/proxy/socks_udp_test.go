@@ -206,7 +206,7 @@ func TestSocks5_UDPAssociateSurvivesControlData(t *testing.T) {
 func TestDialUDPTarget_EmptyResolveReturnsError(t *testing.T) {
 	relay := newSocks5UDPRelay(&net.UDPConn{}, func(context.Context, string, int) ([]string, error) {
 		return nil, nil
-	})
+	}, time.Minute)
 	if _, err := relay.dialUDPTarget("example.com", 80); err == nil {
 		t.Fatal("dialUDPTarget accepted empty resolve result")
 	}
@@ -260,5 +260,64 @@ func TestSocks5_UDPAssociateResolvesDomainViaNameservers(t *testing.T) {
 	response, ok := parseSocks5UDPHeader(buffer[:n])
 	if !ok || string(response.data) != string(payload) {
 		t.Fatalf("response = %+v ok=%v, want payload %q", response, ok, payload)
+	}
+}
+
+// TestSocks5_UDPIdleTimeoutClosesRelay 验证空闲超时后中继套接字关闭：首个报文正常收发，等待 udpIdleTimeout 后再发报文无回复（relay.readLoop 超时退出触发 relay.close）。
+func TestSocks5_UDPIdleTimeoutClosesRelay(t *testing.T) {
+	echoAddr := testutil.UDPEchoServer(t)
+	servers := testNameservers(t)
+	proxy, err := New(testutil.ConfigFile(t, "r.yaml", "servers: []\n"), NewTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	proxy.udpIdleTimeout = 150 * time.Millisecond
+	proxyURL := startListener(t, proxy)
+	addr := strings.TrimPrefix(proxyURL, "http://")
+
+	tcpConn, relayAddr := socks5UDPAssociate(t, addr)
+	defer tcpConn.Close()
+
+	echoHost, echoPort, err := net.SplitHostPort(echoAddr)
+	if err != nil {
+		t.Fatalf("split echo addr: %v", err)
+	}
+	relayConn, err := net.Dial("udp", relayAddr)
+	if err != nil {
+		t.Fatalf("dial relay: %v", err)
+	}
+	defer relayConn.Close()
+
+	port, err := strconv.Atoi(echoPort)
+	if err != nil {
+		t.Fatalf("atoi echo port: %v", err)
+	}
+	header := []byte{0x00, 0x00, 0x00, 0x01}
+	header = append(header, net.ParseIP(echoHost).To4()...)
+	header = append(header, byte(port>>8), byte(port))
+	payload := []byte("first packet before idle")
+	packet := append(header, payload...)
+	if _, err := relayConn.Write(packet); err != nil {
+		t.Fatalf("write first: %v", err)
+	}
+	_ = relayConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buffer := make([]byte, 64<<10)
+	n, err := relayConn.Read(buffer)
+	if err != nil {
+		t.Fatalf("read first: %v", err)
+	}
+	response, ok := parseSocks5UDPHeader(buffer[:n])
+	if !ok || string(response.data) != string(payload) {
+		t.Fatalf("first response = %+v ok=%v, want %q", response, ok, payload)
+	}
+
+	time.Sleep(proxy.udpIdleTimeout + 250*time.Millisecond)
+
+	if _, err := relayConn.Write(packet); err != nil {
+		t.Fatalf("write after idle: %v", err)
+	}
+	_ = relayConn.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := relayConn.Read(buffer); err == nil {
+		t.Fatal("relay still alive after idle timeout")
 	}
 }

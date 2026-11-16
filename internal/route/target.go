@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"strconv"
 	"strings"
+
+	"mrp/internal/netutil"
 )
 
 // Target 转发目标：URL 与 Root 互斥非空者生效；Summary 预计算目标描述供日志直接打印。
@@ -43,7 +44,7 @@ func validateURLHost(parsed *url.URL, upstream string) error {
 		return fmt.Errorf("upstream %q is missing host", upstream)
 	}
 	if port := parsed.Port(); port != "" {
-		if !validPort(port) {
+		if _, ok := netutil.ParsePort(port); !ok {
 			return fmt.Errorf("upstream %q port must be 1-65535", upstream)
 		}
 	} else if strings.HasSuffix(parsed.Host, ":") {
@@ -59,7 +60,7 @@ func parseTargetHost(upstream string) (*Target, error) {
 		if host == "" {
 			return nil, fmt.Errorf("upstream %q is missing host", upstream)
 		}
-		if !validPort(port) {
+		if _, ok := netutil.ParsePort(port); !ok {
 			return nil, fmt.Errorf("upstream %q port must be 1-65535", upstream)
 		}
 		remote.Host = upstream
@@ -69,12 +70,6 @@ func parseTargetHost(upstream string) (*Target, error) {
 		remote.Host = upstream
 	}
 	return &Target{URL: &remote, Summary: remote.String()}, nil
-}
-
-// validPort 校验端口为 1-65535 的纯十进制
-func validPort(port string) bool {
-	number, err := strconv.Atoi(port)
-	return err == nil && strconv.Itoa(number) == port && number >= 1 && number <= 65535
 }
 
 // isLocalPath 判断 upstream 是否为本地目录：含 / 或 \ 分隔符即视为目录（覆盖盘符、UNC 路径），"." 与 ".." 也按目录处理，其余裸词按远程上游解析。

@@ -12,6 +12,7 @@ import (
 
 	"mrp/internal/cache"
 	"mrp/internal/log"
+	"mrp/internal/netutil"
 	"mrp/internal/singleflight"
 )
 
@@ -267,8 +268,7 @@ func normalizeNameserver(entry string) (string, error) {
 	if ip := net.ParseIP(host); ip == nil {
 		return "", fmt.Errorf("dns nameserver %q is not an ip address", entry)
 	}
-	numericPort, err := strconv.Atoi(port)
-	if err != nil || numericPort < 1 || numericPort > 65535 {
+	if _, ok := netutil.ParsePort(port); !ok {
 		return "", fmt.Errorf("dns nameserver %q port must be 1-65535", entry)
 	}
 	return net.JoinHostPort(host, port), nil

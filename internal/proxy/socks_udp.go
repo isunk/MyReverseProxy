@@ -2,9 +2,7 @@ package proxy
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
 	"strconv"
 	"sync"
@@ -14,19 +12,6 @@ import (
 	"mrp/internal/log"
 	"mrp/internal/netutil"
 )
-
-// socks5UDPIdleTimeout 是 SOCKS5 UDP 关联的空闲超时：超过该时间无 UDP 报文的中继套接字自动关闭。
-const socks5UDPIdleTimeout = 30 * time.Second
-
-// socks5UDPHeader 解析后的 SOCKS5 UDP 报文头：host/port 为解码后的目标地址，data 为净荷，atyp/addr 为原始地址表示（供响应头原样回写），frag 非零表示分片（不支持重组）。
-type socks5UDPHeader struct {
-	host string
-	port int
-	data []byte
-	atyp byte
-	addr []byte
-	frag byte
-}
 
 // serveSocks5UDP 处理 UDP ASSOCIATE 命令：绑定本地 127.0.0.1 的临时 UDP 中继套接字并回复其地址，随后阻塞至 TCP 控制连接关闭或中继空闲超时；TCP 关闭后释放中继及其全部会话。
 func (p *Proxy) serveSocks5UDP(client net.Conn) {
@@ -42,7 +27,7 @@ func (p *Proxy) serveSocks5UDP(client net.Conn) {
 		return
 	}
 	log.Info("socks5 udp associated addr=%s", relayAddr)
-	relay := newSocks5UDPRelay(relayConn, p.nameservers.Resolve)
+	relay := newSocks5UDPRelay(relayConn, p.nameservers.Resolve, p.udpIdleTimeout)
 	relayDone := make(chan struct{})
 	go func() {
 		defer close(relayDone)
@@ -70,46 +55,35 @@ func (p *Proxy) serveSocks5UDP(client net.Conn) {
 	}
 }
 
-// socks5WriteReplyAddr 回写 SOCKS5 响应，BND.ADDR 为指定的 IPv4 地址与端口；常规回复用 0.0.0.0:0，UDP ASSOCIATE 回复用中继套接字实际地址。
-func socks5WriteReplyAddr(writer io.Writer, rep byte, ip net.IP, port int) error {
-	addr := ip.To4()
-	header := []byte{
-		socks5Version, rep, 0x00, socks5AtypIPv4,
-		addr[0], addr[1], addr[2], addr[3],
-		byte(port >> 8), byte(port),
-	}
-	_, err := writer.Write(header)
-	return err
-}
-
 // socks5UDPRelay 管理一个 SOCKS5 UDP 中继：监听套接字接收客户端报文转发到目标，每个目标一个会话（已连接 UDP 套接字）回传响应；resolve 经自定义 DNS 解析目标地址。
 type socks5UDPRelay struct {
-	conn       *net.UDPConn
-	clientAddr atomic.Pointer[net.UDPAddr]
-	mu         sync.Mutex
-	sessions   map[string]*socks5UDPSession
-	resolve    func(context.Context, string, int) ([]string, error)
-	closed     atomic.Bool
+	conn        *net.UDPConn
+	clientAddr  atomic.Pointer[net.UDPAddr]
+	mu          sync.Mutex
+	sessions    map[string]*socks5UDPSession
+	resolve     func(context.Context, string, int) ([]string, error)
+	closed      atomic.Bool
+	idleTimeout time.Duration
 }
 
-// socks5UDPSession 一个客户端→目标方向的 UDP 会话：target 为已连接目标的对端套接字，headerPrefix 为该会话固定的响应头前缀，resp 为复用缓冲省去逐报文分配；key 为目标地址键，供 O(1) 移除。
+// socks5UDPSession 一个客户端→目标方向的 UDP 会话：target 为已连接目标的对端套接字，headerPrefix 为该会话固定的响应头前缀，buffer 为复用缓冲省去逐报文分配；key 为目标地址键，供 O(1) 移除。
 type socks5UDPSession struct {
 	target       *net.UDPConn
 	relay        *socks5UDPRelay
 	key          string
 	headerPrefix []byte
-	resp         []byte
+	buffer       []byte
 }
 
-func newSocks5UDPRelay(conn *net.UDPConn, resolve func(context.Context, string, int) ([]string, error)) *socks5UDPRelay {
-	return &socks5UDPRelay{conn: conn, sessions: make(map[string]*socks5UDPSession), resolve: resolve}
+func newSocks5UDPRelay(conn *net.UDPConn, resolve func(context.Context, string, int) ([]string, error), idleTimeout time.Duration) *socks5UDPRelay {
+	return &socks5UDPRelay{conn: conn, sessions: make(map[string]*socks5UDPSession), resolve: resolve, idleTimeout: idleTimeout}
 }
 
 // readLoop 读取客户端报文并转发：首个报文记录客户端源地址，分片或格式错误报文丢弃，读超时（空闲）或套接字关闭时返回。
 func (r *socks5UDPRelay) readLoop() {
 	buffer := make([]byte, netutil.UDPBufferSize)
 	for {
-		_ = r.conn.SetReadDeadline(time.Now().Add(socks5UDPIdleTimeout))
+		_ = r.conn.SetReadDeadline(time.Now().Add(r.idleTimeout))
 		n, client, err := r.conn.ReadFromUDP(buffer)
 		if err != nil {
 			return
@@ -197,7 +171,7 @@ func dialUDP(address string) (*net.UDPConn, error) {
 func (s *socks5UDPSession) readLoop() {
 	buffer := make([]byte, netutil.UDPBufferSize)
 	for {
-		_ = s.target.SetReadDeadline(time.Now().Add(socks5UDPIdleTimeout))
+		_ = s.target.SetReadDeadline(time.Now().Add(s.relay.idleTimeout))
 		n, err := s.target.Read(buffer)
 		if err != nil {
 			break
@@ -211,16 +185,16 @@ func (s *socks5UDPSession) readLoop() {
 	s.relay.removeSession(s)
 }
 
-// wrap 用会话固定的响应头前缀与复用缓冲打包净荷，避免每报文一次堆分配；resp 仅在净荷超出容量时增长。
+// wrap 用会话固定的响应头前缀与复用缓冲打包净荷，避免每报文一次堆分配；buffer 仅在净荷超出容量时增长。
 func (s *socks5UDPSession) wrap(data []byte) []byte {
 	total := len(s.headerPrefix) + len(data)
-	if cap(s.resp) < total {
-		s.resp = make([]byte, total)
+	if cap(s.buffer) < total {
+		s.buffer = make([]byte, total)
 	}
-	resp := s.resp[:total]
-	copy(resp, s.headerPrefix)
-	copy(resp[len(s.headerPrefix):], data)
-	return resp
+	out := s.buffer[:total]
+	copy(out, s.headerPrefix)
+	copy(out[len(s.headerPrefix):], data)
+	return out
 }
 
 // removeSession 关闭并移除指定会话，按会话 key 直接定位。
@@ -243,81 +217,4 @@ func (r *socks5UDPRelay) close() {
 		_ = session.target.Close()
 		delete(r.sessions, key)
 	}
-}
-
-// parseSocks5UDPHeader 解析 SOCKS5 UDP 报文头（RSV 2B + FRAG 1B + ATYP + DST.ADDR + DST.PORT + DATA）。
-func parseSocks5UDPHeader(packet []byte) (socks5UDPHeader, bool) {
-	var header socks5UDPHeader
-	if len(packet) < 4 || packet[0] != 0 || packet[1] != 0 {
-		return header, false
-	}
-	header.frag = packet[2]
-	atyp := packet[3]
-	offset := 4
-	switch atyp {
-	case socks5AtypIPv4:
-		if len(packet) < offset+net.IPv4len+2 {
-			return header, false
-		}
-		header.atyp = atyp
-		header.addr = packet[offset : offset+net.IPv4len]
-		offset += net.IPv4len
-	case socks5AtypIPv6:
-		if len(packet) < offset+net.IPv6len+2 {
-			return header, false
-		}
-		header.atyp = atyp
-		header.addr = packet[offset : offset+net.IPv6len]
-		offset += net.IPv6len
-	case socks5AtypDomain:
-		if len(packet) < offset+1 {
-			return header, false
-		}
-		length := int(packet[offset])
-		offset++
-		if length == 0 || len(packet) < offset+length+2 {
-			return header, false
-		}
-		header.atyp = atyp
-		header.addr = packet[offset : offset+length]
-		offset += length
-	default:
-		return header, false
-	}
-	host, ok := socks5DecodeHost(header.atyp, header.addr)
-	if !ok {
-		return header, false
-	}
-	header.host = host
-	header.port = int(binary.BigEndian.Uint16(packet[offset : offset+2]))
-	offset += 2
-	header.data = packet[offset:]
-	return header, true
-}
-
-// encodeSocks5UDPResponse 组装完整响应报文：固定响应头前缀拼净荷；热路径改用会话内复用缓冲，见 socks5UDPSession.wrap。
-func encodeSocks5UDPResponse(atyp byte, addr []byte, port int, data []byte) []byte {
-	prefix := socks5ResponsePrefix(atyp, addr, port)
-	out := make([]byte, len(prefix)+len(data))
-	copy(out, prefix)
-	copy(out[len(prefix):], data)
-	return out
-}
-
-// socks5ResponsePrefix 预计算一份固定的响应头前缀（RSV+FRAG+ATYP+DST.ADDR+DST.PORT），domain 类型在地址前补长度字节，供每报文复用。
-func socks5ResponsePrefix(atyp byte, addr []byte, port int) []byte {
-	addrOffset := 0
-	if atyp == socks5AtypDomain {
-		addrOffset = 1
-	}
-	prefix := make([]byte, 4+addrOffset+len(addr)+2)
-	prefix[3] = atyp
-	addrStart := 4
-	if atyp == socks5AtypDomain {
-		prefix[addrStart] = byte(len(addr))
-		addrStart++
-	}
-	copy(prefix[addrStart:], addr)
-	binary.BigEndian.PutUint16(prefix[addrStart+len(addr):], uint16(port))
-	return prefix
 }

@@ -239,23 +239,26 @@ func TestHostOnly_Lowercase(t *testing.T) {
 // 无端口 IPv6 括号形态剥括号对齐配置键；带端口形态由 SplitHostPort 正常拆分
 func TestHostAndPort_IPv6Brackets(t *testing.T) {
 	cases := []struct {
+		name     string
 		host     string
 		fallback int
 		wantName string
 		wantPort int
 	}{
-		{"[::1]", 443, "::1", 443},
-		{"[::1]:8080", 443, "::1", 8080},
-		{"::1", 443, "::1", 443},
-		{"example.com", 443, "example.com", 443},
-		{"example.com:0", 443, "example.com", 443},
-		{":443", 443, "", 443},
+		{"bare_ipv6", "[::1]", 443, "::1", 443},
+		{"ipv6_with_port", "[::1]:8080", 443, "::1", 8080},
+		{"bare_ipv6_no_port", "::1", 443, "::1", 443},
+		{"fqdn", "example.com", 443, "example.com", 443},
+		{"fqdn_zero_port", "example.com:0", 443, "example.com", 443},
+		{"only_port", ":443", 443, "", 443},
 	}
 	for _, tc := range cases {
-		name, port := hostAndPort(tc.host, tc.fallback)
-		if name != tc.wantName || port != tc.wantPort {
-			t.Fatalf("hostAndPort(%q, %d) = (%q, %d), want (%q, %d)", tc.host, tc.fallback, name, port, tc.wantName, tc.wantPort)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			name, port := hostAndPort(tc.host, tc.fallback)
+			if name != tc.wantName || port != tc.wantPort {
+				t.Fatalf("hostAndPort(%q, %d) = (%q, %d), want (%q, %d)", tc.host, tc.fallback, name, port, tc.wantName, tc.wantPort)
+			}
+		})
 	}
 	if got := hostOnly("[::1]"); got != "::1" {
 		t.Fatalf("hostOnly bracketed bare: got %q", got)
@@ -295,25 +298,29 @@ func TestTargetOf_Normalization(t *testing.T) {
 
 func TestAbsoluteTarget(t *testing.T) {
 	cases := []struct {
-		protocol, domain string
-		port             int
-		requestURL       string
-		want             string
+		name     string
+		protocol string
+		domain   string
+		port     int
+		request  string
+		want     string
 	}{
-		{"http", "a.local", 80, "http://a.local/api/x?x=1", "http://a.local:80/api/x?x=1"},
-		{"https", "a.local", 443, "https://a.local/x", "https://a.local:443/x"},
-		{"http", "a.local", 8080, "http://a.local/x", "http://a.local:8080/x"},
-		{"http", "::1", 8080, "http://::1/x", "http://[::1]:8080/x"},
-		{"http", "a.local", 80, "http://a.local/x?a=1&b=2", "http://a.local:80/x?a=1&b=2"},
+		{"http_default_port", "http", "a.local", 80, "http://a.local/api/x?x=1", "http://a.local:80/api/x?x=1"},
+		{"https_default_port", "https", "a.local", 443, "https://a.local/x", "https://a.local:443/x"},
+		{"http_custom_port", "http", "a.local", 8080, "http://a.local/x", "http://a.local:8080/x"},
+		{"ipv6_host", "http", "::1", 8080, "http://::1/x", "http://[::1]:8080/x"},
+		{"query_preserved", "http", "a.local", 80, "http://a.local/x?a=1&b=2", "http://a.local:80/x?a=1&b=2"},
 	}
 	for _, tc := range cases {
-		requestURL, err := url.Parse(tc.requestURL)
-		if err != nil {
-			t.Fatalf("url.Parse(%q): %v", tc.requestURL, err)
-		}
-		if got := absoluteTarget(tc.protocol, tc.port, tc.domain, requestURL); got != tc.want {
-			t.Fatalf("absoluteTarget(%q, %d, %q) = %q, want %q", tc.protocol, tc.port, tc.domain, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			requestURL, err := url.Parse(tc.request)
+			if err != nil {
+				t.Fatalf("url.Parse(%q): %v", tc.request, err)
+			}
+			if got := absoluteTarget(tc.protocol, tc.port, tc.domain, requestURL); got != tc.want {
+				t.Fatalf("absoluteTarget(%q, %d, %q) = %q, want %q", tc.protocol, tc.port, tc.domain, got, tc.want)
+			}
+		})
 	}
 }
 

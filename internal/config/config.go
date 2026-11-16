@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 	"mrp/internal/log"
+	"mrp/internal/netutil"
 	"mrp/internal/route"
 )
 
@@ -80,7 +81,7 @@ func buildTable(config *Config) (*route.Table, error) {
 	table := route.NewTable()
 	for i, server := range config.Servers {
 		// 剥离 FQDN 尾点，与请求侧 normalizeDomain 对齐：配置 example.org. 与请求域 example.org 视为同一域
-		name := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(server.Domain)), ".")
+		name := netutil.NormalizeDomain(strings.TrimSpace(server.Domain))
 		if name == "" {
 			return nil, fmt.Errorf("servers[%d]: domain is required", i)
 		}
@@ -131,7 +132,7 @@ func buildServerEntry(index int, server Server) (*route.Entry, error) {
 		return nil, fmt.Errorf("servers[%d] domain %q protocol %q is not supported", index, server.Domain, server.Protocol)
 	}
 	port := server.Port
-	if port != 0 && (port < 1 || port > 65535) {
+	if port != 0 && !netutil.ValidPortInt(port) {
 		return nil, fmt.Errorf("servers[%d] domain %q port %d must be 1-65535", index, server.Domain, server.Port)
 	}
 	return &route.Entry{Protocol: protocol, Port: port}, nil

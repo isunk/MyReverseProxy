@@ -17,6 +17,7 @@ import (
 	"mrp/internal/dns"
 	"mrp/internal/frontend"
 	"mrp/internal/log"
+	"mrp/internal/netutil"
 	"mrp/internal/proxy"
 )
 
@@ -69,7 +70,7 @@ func parseStartupOptions() (startupOptions, error) {
 		return opts, err
 	}
 	opts.logLevel = level
-	if opts.port < 1 || opts.port > 65535 {
+	if !netutil.ValidPortInt(opts.port) {
 		return opts, fmt.Errorf("--port %d: must be 1-65535", opts.port)
 	}
 	if opts.dnsTimeout <= 0 {

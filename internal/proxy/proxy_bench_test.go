@@ -242,6 +242,9 @@ func postExpectContinue(t testing.TB, client *http.Client, target string, payloa
 
 // TestMITM_ColdLatency 量化首次请求的代价：证书未签发、DNS 未解析、上游连接为冷。只跑一次，用来判断启动预热是否值得做。
 func TestMITM_ColdLatency(t *testing.T) {
+	if testing.Short() {
+		t.Skip("冷启动量化依赖真实网络与证书签发，跳过短模式")
+	}
 	env := newBenchEnv(t)
 
 	env.authority.ClearCache()
@@ -332,6 +335,9 @@ func tunnelUpload(proxyAddr, target string, payload []byte) (int64, error) {
 
 // TestDNS_FallbackLatency 量化首台 DNS 服务器不可用时冷解析的代价：解析按配置顺序逐台尝试，前一台要等满单次超时才切换。
 func TestDNS_FallbackLatency(t *testing.T) {
+	if testing.Short() {
+		t.Skip("DNS 故障切换量化依赖真实超时等待，跳过短模式")
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		io.WriteString(writer, "ok")
 	}))

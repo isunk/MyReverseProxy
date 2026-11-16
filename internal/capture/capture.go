@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -19,7 +20,8 @@ const (
 const header = `{"log":{"version":"1.2","creator":{"name":"` + creatorName + `","version":"` + creatorVersion + `"},"pages":[],"entries":[` // 打开文件时写入的前端，entries 数组随后由 Record 增量填充，末尾由 Close 补全
 
 var ErrLimitReached = errors.New("capture file size limit reached") // 文件累计达到 limit 时由 Record 返回，调用方据此告警一次；此后 Record 短路返回 nil
-// Recorder 序列化并发写盘：mu 串行化 Record 保证单条 entry 完整不交错；写失败或达到 limit 后 stopped 置位，后续 Record 直接短路。
+
+// Recorder 序列化并发写盘：mu 仅串行化写盘（逗号、entry、flush），json.Marshal 在锁外完成以避免序列化耗时阻塞并发请求；stopped 为 atomic 以支持锁外快速短路检查，写失败或达到 limit 后置位，后续 Record 直接返回。
 type Recorder struct {
 	file     *os.File
 	writer   *bufio.Writer
@@ -28,7 +30,7 @@ type Recorder struct {
 	wroteAny bool
 	bytes    int64
 	limit    int64
-	stopped  bool
+	stopped  atomic.Bool
 }
 
 // New 创建（或截断）输出文件并写 HAR 头部；创建失败返回 error，由调用方降级为抓包关闭。
@@ -49,34 +51,37 @@ func New(path string, limit int64) (*Recorder, error) {
 // Path 返回输出文件路径，供调用方在告警日志中定位。
 func (r *Recorder) Path() string { return r.path }
 
-// Record 追加一条 entry：非首条前写逗号，达到 limit 返回 ErrLimitReached 并停用；写盘或序列化失败返回原错误并停用，后续调用短路。
+// Record 追加一条 entry：json.Marshal 在锁外完成，随后持锁串行写入逗号与 entry 字节；达到 limit 返回 ErrLimitReached 并停用，写盘失败返回原错误并停用，后续调用短路。
 func (r *Recorder) Record(entry Entry) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.stopped {
+	if r.stopped.Load() {
 		return nil
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
-		r.stopped = true
+		r.stopped.Store(true)
 		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped.Load() {
+		return nil
 	}
 	written := int64(len(data))
 	if r.wroteAny {
 		if err := r.writer.WriteByte(','); err != nil {
-			r.stopped = true
+			r.stopped.Store(true)
 			return err
 		}
 		written++
 	}
 	if _, err := r.writer.Write(data); err != nil {
-		r.stopped = true
+		r.stopped.Store(true)
 		return err
 	}
 	r.wroteAny = true
 	r.bytes += written
 	if r.limit > 0 && r.bytes >= r.limit {
-		r.stopped = true
+		r.stopped.Store(true)
 		return ErrLimitReached
 	}
 	return nil
@@ -89,7 +94,7 @@ func (r *Recorder) Close() error {
 	if r.file == nil {
 		return nil
 	}
-	r.stopped = true
+	r.stopped.Store(true)
 	if _, err := r.writer.WriteString(`]}}`); err != nil {
 		r.file.Close()
 		r.file = nil

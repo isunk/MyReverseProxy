@@ -1,0 +1,25 @@
+package netutil
+
+import (
+	"strconv"
+	"strings"
+)
+
+// NormalizeDomain 归一目标域名为小写并剥离 FQDN 尾点：DNS 绝对形式 foo.example.com. 与配置的 foo.example.com 视为同一域，尾点不剥离则精确与通配符分组都不命中。
+func NormalizeDomain(domain string) string {
+	return strings.TrimSuffix(strings.ToLower(domain), ".")
+}
+
+// ParsePort 解析端口字符串为 1-65535 的 int：strconv.Itoa 往返校验拒绝前导零、正负号、空白等非规范写法，保证配置期与请求期对合法端口的判定一致。
+func ParsePort(port string) (int, bool) {
+	number, err := strconv.Atoi(port)
+	if err != nil || strconv.Itoa(number) != port || number < 1 || number > 65535 {
+		return 0, false
+	}
+	return number, true
+}
+
+// ValidPortInt 判定端口号是否在 1-65535 范围内。
+func ValidPortInt(port int) bool {
+	return port >= 1 && port <= 65535
+}

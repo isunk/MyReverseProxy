@@ -14,11 +14,11 @@ import (
 	"math/big"
 	"net"
 	"os"
-	"strings"
 	"time"
 
 	"mrp/internal/cache"
 	"mrp/internal/log"
+	"mrp/internal/netutil"
 	"mrp/internal/singleflight"
 )
 
@@ -47,7 +47,7 @@ func New(cert *x509.Certificate, key crypto.Signer) *Authority {
 
 // GetCertificate 按客户端 SNI 取证书：命中缓存即返回，同域名并发握手合并为一次签发。
 func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certificate, err error) {
-	serverName := strings.ToLower(hello.ServerName)
+	serverName := netutil.NormalizeDomain(hello.ServerName)
 	if serverName == "" {
 		return nil, errors.New("sni is missing, cannot sign certificate")
 	}
@@ -85,12 +85,12 @@ func (a *Authority) sign(serverName string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
+	current := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: serverName},
-		NotBefore:    now.Add(-time.Hour),
-		NotAfter:     now.Add(certTTL),
+		NotBefore:    current.Add(-time.Hour),
+		NotAfter:     current.Add(certTTL),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -139,7 +139,7 @@ func Load(certPath, keyPath string, explicitPair bool) (*tls.Config, *Authority,
 		return nil, nil, errors.New("private key type is not supported")
 	}
 	authority := New(caCert, signer)
-	cfg := &tls.Config{
+	tlsConfig := &tls.Config{
 		GetCertificate: authority.GetCertificate,
 		NextProtos:     []string{"http/1.1"},
 		MinVersion:     tls.VersionTLS12,
@@ -149,8 +149,8 @@ func Load(certPath, keyPath string, explicitPair bool) (*tls.Config, *Authority,
 	if err != nil {
 		return nil, nil, err
 	}
-	cfg.SetSessionTicketKeys(keys)
-	return cfg, authority, nil
+	tlsConfig.SetSessionTicketKeys(keys)
+	return tlsConfig, authority, nil
 }
 
 // sessionTicketKeys 生成固定会话票证密钥供所有 MITM 连接共享，实现客户端 TLS 会话跨连接恢复。
