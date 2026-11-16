@@ -336,6 +336,46 @@ go test ./...
 go test -race ./internal/ca/ ./internal/proxy/
 ```
 
+## 性能
+
+以下为回环环境下的基准数据（linux/amd64，双核），用于横向比较各协议路径的相对开销。客户端、上游与 mrp 共用这 2 核，吞吐为 CPU 受限的稳态值；绝对数值在目标设备（Android/Arm）上需重新测量。
+
+- 请求类（HTTP / HTTPS tunnel / HTTPS MITM）：上游返回 4 KiB 静态响应，连接复用（keep-alive），每档并发测量 3 秒
+- 中继类（TCP / UDP）：TCP 每连接双向流式搬运、UDP 1400 B 数据报双向回显，各测量 3 秒
+- mrp 以 `--log error` 运行，排除逐请求日志开销；CPU 为 mrp 进程占用（单核算 100%，双核上限 200%）；内存为峰值 RSS
+
+| 协议模式 | 并发 | 吞吐 | P50 | P99 | CPU | 内存 |
+|---|--:|---:|---:|---:|---:|---:|
+| HTTP（明文代理） | 1 | 6.8k req/s | 0.14ms | 0.26ms | 71% | 14MB |
+| HTTP（明文代理） | 4 | 16.0k req/s | 0.17ms | 1.73ms | 93% | 15MB |
+| HTTP（明文代理） | 16 | 15.9k req/s | 0.71ms | 5.16ms | 91% | 16MB |
+| HTTP（明文代理） | 64 | 15.8k req/s | 3.68ms | 11.4ms | 95% | 26MB |
+| HTTPS tunnel（端到端透传） | 1 | 13.2k req/s | 0.07ms | 0.12ms | 36% | 26MB |
+| HTTPS tunnel（端到端透传） | 4 | 23.2k req/s | 0.11ms | 1.96ms | 55% | 26MB |
+| HTTPS tunnel（端到端透传） | 16 | 24.7k req/s | 0.49ms | 4.62ms | 54% | 26MB |
+| HTTPS tunnel（端到端透传） | 64 | 23.5k req/s | 2.32ms | 8.36ms | 49% | 27MB |
+| HTTPS MITM（解密转发） | 1 | 6.1k req/s | 0.16ms | 0.29ms | 73% | 24MB |
+| HTTPS MITM（解密转发） | 4 | 13.4k req/s | 0.20ms | 2.32ms | 92% | 22MB |
+| HTTPS MITM（解密转发） | 16 | 14.6k req/s | 0.79ms | 5.22ms | 94% | 25MB |
+| HTTPS MITM（解密转发） | 64 | 13.5k req/s | 4.18ms | 13.2ms | 96% | 42MB |
+| TCP（SOCKS5 CONNECT 中继） | 1 | 3.4 GB/s | - | - | 96% | 42MB |
+| TCP（SOCKS5 CONNECT 中继） | 4 | 4.1 GB/s | - | - | 120% | 42MB |
+| TCP（SOCKS5 CONNECT 中继） | 8 | 4.2 GB/s | - | - | 124% | 42MB |
+| TCP（SOCKS5 CONNECT 中继） | 16 | 4.3 GB/s | - | - | 127% | 42MB |
+| TCP（SOCKS5 CONNECT 中继） | 32 | 3.1 GB/s | - | - | 90% | 42MB |
+| UDP（SOCKS5 UDP 中继） | 1 | 562 MB/s | - | - | 72% | 41MB |
+| UDP（SOCKS5 UDP 中继） | 4 | 910 MB/s | - | - | 63% | 35MB |
+| UDP（SOCKS5 UDP 中继） | 16 | 970 MB/s | - | - | 63% | 39MB |
+| UDP（SOCKS5 UDP 中继） | 32 | 981 MB/s | - | - | 61% | 44MB |
+
+结果解读：
+
+- 字节透传吞吐最高，TCP 在并发 8–16 达到约 4.3 GB/s 上限（双向合计），受 CPU 与系统调用数限制；并发加到 32 反而因竞争回落到 3.1 GB/s
+- HTTP 与 MITM 在并发 4 后趋于饱和（约 16k / 14.6k req/s），瓶颈是单请求的 L7 解析与转发开销，网络回环不构成限制
+- HTTPS tunnel 高于明文 HTTP：隧道只搬字节、不解析 HTTP，mrp 的 CPU 占用仅约一半
+- HTTPS MITM 低于 tunnel 约 40%：客户端解密、上游二次 TLS、反向代理三层叠加的固有代价
+- MITM 会固定会话票证密钥，使客户端跨连接的 TLS 会话恢复生效：冷连接（无 keep-alive）单连接握手约 1.26ms 降到 0.90ms，短连接应用收益明显；上表为 keep-alive 稳态数值，不受此优化影响
+
 ## 项目结构
 
 ```
