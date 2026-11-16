@@ -43,7 +43,8 @@ type Proxy struct {
 
 	udpIdleTimeout time.Duration
 
-	reloadMu sync.Mutex // 串行化 reload：WatchFile 轮询与 SIGHUP 可并发触发，不加锁时两个 reload 的 Load→Store 交错会让旧配置覆盖新配置
+	// 串行化 reload：WatchFile 轮询与 SIGHUP 可并发触发，不加锁时两个 reload 的 Load→Store 交错会让旧配置覆盖新配置。
+	reloadMu sync.Mutex
 }
 
 func New(configPath string, transport *http.Transport, tlsConfig *tls.Config, authority *ca.Authority, nameservers resolver) (*Proxy, error) {
@@ -75,7 +76,7 @@ func newPassthroughProxy(transport *http.Transport) *httputil.ReverseProxy {
 	}
 }
 
-// passthroughURL 给出未命中路由时的转发目标：完整 URL 原样转发，隧道内层收到的源形式请求按连接协议与 Host 头补齐 scheme 与端口。
+// passthroughURL 给出未命中路由时的转发目标：完整 URL 原样转发，隧道内层请求按 Host 头补齐。
 func passthroughURL(inbound *http.Request) *url.URL {
 	if inbound.URL.Scheme != "" {
 		outbound := *inbound.URL
@@ -137,15 +138,15 @@ func (p *Proxy) Socks5() func(net.Conn) {
 	return p.serveSocks5
 }
 
-// routeHandler 选出本次请求的处理器：命中路由走该路由，否则透传原始目标；Debug 级日志一行呈现入站 URL 与改写后实际发出的 URL。
+// routeHandler 选出请求处理器：命中路由走该路由，否则透传原始目标；Debug 日志呈接入站/出站 URL。
 func (p *Proxy) routeHandler(request *http.Request, protocol string, port int, domain string) http.Handler {
 	targetRoute, matched := p.table.Load().Pick(protocol, port, domain, request.URL.Path)
 	if log.DebugEnabled() {
 		inbound := absoluteTarget(protocol, port, domain, request.URL)
 		if matched {
-			log.Debug("route %s -> %s", inbound, routeTarget(request, targetRoute))
+			log.Debug("route inbound=%s outbound=%s", inbound, routeTarget(request, targetRoute))
 		} else {
-			log.Debug("route %s -> passthrough", inbound)
+			log.Debug("route inbound=%s outbound=passthrough", inbound)
 		}
 	}
 	if !matched {
@@ -165,7 +166,7 @@ func routeTarget(request *http.Request, targetRoute *route.Route) string {
 	return targetRoute.OutboundURL(request.URL).String()
 }
 
-// serveRequest 是单条入站请求的入口：CONNECT 走隧道，其余按目标协议、端口与域名路由或透传；开启抓包时在该路径上记录明文交互。
+// serveRequest 单条入站请求入口：CONNECT 走隧道，其余按协议/端口/域名路由或透传。
 func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) {
 	if request.Method == http.MethodConnect {
 		p.handleConnect(writer, request)
@@ -192,7 +193,7 @@ func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) 
 	handler.ServeHTTP(response, request)
 }
 
-// WatchFile 轮询配置文件元数据，size 与 mtime 都未变化时跳过整份读取，内容变化才触发重载，失败保留旧配置；stop 为 nil 时常驻运行。
+// WatchFile 轮询配置元数据，size/mtime 未变则跳过读取，内容变化才重载，失败保留旧配置。
 func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 	var previousSize int64
 	var previousModTime time.Time
@@ -218,7 +219,7 @@ func (p *Proxy) WatchFile(interval time.Duration, stop <-chan struct{}) {
 				continue
 			}
 			statFailed = false
-			// 比 size 与 mtime 而非读全文；mtime 为毫秒级粒度，间隔极短的连续保存可能只触发一次重载
+			// 比 size 与 mtime 而非读全文；mtime 为毫秒级粒度，间隔极短的连续保存可能只触发一次重载。
 			if previousKnown && info.Size() == previousSize && info.ModTime().Equal(previousModTime) {
 				continue
 			}
@@ -248,7 +249,8 @@ func NewTransport(dialContext func(context.Context, string, string) (net.Conn, e
 	transport.MaxIdleConnsPerHost = maxIdleConnectionsHost
 	transport.ReadBufferSize = transportBufferSize
 	transport.WriteBufferSize = transportBufferSize
-	transport.DisableCompression = true // 不替客户端声明 Accept-Encoding：压缩由下游与上游端到端协商，mrp 只透传原始字节，避免自动解压耗 CPU 且丢失 Content-Length
+	// 不替客户端声明 Accept-Encoding：压缩由下游与上游端到端协商，mrp 只透传原始字节。
+	transport.DisableCompression = true
 	// ClientSessionCache 为 nil 时 Go 禁用会话复用，每次新上游连接都要走完整 TLS 握手
 	transport.TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true, // mrp 位于设备与上游之间，上游证书校验交由设备端完成

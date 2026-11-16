@@ -53,16 +53,17 @@ func TestParseSocks5UDPHeader(t *testing.T) {
 	}
 }
 
-func TestEncodeSocks5UDPResponse(t *testing.T) {
+// TestSocks5ResponsePrefixRoundTrip 验证 socks5ResponsePrefix 生成的响应头前缀拼净荷后可被 parseSocks5UDPHeader 正确解析（原 encodeSocks5UDPResponse 的组装行为由 wrap 承担，此处直接测前缀）。
+func TestSocks5ResponsePrefixRoundTrip(t *testing.T) {
 	addr := []byte{127, 0, 0, 1}
-	encoded := encodeSocks5UDPResponse(socks5AtypIPv4, addr, 6881, []byte("hi"))
+	encoded := append(socks5ResponsePrefix(socks5AtypIPv4, addr, 6881), []byte("hi")...)
 	header, ok := parseSocks5UDPHeader(encoded)
 	if !ok || header.host != "127.0.0.1" || header.port != 6881 || string(header.data) != "hi" {
 		t.Fatalf("round trip = %+v ok=%v, want 127.0.0.1:6881 data=hi", header, ok)
 	}
 
 	domain := []byte("api")
-	encoded = encodeSocks5UDPResponse(socks5AtypDomain, domain, 80, []byte("xy"))
+	encoded = append(socks5ResponsePrefix(socks5AtypDomain, domain, 80), []byte("xy")...)
 	header, ok = parseSocks5UDPHeader(encoded)
 	if !ok || header.host != "api" || header.port != 80 || string(header.data) != "xy" {
 		t.Fatalf("domain round trip = %+v ok=%v, want api:80 data=xy", header, ok)

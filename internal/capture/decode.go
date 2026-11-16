@@ -28,8 +28,8 @@ func HeadersFrom(header http.Header) []Header {
 	return entries
 }
 
-// ContentEncodings 把 Content-Encoding 头拆成依次应用的编码名列表，忽略 identity 与空白。
-func ContentEncodings(encoding string) []string {
+// contentEncodings 把 Content-Encoding 头拆成依次应用的编码名列表，忽略 identity 与空白。
+func contentEncodings(encoding string) []string {
 	var names []string
 	for _, name := range strings.Split(encoding, ",") {
 		name = strings.ToLower(strings.TrimSpace(name))
@@ -40,12 +40,12 @@ func ContentEncodings(encoding string) []string {
 	return names
 }
 
-// DecodeContent 决定 HAR 内容表示：gzip/deflate/br 先解回原文，文本型 MIME 按明文记录，其余（图片、视频等二进制）base64；无法解压时回退为原始字节 base64。size 为解压后内容字节长，供 content.size 记录。
+// DecodeContent 决定 HAR 内容表示：gzip/deflate/br 解回原文，文本型 MIME 按明文记录，其余 base64。
 func DecodeContent(data []byte, encoding string, mimeType string) (text string, contentEncoding string, size int) {
 	if len(data) == 0 {
 		return "", "", 0
 	}
-	if names := ContentEncodings(encoding); len(names) > 0 {
+	if names := contentEncodings(encoding); len(names) > 0 {
 		decoded, ok := decompress(data, names)
 		if !ok {
 			text, contentEncoding = binaryContent(data)
@@ -122,7 +122,7 @@ func brotliDecode(data []byte) ([]byte, bool) {
 	return readLimited(brotli.NewReader(bytes.NewReader(data)))
 }
 
-// isTextMimeType 判定 MIME 类型是否属于明文文本：text/* 与常见文本型 application/*、SVG 等；用于决定 HAR content 按明文还是 base64 记录。
+// isTextMimeType 判定 MIME 是否属明文文本：text/* 与常见文本型 application/*、SVG 等。
 func isTextMimeType(mimeType string) bool {
 	mediaType, _, err := mime.ParseMediaType(mimeType)
 	if err != nil {

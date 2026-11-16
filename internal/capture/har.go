@@ -87,7 +87,7 @@ type PostData struct {
 	Truncated bool   `json:"_truncated,omitempty"`
 }
 
-// Content 响应体：Size 为内容字节长，Text 在二进制或压缩内容时 base64 编码并以 Encoding 标注，Truncated 标注是否被截断。
+// Content 响应体：Text 在二进制或压缩内容时 base64 编码并以 Encoding 标注，Truncated 标注是否截断。
 type Content struct {
 	Size      int    `json:"size"`
 	MimeType  string `json:"mimeType"`

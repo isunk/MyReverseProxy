@@ -1,4 +1,4 @@
-// Package capture 把代理可见的明文交互记录为 HAR 1.2 文件：Recorder 以增量方式追加 entry，打开时写头部、每条 entry 追加一个 JSON 对象，Close 时补全尾部使文件成为合法 JSON。
+// Package capture 把代理明文交互增量记录为 HAR 1.2 文件。
 package capture
 
 import (
@@ -17,11 +17,13 @@ const (
 	FileSizeLimit = 256 << 20 // 抓包文件累计写入上限，达到后停止追加
 )
 
-const header = `{"log":{"version":"1.2","creator":{"name":"` + creatorName + `","version":"` + creatorVersion + `"},"pages":[],"entries":[` // 打开文件时写入的前端，entries 数组随后由 Record 增量填充，末尾由 Close 补全
+// header 是打开文件时写入的前端：entries 数组随后由 Record 增量填充，末尾由 Close 补全。
+const header = `{"log":{"version":"1.2","creator":{"name":"` + creatorName + `","version":"` + creatorVersion + `"},"pages":[],"entries":[`
 
-var ErrLimitReached = errors.New("capture file size limit reached") // 文件累计达到 limit 时由 Record 返回，调用方据此告警一次；此后 Record 短路返回 nil
+// ErrLimitReached 表示文件累计达到 limit，由 Record 返回，调用方据此告警一次；此后 Record 短路返回 nil。
+var ErrLimitReached = errors.New("capture file size limit reached")
 
-// Recorder 序列化并发写盘：mu 仅串行化写盘（逗号、entry、flush），json.Marshal 在锁外完成以避免序列化耗时阻塞并发请求；stopped 为 atomic 以支持锁外快速短路检查，写失败或达到 limit 后置位，后续 Record 直接返回。
+// Recorder 并发写盘：json.Marshal 在锁外完成，mu 仅串行化写盘，stopped 为 atomic 供锁外短路检查。
 type Recorder struct {
 	file     *os.File
 	writer   *bufio.Writer
@@ -51,7 +53,7 @@ func New(path string, limit int64) (*Recorder, error) {
 // Path 返回输出文件路径，供调用方在告警日志中定位。
 func (r *Recorder) Path() string { return r.path }
 
-// Record 追加一条 entry：json.Marshal 在锁外完成，随后持锁串行写入逗号与 entry 字节；达到 limit 返回 ErrLimitReached 并停用，写盘失败返回原错误并停用，后续调用短路。
+// Record 追加一条 entry：json.Marshal 在锁外完成，持锁串行写盘；达 limit 或写失败后停用。
 func (r *Recorder) Record(entry Entry) error {
 	if r.stopped.Load() {
 		return nil
@@ -87,7 +89,7 @@ func (r *Recorder) Record(entry Entry) error {
 	return nil
 }
 
-// Close 补全 entries 数组与根对象尾部、flush 并关闭文件；幂等，停用后仍能补尾。置位 stopped 使 Close 之后到达的 Record 直接短路，避免向已关闭的缓冲写入而静默丢数据。
+// Close 补全尾部并关闭文件；幂等，停用后仍能补尾，置位 stopped 使后续 Record 短路。
 func (r *Recorder) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

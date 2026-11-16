@@ -52,7 +52,7 @@ func (r *Route) buildProxy(transport *http.Transport) *httputil.ReverseProxy {
 	return proxy
 }
 
-// OutboundURL 给出入站请求改写后发往上游的完整 URL：换 scheme/host、剥前缀拼接上游基路径，转发与路由日志共用保证一致。
+// OutboundURL 给出入站请求改写后发往上游的完整 URL：换 scheme/host、剥前缀拼接上游基路径。
 func (r *Route) OutboundURL(inboundURL *url.URL) *url.URL {
 	base := r.Target.URL
 	outbound := *inboundURL
@@ -76,7 +76,7 @@ func (r *Route) rewriteRequest(request *httputil.ProxyRequest) {
 	setHeaders(request.Out.Header, r.Headers.Request)
 }
 
-// UpstreamErrorHandler 上游不可达时回 502，不向客户端透出传输层错误；按实际拨号目标记录，供本包路由代理与 proxy 包透传代理共用。
+// UpstreamErrorHandler 上游不可达时回 502，不向客户端透出传输层错误，按实际拨号目标记录。
 func UpstreamErrorHandler(writer http.ResponseWriter, request *http.Request, err error) {
 	log.Error("upstream failed upstream=%s err=%v", request.URL.String(), err)
 	writer.WriteHeader(http.StatusBadGateway)
@@ -93,7 +93,7 @@ func newStaticHandler(root, prefix string, responseHeaders map[string]string) *s
 	return &staticHandler{root: http.Dir(root), prefix: prefix, responseHeaders: responseHeaders}
 }
 
-// ServeHTTP 以本地目录为根托管静态文件：目录命中回退 index.html，不生成目录列表，路径解析交给 http.Dir 阻断穿越。
+// ServeHTTP 以本地目录为根托管静态文件：目录命中回退 index.html，不生成目录列表。
 func (h *staticHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	setHeaders(writer.Header(), h.responseHeaders)
 	relPath := strings.TrimPrefix(strings.TrimPrefix(request.URL.Path, h.prefix), "/")

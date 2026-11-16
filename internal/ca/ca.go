@@ -58,7 +58,8 @@ func (a *Authority) GetCertificate(hello *tls.ClientHelloInfo) (cert *tls.Certif
 	if !leader {
 		return call.Wait()
 	}
-	defer func() { a.inflight.Finish(serverName, call, cert, err) }() // 兜底：sign panic 被 net/http 层 recover 后若不注销 inflight，该域名的握手会永久阻塞在 wait 上
+	// 兜底：sign panic 被 net/http 层 recover 后若不注销 inflight，该域名的握手会永久阻塞在 wait 上。
+	defer func() { a.inflight.Finish(serverName, call, cert, err) }()
 	// 双检：Get 未命中到取得 leader 之间，可能已有上一轮签发完成并写入缓存
 	if cached, ok := a.cache.Get(serverName); ok {
 		return cached, nil
@@ -110,7 +111,7 @@ func (a *Authority) sign(serverName string) (*tls.Certificate, error) {
 	}, nil
 }
 
-// Load 加载 CA 证书与私钥并构建签发能力。explicitPair 为 true 跳过存在性检查；为 false 时两个文件都不存在则返回 nil 进入纯 HTTP/隧道模式，只存在一个则报错。
+// Load 加载 CA 证书与私钥并构建签发能力：explicitPair 为 true 跳过存在性检查。
 func Load(certPath, keyPath string, explicitPair bool) (*tls.Config, *Authority, error) {
 	if !explicitPair {
 		certExists := fileExists(certPath)
@@ -144,7 +145,7 @@ func Load(certPath, keyPath string, explicitPair bool) (*tls.Config, *Authority,
 		NextProtos:     []string{"http/1.1"},
 		MinVersion:     tls.VersionTLS12,
 	}
-	// MITM 按连接 Clone 模板；若不固定会话票证密钥，每个克隆各自随机生成密钥，客户端跨连接的会话恢复必然失败，每次都要重新完整握手
+	// MITM 按连接 Clone 模板；若不固定会话票证密钥，每个克隆各自随机生成，客户端跨连接会话恢复必然失败。
 	keys, err := sessionTicketKeys()
 	if err != nil {
 		return nil, nil, err

@@ -23,7 +23,7 @@ func (c *countingReadCloser) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// forwardedBody 把合并后的读流包回 io.ReadCloser，Close 转发到底层 body：请求体未完整读完时底层 *http.body 须被关闭以归还连接复用，io.NopCloser 会丢弃该关闭。
+// forwardedBody 把合并读流包回 io.ReadCloser，Close 转发到底层 body 以归还连接复用。
 type forwardedBody struct {
 	io.Reader
 	original io.Closer
@@ -93,7 +93,7 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-// captureRequestBody 读取请求 body 前缀并恢复完整 body 供转发：body 超过上限时只记前缀，其余字节经 MultiReader 原样续传；返回前缀、原始大小、是否截断与剩余体计数器（仅 Content-Length 未知时非 nil，供转发完成后回填精确大小）。
+// captureRequestBody 读取 body 前缀供抓包并恢复完整 body 转发：超上限只记前缀，其余经 MultiReader 续传。
 func captureRequestBody(request *http.Request) (prefix []byte, size int64, truncated bool, tail *countingReadCloser) {
 	if request.Body == nil || request.Body == http.NoBody {
 		return nil, request.ContentLength, false, nil
@@ -101,7 +101,8 @@ func captureRequestBody(request *http.Request) (prefix []byte, size int64, trunc
 	original := request.Body
 	raw, readErr := io.ReadAll(io.LimitReader(original, capture.BodyLimit+1))
 	if readErr != nil {
-		// 客户端中断或连接错误时以已读部分继续转发，仅告警抓包不完整，避免因抓包影响代理主流程
+		// 客户端中断或连接错误时以已读部分继续转发，
+		// 仅告警抓包不完整，避免因抓包影响代理主流程。
 		log.Warn("request body read failed err=%v", readErr)
 	}
 	truncated = len(raw) > capture.BodyLimit

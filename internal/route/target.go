@@ -16,14 +16,15 @@ type Target struct {
 	Summary string
 }
 
-// ParseTarget 解析上游：带 scheme 的按 URL（仅 http/https）远程转发，含路径分隔符的按本地目录托管，其余按 host[:port] 简写以 http 转发。
+// ParseTarget 解析上游：带 scheme 的按 URL（仅 http/https）远程转发，含路径分隔符的按本地目录托管，其余简写。
 func ParseTarget(upstream string) (*Target, error) {
 	if strings.Contains(upstream, "://") {
 		parsed, err := url.Parse(upstream)
 		if err != nil {
 			return nil, fmt.Errorf("upstream %q is invalid: %w", upstream, err)
 		}
-		parsed.Scheme = strings.ToLower(parsed.Scheme) // RFC 3986 scheme 大小写不敏感，统一小写供拨号与路由比较
+		// RFC 3986 scheme 大小写不敏感，统一小写供拨号与路由比较。
+		parsed.Scheme = strings.ToLower(parsed.Scheme)
 		if parsed.Scheme != ProtocolHTTP && parsed.Scheme != ProtocolHTTPS {
 			return nil, fmt.Errorf("upstream %q scheme %q is not supported", upstream, parsed.Scheme)
 		}
@@ -38,7 +39,7 @@ func ParseTarget(upstream string) (*Target, error) {
 	return parseTargetHost(upstream)
 }
 
-// validateURLHost 校验 URL 形式的 Host：主机名非空、端口若给出须为 1-65535 的纯十进制；空端口形态（host:、[IPv6]:）也拒绝，避免配置错误延迟到请求期拨号失败。
+// validateURLHost 校验 URL 形式的 Host：主机名非空、端口 1-65535 纯十进制，空端口形态（host:、[IPv6]:）拒绝。
 func validateURLHost(parsed *url.URL, upstream string) error {
 	if parsed.Hostname() == "" {
 		return fmt.Errorf("upstream %q is missing host", upstream)
@@ -72,7 +73,7 @@ func parseTargetHost(upstream string) (*Target, error) {
 	return &Target{URL: &remote, Summary: remote.String()}, nil
 }
 
-// isLocalPath 判断 upstream 是否为本地目录：含 / 或 \ 分隔符即视为目录（覆盖盘符、UNC 路径），"." 与 ".." 也按目录处理，其余裸词按远程上游解析。
+// isLocalPath 判断 upstream 是否为本地目录：含 / 或 \ 分隔符即视为目录（覆盖盘符、UNC），"." 与 ".." 也按目录。
 func isLocalPath(upstream string) bool {
 	return upstream == "." || upstream == ".." || strings.ContainsAny(upstream, "/\\")
 }

@@ -18,7 +18,7 @@ const (
 	idleTimeout       = 60 * time.Second
 )
 
-// oneConnListener 把已建立的连接包装为 Listener，让 http.Server 直接服务该连接，从而拿到 ConnState 回调判断是否发生 hijack。
+// oneConnListener 把已建立连接包装为 Listener，供 http.Server 单次服务并拿到 ConnState 回调判断 hijack。
 type oneConnListener struct {
 	conn  net.Conn
 	taken atomic.Bool
@@ -55,16 +55,17 @@ func (c *BufferedConn) Read(p []byte) (int, error) { return c.Reader.Read(p) }
 
 const socks5Version = 0x05 // 在单端口上从连接首字节区分 SOCKS5 与 HTTP 请求
 
-// Serve 接受连接并逐条服务：单条连接服务结束（未发生 hijack）时关闭该连接；监听器已关闭即返回；连接处理交给 handle，Accept 循环与连接计数由 netutil.ServeListener 统一承担。
+// Serve 接受连接并逐条服务：单条连接服务结束（未发生 hijack）时关闭该连接；监听器已关闭即返回。
 func Serve(listener net.Listener, handler http.Handler, socks5 func(net.Conn), connections *sync.WaitGroup) error {
 	return netutil.ServeListener(listener, func(conn net.Conn) {
 		serveConn(handler, socks5, conn)
 	}, connections)
 }
 
-// serveConn 嗅探连接首字节选择协议：为 SOCKS5 版本号时交给 SOCKS5 处理器，否则按 HTTP 服务；未发生 hijack 的 HTTP 连接在此关闭。
+// serveConn 嗅探连接首字节选择协议：SOCKS5 版本号交给 SOCKS5 处理器，否则按 HTTP 服务。
 func serveConn(handler http.Handler, socks5 func(net.Conn), conn net.Conn) {
-	_ = conn.SetReadDeadline(time.Now().Add(readHeaderTimeout)) // 避免慢速连接在进入 http.Server 前永久占用 goroutine
+	// 避免慢速连接在进入 http.Server 前永久占用 goroutine。
+	_ = conn.SetReadDeadline(time.Now().Add(readHeaderTimeout))
 	buffered := bufio.NewReader(conn)
 	first, err := buffered.Peek(1)
 	if err != nil {
@@ -77,7 +78,8 @@ func serveConn(handler http.Handler, socks5 func(net.Conn), conn net.Conn) {
 		return
 	}
 	_ = conn.SetReadDeadline(time.Time{})
-	if !ServeSingleConn(New(handler), &BufferedConn{Conn: conn, Reader: buffered}) { // ServeSingleConn 会给传入 server 的 ConnState 赋值，复用同一实例会在并发连接间相互覆盖，故每条连接新建
+	// ServeSingleConn 会给传入 server 的 ConnState 赋值，复用同一实例会在并发连接间相互覆盖，故每条连接新建。
+	if !ServeSingleConn(New(handler), &BufferedConn{Conn: conn, Reader: buffered}) {
 		conn.Close()
 	}
 }
@@ -107,18 +109,19 @@ func New(handler http.Handler) *http.Server {
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
-		ErrorLog:          httpErrorLog, // 去掉标准 log 的日期前缀，底层错误按各自级别落到 stderr，不与控制台日志格式混用
+		// 去掉标准 log 的日期前缀，底层错误按各自级别落到 stderr，不与控制台日志格式混用。
+		ErrorLog: httpErrorLog,
 	}
 }
 
-// StatusRecorder 记录响应状态码供请求日志使用，其余能力透传给底层 writer；Unwrap 使 flusher/hijacker 等接口继续可用。
+// StatusRecorder 记录响应状态码供请求日志使用，其余能力透传给底层 writer。
 type StatusRecorder struct {
 	http.ResponseWriter
 	Status      int
 	wroteHeader bool
 }
 
-// WriteHeader 记录首个写入的状态码：http 语义下多余写头被忽略，这里同样只保留第一次，避免日志记录到被丢弃的第二次状态。
+// WriteHeader 记录首个写入的状态码，多余写头被忽略，避免记录被丢弃的第二次状态。
 func (w *StatusRecorder) WriteHeader(code int) {
 	if w.wroteHeader {
 		return

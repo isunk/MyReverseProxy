@@ -59,7 +59,7 @@ func headerFingerprint(headers map[string]string) string {
 	return buffer.String()
 }
 
-// Entry 一个虚拟服务器：按 protocol 与 port 筛选请求，条目内路由按最长前缀匹配；Protocol 留空匹配任意协议，Port 为 0 匹配任意端口。
+// Entry 一个虚拟服务器：按 protocol 与 port 筛选请求，条目内路由按最长前缀匹配。
 type Entry struct {
 	Protocol string
 	Port     int
@@ -74,12 +74,12 @@ func (e *Entry) matches(protocol string, port int) bool {
 	return e.Port == 0 || e.Port == port
 }
 
-// Table 按域名模式分组的虚拟服务器表，分组按配置声明顺序排列、先声明先匹配；加载配置时一次性构建、运行期只读，热加载以整体替换实现。
+// Table 按域名模式分组的虚拟服务器表，分组按声明顺序排列、先声明先匹配。
 type Table struct {
 	groups []*DomainGroup
 }
 
-// DomainGroup 一个域名模式下的全部虚拟服务器条目：精确分组按域名相等匹配，通配符分组按 RFC 1034 单层子域语义匹配。
+// DomainGroup 一个域名模式下的全部虚拟服务器条目：精确按域名相等匹配，通配符按单层子域匹配。
 type DomainGroup struct {
 	pattern  string
 	suffix   string
@@ -104,7 +104,7 @@ func (g *DomainGroup) matches(protocol string, port int, domain string) bool {
 	return false
 }
 
-// wildcardMatch 判定请求域名是否命中通配符模式：suffix 为空表示 * 匹配任意域名；*.suffix 按 RFC 1034 语义匹配单层子域 label.suffix，裸域与多层子域不命中。
+// wildcardMatch 判定域名是否命中通配符模式：suffix 为空表示 * 匹配任意域名，*.suffix 匹配单层子域 label.suffix。
 func wildcardMatch(domain, suffix string) bool {
 	if domain == "" {
 		return false
@@ -132,7 +132,7 @@ func NewTable() *Table {
 	return &Table{}
 }
 
-// Add 把归一后的虚拟服务器条目挂入对应域名分组，分组按首次声明顺序排列，同一 domain 值多次声明合并为一组；同一分组内 (protocol, port) 组合唯一，重复报错。
+// Add 把归一后的虚拟服务器条目挂入对应域名分组，同分组内 (protocol, port) 组合唯一。
 func (t *Table) Add(domain string, entry *Entry, routes []*Route) error {
 	entry.routes = routes // 配置错误时整表废弃，提前挂载路由不影响既有生效表
 	for _, group := range t.groups {
@@ -151,7 +151,7 @@ func (t *Table) Add(domain string, entry *Entry, routes []*Route) error {
 	return nil
 }
 
-// Pick 按声明顺序选出第一个含路径命中路由的分组，组内按最长前缀匹配；分组命中但无路径路由时不返回，继续查后续分组。
+// Pick 按声明顺序选出第一个含路径命中路由的分组，组内按最长前缀匹配。
 func (t *Table) Pick(protocol string, port int, domain, path string) (*Route, bool) {
 	for _, group := range t.groups {
 		if !group.matches(protocol, port, domain) {
@@ -196,7 +196,7 @@ func (t *Table) InstallHandlers(transport *http.Transport) {
 	}
 }
 
-// Fingerprint 生成路由表稳定指纹用于判断热加载是否变化：按声明顺序输出，声明顺序变化反映到指纹并触发重建；端口与协议也纳入以触发重建。
+// Fingerprint 生成路由表稳定指纹用于判断热加载是否变化：按声明顺序输出。
 func (t *Table) Fingerprint() string {
 	var buffer strings.Builder
 	for _, group := range t.groups {

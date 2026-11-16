@@ -216,10 +216,10 @@ func TestRouteHandler_DebugLogShowsRouteResult(t *testing.T) {
 		proxy.Handler().ServeHTTP(httptest.NewRecorder(), request)
 	}
 	for _, want := range []string{
-		"route http://a.local:80/api/v1/users?x=1 -> http://127.0.0.1:" + port + "/v1/users?x=1",
-		"route http://a.local:80/other -> passthrough",
-		"route http://b.local:80/health -> status 204",
-		"route http://d.local:80/x -> passthrough",
+		"route inbound=http://a.local:80/api/v1/users?x=1 outbound=http://127.0.0.1:" + port + "/v1/users?x=1",
+		"route inbound=http://a.local:80/other outbound=passthrough",
+		"route inbound=http://b.local:80/health outbound=status 204",
+		"route inbound=http://d.local:80/x outbound=passthrough",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("debug log missing %q\nlog:\n%s", want, out.String())

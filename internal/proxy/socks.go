@@ -107,7 +107,8 @@ func socks5ReadCommand(reader *bufio.Reader) (command, atyp, rep byte) {
 	if _, err := io.ReadFull(reader, header); err != nil {
 		return 0, 0, socks5RepGeneralFailure
 	}
-	if header[0] != socks5Version || header[2] != 0 { // header[2] 为 RSV，RFC 1928 要求置零，非零按协议错误处理
+	// header[2] 为 RSV，RFC 1928 要求置零，非零按协议错误处理。
+	if header[0] != socks5Version || header[2] != 0 {
 		return 0, 0, socks5RepGeneralFailure
 	}
 	switch header[1] {

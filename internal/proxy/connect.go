@@ -45,15 +45,17 @@ func hijackConn(writer http.ResponseWriter) (net.Conn, bool) {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 		return nil, false
 	}
-	return &frontend.BufferedConn{Conn: client, Reader: bufioRW.Reader}, true // 保留 http.Server 内部 bufio.Reader 预读的数据（客户端紧跟 CONNECT 发送的字节）
+	// 保留 http.Server 内部 bufio.Reader 预读的数据（客户端紧跟 CONNECT 发送的字节）。
+	return &frontend.BufferedConn{Conn: client, Reader: bufioRW.Reader}, true
 }
 
-// serveConnect 按 CONNECT 目标分发：命中虚拟服务器走 MITM，否则透传隧道；transferred 为 true 表示连接已移交内层服务，调用方不得再关闭。
+// serveConnect 按 CONNECT 目标分发：命中虚拟服务器走 MITM，否则透传隧道。
 func (p *Proxy) serveConnect(client net.Conn, protocol string, port int, domain string) (transferred bool) {
 	if !p.table.Load().Has(protocol, port, domain) {
 		log.Info("tunnel started domain=%s port=%d", domain, port)
 		p.tunnel(client, domain, port)
-		return false // 隧道按规范化目标拨号：Host 缺端口补协议默认端口，IPv6 裸地址补括号，否则 SplitHostPort 报错使目标不可达
+		// 隧道按规范化目标拨号：Host 缺端口补协议默认端口，IPv6 裸地址补括号，否则 SplitHostPort 报错使目标不可达。
+		return false
 	}
 	if p.tlsConfig == nil {
 		log.Warn("mitm skipped domain=%s port=%d: no ca certificate", domain, port)
@@ -81,7 +83,7 @@ func (p *Proxy) serveConnect(client net.Conn, protocol string, port int, domain 
 	return frontend.ServeSingleConn(frontend.New(p.Handler()), tlsConn)
 }
 
-// mitmTLSConfig 为单条 MITM 隧道构造 TLS 配置：SNI 缺失时回退到 CONNECT 目标域名再签发；静态证书或无 CA 的构造原样返回。
+// mitmTLSConfig 为单条 MITM 隧道构造 TLS 配置：SNI 缺失时回退 CONNECT 目标域名再签发。
 func mitmTLSConfig(template *tls.Config, authority *ca.Authority, domain string) *tls.Config {
 	if template.GetCertificate == nil || authority == nil {
 		return template
@@ -97,7 +99,7 @@ func mitmTLSConfig(template *tls.Config, authority *ca.Authority, domain string)
 	return connConfig
 }
 
-// untrustedCAAlerts 列出客户端因校验证书失败（典型为未安装/信任代理 CA）而回送的 TLS alert 文本，与 crypto/tls alert 字符串对齐。
+// untrustedCAAlerts 客户端因校验证书失败（未信任代理 CA）回送的 TLS alert 文本，对齐 crypto/tls 字符串。
 var untrustedCAAlerts = map[string]bool{
 	"tls: bad certificate":               true,
 	"tls: unsupported certificate":       true,

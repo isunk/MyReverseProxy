@@ -17,7 +17,7 @@ const (
 	defaultHTTPSPort = 443
 )
 
-// targetOf 从请求提取转发目标的协议、端口与域名：CONNECT 按 https 处理；代理绝对形式取 URL 的 scheme 与主机；隧道内层源形式取 Host 头并按 TLS 判定协议；省略端口按协议补默认。
+// targetOf 从请求提取转发目标的协议、端口与域名：CONNECT 按 https，代理绝对形式取 scheme 与主机。
 func targetOf(request *http.Request) (string, int, string) {
 	if request.Method == http.MethodConnect {
 		host, port := hostAndPort(request.Host, defaultHTTPSPort)
@@ -34,7 +34,7 @@ func targetOf(request *http.Request) (string, int, string) {
 	return normalizeProtocol(request.URL.Scheme), effectivePort(request.URL), hostOnly(request.URL.Host)
 }
 
-// normalizeProtocol 归一请求目标 scheme 为小写：RFC 7230 允许 scheme 大小写不敏感，大写形式须与路由协议（小写）一致比较。
+// normalizeProtocol 归一请求目标 scheme 为小写：RFC 7230 允许大小写不敏感，需与路由协议一致。
 func normalizeProtocol(scheme string) string {
 	return strings.ToLower(scheme)
 }
@@ -44,7 +44,7 @@ func absoluteTarget(protocol string, port int, domain string, requestURL *url.UR
 	return protocol + "://" + net.JoinHostPort(domain, strconv.Itoa(port)) + requestURL.RequestURI()
 }
 
-// hostAndPort 拆分 Host 为名称与端口，端口缺失或非法时补 fallback；无端口的 [::1] 括号形态剥掉括号；主机名为空（如 ":8080"）保持空，交由调用方按未匹配路由处理。
+// hostAndPort 拆分 Host 为名称与端口，端口缺失或非法补 fallback，无端口的 [::1] 剥括号。
 func hostAndPort(host string, fallback int) (string, int) {
 	name, port, err := net.SplitHostPort(host)
 	if err != nil {

@@ -13,7 +13,7 @@ import (
 	"mrp/internal/netutil"
 )
 
-// serveSocks5UDP 处理 UDP ASSOCIATE 命令：绑定本地 127.0.0.1 的临时 UDP 中继套接字并回复其地址，随后阻塞至 TCP 控制连接关闭或中继空闲超时；TCP 关闭后释放中继及其全部会话。
+// serveSocks5UDP 处理 UDP ASSOCIATE：绑定本地临时 UDP 中继并回复地址，阻塞至控制连接关闭或空闲超时。
 func (p *Proxy) serveSocks5UDP(client net.Conn) {
 	relayConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -49,13 +49,14 @@ func (p *Proxy) serveSocks5UDP(client net.Conn) {
 		relay.close()
 		<-relayDone
 	case <-relayDone:
-		relay.close() // 中继先结束（空闲超时或出错）同样清理全部会话套接字与读回协程，避免泄漏
+		// 中继先结束（空闲超时或出错）同样清理全部会话套接字与读回协程，避免泄漏。
+		relay.close()
 		client.Close()
 		<-tcpDone
 	}
 }
 
-// socks5UDPRelay 管理一个 SOCKS5 UDP 中继：监听套接字接收客户端报文转发到目标，每个目标一个会话（已连接 UDP 套接字）回传响应；resolve 经自定义 DNS 解析目标地址。
+// socks5UDPRelay 管理 SOCKS5 UDP 中继：客户端报文按目标分发到会话回传响应，resolve 解析目标地址。
 type socks5UDPRelay struct {
 	conn        *net.UDPConn
 	clientAddr  atomic.Pointer[net.UDPAddr]
@@ -66,7 +67,7 @@ type socks5UDPRelay struct {
 	idleTimeout time.Duration
 }
 
-// socks5UDPSession 一个客户端→目标方向的 UDP 会话：target 为已连接目标的对端套接字，headerPrefix 为该会话固定的响应头前缀，buffer 为复用缓冲省去逐报文分配；key 为目标地址键，供 O(1) 移除。
+// socks5UDPSession 客户端→目标方向的 UDP 会话：target 为对端套接字，buffer 复用缓冲，key 为目标地址键。
 type socks5UDPSession struct {
 	target       *net.UDPConn
 	relay        *socks5UDPRelay
@@ -76,10 +77,15 @@ type socks5UDPSession struct {
 }
 
 func newSocks5UDPRelay(conn *net.UDPConn, resolve func(context.Context, string, int) ([]string, error), idleTimeout time.Duration) *socks5UDPRelay {
-	return &socks5UDPRelay{conn: conn, sessions: make(map[string]*socks5UDPSession), resolve: resolve, idleTimeout: idleTimeout}
+	return &socks5UDPRelay{
+		conn:        conn,
+		sessions:    make(map[string]*socks5UDPSession),
+		resolve:     resolve,
+		idleTimeout: idleTimeout,
+	}
 }
 
-// readLoop 读取客户端报文并转发：首个报文记录客户端源地址，分片或格式错误报文丢弃，读超时（空闲）或套接字关闭时返回。
+// readLoop 读取客户端报文并转发：首个报文记录源地址，分片或格式错误丢弃，读超时或套接字关闭返回。
 func (r *socks5UDPRelay) readLoop() {
 	buffer := make([]byte, netutil.UDPBufferSize)
 	for {
@@ -97,9 +103,7 @@ func (r *socks5UDPRelay) readLoop() {
 	}
 }
 
-// forwardPacket 解析 SOCKS5 UDP 报文头并按目标转发净荷，无该目标的会话时创建并启动读回协程。
-// 只有 readLoop 单 goroutine 调用本方法，故同一 key 不会并发创建会话；拨号（含 DNS 解析）在锁外进行，
-// 避免阻塞 removeSession 与 close 的清理路径。
+// forwardPacket 解析报文头按目标转发，无会话时创建并启动读回协程；仅 readLoop 单 goroutine 调用，同 key 不并发。
 func (r *socks5UDPRelay) forwardPacket(packet []byte) {
 	header, ok := parseSocks5UDPHeader(packet)
 	if !ok || header.frag != 0 {
@@ -134,7 +138,7 @@ func (r *socks5UDPRelay) forwardPacket(packet []byte) {
 	_, _ = session.target.Write(header.data)
 }
 
-// dialUDPTarget 解析目标并经自定义 DNS 拨号：resolve 为 nil 时回退系统 DNS；解析出多个地址时逐个尝试，返回第一个成功连接；无可用地址时返回错误而非空连接。
+// dialUDPTarget 解析目标并经 DNS 拨号：resolve 为 nil 回退系统 DNS，多地址逐个尝试，无可用地址返回错误。
 func (r *socks5UDPRelay) dialUDPTarget(host string, port int) (*net.UDPConn, error) {
 	address := net.JoinHostPort(host, strconv.Itoa(port))
 	if r.resolve == nil {

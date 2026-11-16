@@ -6,7 +6,7 @@ import (
 	"net"
 )
 
-// socks5UDPHeader 解析后的 SOCKS5 UDP 报文头：host/port 为解码后的目标地址，data 为净荷，atyp/addr 为原始地址表示（供响应头原样回写），frag 非零表示分片（不支持重组）。
+// socks5UDPHeader 解析后的 SOCKS5 UDP 报文头：host/port 为解码目标地址，data 为净荷，frag 非零表示分片。
 type socks5UDPHeader struct {
 	host string
 	port int
@@ -18,10 +18,11 @@ type socks5UDPHeader struct {
 
 // socks5WriteReply 回写 SOCKS5 响应，BND.ADDR 固定填 IPv4 0.0.0.0:0。
 func socks5WriteReply(writer io.Writer, rep byte) error {
-	return socks5WriteReplyAddr(writer, rep, net.IPv4zero, 0) // 0.0.0.0:0 为占位值，RFC 允许省略，客户端不依赖该值
+	// 0.0.0.0:0 为占位值，RFC 允许省略，客户端不依赖该值。
+	return socks5WriteReplyAddr(writer, rep, net.IPv4zero, 0)
 }
 
-// socks5WriteReplyAddr 回写 SOCKS5 响应，BND.ADDR 为指定的 IPv4 地址与端口；常规回复用 0.0.0.0:0，UDP ASSOCIATE 回复用中继套接字实际地址。
+// socks5WriteReplyAddr 回写 SOCKS5 响应，BND.ADDR 为指定 IPv4 地址与端口。
 func socks5WriteReplyAddr(writer io.Writer, rep byte, ip net.IP, port int) error {
 	addr := ip.To4()
 	header := []byte{
@@ -83,16 +84,7 @@ func parseSocks5UDPHeader(packet []byte) (socks5UDPHeader, bool) {
 	return header, true
 }
 
-// encodeSocks5UDPResponse 组装完整响应报文：固定响应头前缀拼净荷；热路径改用会话内复用缓冲，见 socks5UDPSession.wrap。
-func encodeSocks5UDPResponse(atyp byte, addr []byte, port int, data []byte) []byte {
-	prefix := socks5ResponsePrefix(atyp, addr, port)
-	out := make([]byte, len(prefix)+len(data))
-	copy(out, prefix)
-	copy(out[len(prefix):], data)
-	return out
-}
-
-// socks5ResponsePrefix 预计算一份固定的响应头前缀（RSV+FRAG+ATYP+DST.ADDR+DST.PORT），domain 类型在地址前补长度字节，供每报文复用。
+// socks5ResponsePrefix 预计算固定响应头前缀（RSV+FRAG+ATYP+DST.ADDR+DST.PORT），供每报文复用。
 func socks5ResponsePrefix(atyp byte, addr []byte, port int) []byte {
 	addrOffset := 0
 	if atyp == socks5AtypDomain {

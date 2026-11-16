@@ -21,7 +21,8 @@ const (
 	acceptBackoffMax     = time.Second
 )
 
-var BufferPool httputil.BufferPool = &bufferPool{} // 复用 32KB 拷贝缓冲，relay 与 ReverseProxy 共用：sync.Pool 并发安全，避免每条流式响应或每条隧道各分配一次
+// BufferPool 复用 32KB 拷贝缓冲，relay 与 ReverseProxy 共用：sync.Pool 并发安全。
+var BufferPool httputil.BufferPool = &bufferPool{}
 
 // bufferPool 用 *[]byte 承载切片头，避免 sync.Pool 按 any 装箱切片时不必要的小分配；底层的 32KB 数组仍整体复用。
 type bufferPool struct {
@@ -37,7 +38,7 @@ func (p *bufferPool) Get() []byte {
 
 func (p *bufferPool) Put(buf []byte) { p.pool.Put(&buf) }
 
-// Relay 在 client 与 upstream 之间双向搬运字节：client→upstream 起协程，主协程跑 upstream→client；拷贝缓冲复用 BufferPool，任一方向结束后返回，由调用方关闭 client 打断对端读取使协程退出。
+// Relay 在 client 与 upstream 之间双向搬运字节：client→upstream 起协程，主协程跑 upstream→client；关 client 使协程退出。
 func Relay(client, upstream net.Conn) {
 	upstreamBuf := BufferPool.Get()
 	clientBuf := BufferPool.Get()
@@ -50,7 +51,7 @@ func Relay(client, upstream net.Conn) {
 	_, _ = io.CopyBuffer(client, upstream, clientBuf)
 }
 
-// ServeListener 在 listener 上常驻 Accept 循环：每条连接启动 goroutine 调 handle，连接计数经 connections 跟踪供优雅退出；监听器已关闭即返回，其余 Accept 错误按退避重试。
+// ServeListener 在 listener 上常驻 Accept 循环：每条连接启动 goroutine 调 handle，连接计数供优雅退出。
 func ServeListener(listener net.Listener, handle func(net.Conn), connections *sync.WaitGroup) error {
 	backoff := acceptBackoffInitial
 	for {

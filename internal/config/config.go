@@ -80,7 +80,7 @@ func Parse(data []byte) (*Config, error) {
 func buildTable(config *Config) (*route.Table, error) {
 	table := route.NewTable()
 	for i, server := range config.Servers {
-		// 剥离 FQDN 尾点，与请求侧 normalizeDomain 对齐：配置 example.org. 与请求域 example.org 视为同一域
+		// 剥离 FQDN 尾点，与请求侧 normalizeDomain 对齐：配置 example.org. 与请求域 example.org 视为同一域。
 		name := netutil.NormalizeDomain(strings.TrimSpace(server.Domain))
 		if name == "" {
 			return nil, fmt.Errorf("servers[%d]: domain is required", i)
@@ -103,7 +103,7 @@ func buildTable(config *Config) (*route.Table, error) {
 	return table, nil
 }
 
-// validateDomainPattern 校验归一后的 domain 值：通配符仅允许 *（匹配任意域名）与 *.suffix（匹配单层子域），其余位置出现 * 均视为配置错误。
+// validateDomainPattern 校验归一后的 domain 值：通配符仅允许 * 与 *.suffix，其余位置出现 * 视为配置错误。
 func validateDomainPattern(name string) error {
 	if name == "*" {
 		return nil
@@ -123,7 +123,7 @@ func validateDomainPattern(name string) error {
 	return nil
 }
 
-// buildServerEntry 归一 server 条目的协议与端口：protocol 省略匹配任意协议，port 为 0 匹配任意端口，显式取值须 1-65535。
+// buildServerEntry 归一 server 条目的协议与端口：protocol 省略匹配任意协议，port 为 0 匹配任意端口。
 func buildServerEntry(index int, server Server) (*route.Entry, error) {
 	protocol := strings.ToLower(strings.TrimSpace(server.Protocol))
 	switch protocol {
@@ -163,7 +163,7 @@ func buildRoutes(index int, server Server) ([]*route.Route, error) {
 		if status != 0 && (status < 200 || status > 599) {
 			return nil, fmt.Errorf("%s prefix %q status %d must be 200-599", where, prefix, status)
 		}
-		// 204/205/304 按协议不得携带消息体：204/304 Go 服务端会静默丢弃 body，205 会实际发送，配置了均无效
+		// 204/205/304 按协议不得携带消息体：204/304 Go 服务端会静默丢弃 body，205 会实际发送，配置了均无效。
 		if configured.Body != "" && (status == 204 || status == 205 || status == 304) {
 			return nil, fmt.Errorf("%s prefix %q status %d must not carry a body", where, prefix, status)
 		}

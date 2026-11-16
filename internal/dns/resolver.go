@@ -25,7 +25,7 @@ const (
 	maxCached             = 512
 )
 
-// Resolver 持有可热更新的 DNS 服务器列表，经 net.Resolver 注入拨号链路。配置了服务器时固定拨向列表地址，忽略设备 resolv.conf；列表为空时走系统默认解析；结果按 TTL 缓存避免重复查询。
+// Resolver 持有可热更新的 DNS 服务器列表并注入拨号链路，结果按 TTL 缓存。
 type Resolver struct {
 	current        atomic.Pointer[state]
 	attemptTimeout time.Duration
@@ -60,7 +60,7 @@ func New(attemptTimeout, ttl time.Duration, entries []string) (*Resolver, error)
 	return set, nil
 }
 
-// Update 用新的服务器列表重建解析器，返回列表是否实际变化；未变化时不重建，是否变化由本方法判定，调用方无需自行比较。
+// Update 用新的服务器列表重建解析器，返回列表是否实际变化。
 func (r *Resolver) Update(entries []string) (bool, error) {
 	addresses, err := normalizeNameservers(entries)
 	if err != nil {
@@ -72,7 +72,8 @@ func (r *Resolver) Update(entries []string) (bool, error) {
 	}
 	r.current.Store(&state{addresses: addresses, resolvers: r.buildResolvers(addresses)})
 	r.cache.Clear()
-	log.Debug("nameservers updated addresses=%s", describeAddresses(addresses)) // 变化详情用 Debug 级：启动时 main 已打 Info 级 nameservers 日志，热加载由上层总日志覆盖
+	// 变化详情用 Debug 级：启动时 main 已打 Info 级 nameservers 日志，热加载由上层总日志覆盖。
+	log.Debug("nameservers updated addresses=%s", describeAddresses(addresses))
 	return true, nil
 }
 
@@ -98,7 +99,7 @@ func (r *Resolver) DialContext(ctx context.Context, network, address string) (ne
 	return r.dialHost(ctx, network, host, port)
 }
 
-// Resolve 返回 host 的解析目标（host:port 形式），与 DialContext 共用同一解析链路：IP 字面量直接返回，域名经自定义 DNS、缓存与并发合并解析；供非 TCP 通道（SOCKS5 UDP）解析目标。
+// Resolve 返回 host 的解析目标（host:port），与 DialContext 共用同一解析链路；供非 TCP 通道（SOCKS5 UDP）解析目标。
 func (r *Resolver) Resolve(ctx context.Context, host string, port int) ([]string, error) {
 	portText := strconv.Itoa(port)
 	if net.ParseIP(host) != nil {
@@ -142,7 +143,7 @@ func (r *Resolver) connect(ctx context.Context, network, address string) (net.Co
 	return r.tcpDialer.DialContext(ctx, network, address)
 }
 
-// lookup 命中未过期缓存即返回；否则合并同域并发解析（首个请求发起 DNS 查询，其余等待同一结果）并写入缓存。第二个返回值标记结果来自缓存，调用方据此决定是否重试。
+// lookup 未命中缓存则合并同域并发解析（首个请求发起 DNS 查询，其余等待同一结果）并写入缓存。
 func (r *Resolver) lookup(ctx context.Context, host, port string) (targets []string, fromCache bool, err error) {
 	key := net.JoinHostPort(host, port)
 	if cached, ok := r.cache.Get(key); ok {
@@ -153,12 +154,15 @@ func (r *Resolver) lookup(ctx context.Context, host, port string) (targets []str
 		targets, err = call.WaitContext(ctx)
 		return targets, false, err
 	}
+	// 兜底：resolve panic 时转为错误返回并注销 inflight，
+	// 避免同域并发解析永久阻塞在 Wait、单次解析异常不中断进程。
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("dns resolve %s panic: %v", key, recovered)
 		}
 		r.inflight.Finish(key, call, targets, err)
-	}() // 兜底：resolve panic 时转为错误返回并注销 inflight，避免同域并发解析永久阻塞在 Wait、单次解析异常不中断进程
+	}()
+
 	targets, err = r.resolve(ctx, host, port)
 	if err != nil {
 		return nil, false, err
@@ -182,7 +186,8 @@ func (r *Resolver) resolve(ctx context.Context, host, port string) ([]string, er
 		if err == nil && len(ips) > 0 {
 			return formatTargets(ips, port), nil
 		}
-		// 兜底防御：err 为 nil 却无地址时不能向上返回 (nil, nil)，否则调用链会产出 nil 连接与 nil 错误，击穿 transport 的错误处理
+		// 兜底防御：err 为 nil 却无地址时不能向上返回 (nil, nil)，
+		// 否则调用链会产出 nil 连接与 nil 错误，击穿 transport 的错误处理。
 		if err == nil {
 			err = fmt.Errorf("dns lookup %q returned no addresses", host)
 		}
@@ -219,7 +224,7 @@ func (r *Resolver) CacheSize() int {
 	return r.cache.Size()
 }
 
-// buildResolvers 按地址构建解析器，每台 DNS 服务器一台，供 resolve 依次尝试；地址列表为空时返回系统默认解析器单个条目。
+// buildResolvers 按地址构建解析器，每台 DNS 服务器一台，供 resolve 依次尝试。
 func (r *Resolver) buildResolvers(addresses []string) []*net.Resolver {
 	if len(addresses) == 0 {
 		return []*net.Resolver{r.system}

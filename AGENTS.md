@@ -45,7 +45,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 | `internal/cache/cache.go` | 通用 `Cache` 并发缓存（`New`/`Get`/`Set`/`Evict`/`Clear`） | 具体业务逻辑 |
 | `internal/singleflight/singleflight.go` | 泛型并发合并 `Group`（`Begin`/`Wait`/`WaitContext`/`Finish`），ca 签发与 dns 解析共用 | 缓存与具体业务逻辑 |
 | `internal/capture/capture.go` | `Recorder` 增量写盘（`New`/`Record`/`Close`/`Path`）、文件大小上限、停用短路（`json.Marshal` 在锁外完成，`stopped` 为 `atomic.Bool`） | 具体业务逻辑 |
-| `internal/capture/decode.go` | `HeadersFrom`/`ContentEncodings`/`DecodeContent`/`ContentTypeOf`（HAR 头与内容解码）、`BodyLimit` | 具体业务逻辑 |
+| `internal/capture/decode.go` | `HeadersFrom`/`contentEncodings`/`DecodeContent`/`ContentTypeOf`（HAR 头与内容解码）、`BodyLimit` | 具体业务逻辑 |
 | `internal/capture/har.go` | HAR 1.2 结构体（`Har`/`Log`/`Entry`/`Request`/`Response`/`Content` 等） | 具体业务逻辑 |
 | `internal/log/log.go` | console 日志（`Debug`/`Info`/`Warn`/`Error`/`Fatal` 模板字符串、`Init` 级别过滤、`DebugEnabled` 门控、按级别整行着色、TTY 检测、`SetOutput`、`ParseLevel`） | 路由/转发逻辑 |
 | `internal/netutil/netutil.go` | `BufferPool`（32KB 拷贝缓冲池）、`Relay`（双向字节搬运）、`ServeListener`（Accept 循环与退避）、`UDPBufferSize` | 具体业务逻辑 |
