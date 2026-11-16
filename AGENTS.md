@@ -59,7 +59,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 - 错误处理：可恢复错误 `return err` 并由调用方决策；不可恢复（启动失败、监听失败）走 `log.Fatal`，禁止在请求热路径内 `os.Exit`。
 - 日志统一用 `log` 包的模板字符串方法输出（`Debug`/`Info`/`Warn`/`Error`/`Fatal`，`时间\t级别\t消息`），键值内嵌格式 `key=value`（`domain=%s`、`status=%d`），禁止 `fmt.Println` 调试残留。
 - 热路径禁止注释，仅在解释"为什么"时保留简短中文注释；禁止冗余注释。
-- 不引入额外依赖除非必要；当前仅依赖 `gopkg.in/yaml.v3` 与标准库。
+- 不引入额外依赖除非必要；当前依赖 `gopkg.in/yaml.v3`、`github.com/andybalholm/brotli`（HAR 抓包 br 解压）与标准库。
 - **禁止纯委托包装方法**：方法体仅转发到另一函数（仅绑定字段或逐参透传）属多余封装，在调用点直接调用。合法委托仅三种：未导出字段的访问器（`Route.Handler()` 返回 `r.handler`、`Resolver.ClearCache()` 转发 `r.cache.Clear()`）、接口方法实现（`net.Listener.Close`/`Addr`、`net.Conn.Read`）、exported/unexported API 边界（须注释说明意图，如 `Proxy.Reload`→`reload`）。
 - **禁止冗余闭包**：方法签名与目标类型一致时直接用方法值，不包匿名闭包。如 `http.HandlerFunc(p.serveRequest)` 优于 `http.HandlerFunc(func(w,r){ p.serveRequest(w,r) })`。
 - **跨类型共享辅助用自由函数**：被多个类型复用的辅助操作用包级自由函数，不挂为单一类型的方法。如 `setHeaders` 同时服务于 `Route.rewriteRequest`、`buildProxy` 的 `ModifyResponse`、`staticHandler`、`statusHandler`，故为自由函数而非 `HeaderRewrite` 方法。

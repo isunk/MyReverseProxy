@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"compress/zlib"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -19,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/andybalholm/brotli"
 
 	"mrp/internal/ca"
 	"mrp/internal/capture"
@@ -292,62 +295,64 @@ func TestCapture_TunnelNotRecorded(t *testing.T) {
 	}
 }
 
-// 上游返回 gzip 编码的响应时，HAR 的 content.text 应记录解压后的明文，而非压缩字节乱码；原始 Content-Encoding 头仍保留在 headers
-// gzip 响应（text/plain）按原始压缩字节 base64 记入 HAR，content-type 与 size 不被篡改；客户端仍收到解压后的明文
-func TestCapture_GzipResponseBase64(t *testing.T) {
-	plain := "hello gzip world"
-	var buffer bytes.Buffer
-	gz := gzip.NewWriter(&buffer)
-	io.WriteString(gz, plain)
-	gz.Close()
-	encoded := buffer.Bytes()
+// 上游返回 gzip/deflate/br 编码的文本响应时，HAR content.text 记录解压后明文而非压缩字节乱码，size 为解压后长度；原始 Content-Encoding 头仍保留在 headers
+func TestCapture_CompressedResponseDecoded(t *testing.T) {
+	plain := "compressed plain body"
+	cases := []struct {
+		encoding string
+		encode   func(t *testing.T, data []byte) []byte
+	}{
+		{"gzip", compressGzip},
+		{"deflate", compressDeflate},
+		{"br", compressBrotli},
+	}
+	for _, tc := range cases {
+		t.Run(tc.encoding, func(t *testing.T) {
+			encoded := tc.encode(t, []byte(plain))
+			upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Encoding", tc.encoding)
+				writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
+				_, _ = writer.Write(encoded)
+			}))
+			t.Cleanup(upstream.Close)
+			configPath := testutil.ConfigFile(t, "r.yaml",
+				"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upstream.URL+"\n")
+			path := captureFilePath(t)
+			proxyURL, recorder := startCapturedProxy(t, configPath, path)
+			client := proxyClient(proxyURL)
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Encoding", "gzip")
-		writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
-		_, _ = writer.Write(encoded)
-	}))
-	t.Cleanup(upstream.Close)
-	configPath := testutil.ConfigFile(t, "r.yaml",
-		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upstream.URL+"\n")
-	path := captureFilePath(t)
-	proxyURL, recorder := startCapturedProxy(t, configPath, path)
-	client := proxyClient(proxyURL)
+			resp, err := client.Get("http://api.example.com/compressed")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if err := recorder.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
 
-	if got := requestBody(t, client, "http://api.example.com/gz"); !strings.Contains(got, "hello gzip world") {
-		t.Fatalf("client should receive decoded body, got %q", got)
-	}
-	if err := recorder.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-
-	entry := readHar(t, path).Log.Entries[0]
-	content := entry.Response.Content
-	if content.Encoding != "base64" {
-		t.Fatalf("content.encoding = %q, want base64 (gzip bytes not plaintext)", content.Encoding)
-	}
-	decoded, err := base64.StdEncoding.DecodeString(content.Text)
-	if err != nil {
-		t.Fatalf("base64 decode: %v", err)
-	}
-	if !bytes.Equal(decoded, encoded) {
-		t.Fatalf("content should be base64 of original compressed bytes")
-	}
-	if content.Size != len(encoded) {
-		t.Fatalf("content.size = %d, want as-received %d (not decompressed)", content.Size, len(encoded))
-	}
-	if content.MimeType != "text/plain; charset=utf-8" {
-		t.Fatalf("content.mimeType = %q, want original Content-Type untouched", content.MimeType)
-	}
-	found := false
-	for _, header := range entry.Response.Headers {
-		if header.Name == "Content-Encoding" && header.Value == "gzip" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("original Content-Encoding header should be recorded")
+			entry := readHar(t, path).Log.Entries[0]
+			content := entry.Response.Content
+			if content.Encoding != "" {
+				t.Fatalf("content.encoding = %q, want empty (decoded plaintext)", content.Encoding)
+			}
+			if content.Text != plain {
+				t.Fatalf("content.text = %q, want plaintext %q", content.Text, plain)
+			}
+			if content.Size != len(plain) {
+				t.Fatalf("content.size = %d, want decompressed %d", content.Size, len(plain))
+			}
+			found := false
+			for _, header := range entry.Response.Headers {
+				if header.Name == "Content-Encoding" && header.Value == tc.encoding {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("original Content-Encoding %q header should be recorded", tc.encoding)
+			}
+		})
 	}
 }
 
@@ -393,83 +398,86 @@ func TestCapture_BinaryResponseBase64(t *testing.T) {
 	}
 }
 
-// gzip 响应记入 HAR 时 size 为原始（压缩）字节长且与 base64 内容一致，不被篡改为解压后长度
-func TestCapture_GzipResponseSizeNotTampered(t *testing.T) {
-	plain := strings.Repeat("hello world ", 200)
+// compressGzip / compressDeflate / compressBrotli 生成对应 Content-Encoding 的编码字节，供解码路径测试使用。
+func compressGzip(t *testing.T, data []byte) []byte {
+	t.Helper()
 	var buffer bytes.Buffer
 	gz := gzip.NewWriter(&buffer)
-	io.WriteString(gz, plain)
-	gz.Close()
-	encoded := buffer.Bytes()
-
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "text/plain")
-		writer.Header().Set("Content-Encoding", "gzip")
-		writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
-		_, _ = writer.Write(encoded)
-	}))
-	t.Cleanup(upstream.Close)
-	configPath := testutil.ConfigFile(t, "r.yaml",
-		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upstream.URL+"\n")
-	path := captureFilePath(t)
-	proxyURL, recorder := startCapturedProxy(t, configPath, path)
-	client := proxyClient(proxyURL)
-
-	resp, err := client.Get("http://api.example.com/gzip")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
+	if _, err := gz.Write(data); err != nil {
+		t.Fatal(err)
 	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-	if err := recorder.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
 	}
-
-	content := readHar(t, path).Log.Entries[0].Response.Content
-	if content.Encoding != "base64" {
-		t.Fatalf("gzip content encoding = %q, want base64 (compressed bytes)", content.Encoding)
-	}
-	if content.Size != len(encoded) {
-		t.Fatalf("gzip content size = %d, want as-received %d (not decompressed)", content.Size, len(encoded))
-	}
-	decoded, err := base64.StdEncoding.DecodeString(content.Text)
-	if err != nil {
-		t.Fatalf("base64 decode: %v", err)
-	}
-	if len(decoded) != content.Size {
-		t.Fatalf("base64 decoded %d bytes, want content.size %d", len(decoded), content.Size)
-	}
+	return buffer.Bytes()
 }
 
-// 明文文本（无编码、文本型 MIME）按原文记录；压缩或二进制 MIME 一律 base64
+func compressDeflate(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	zw := zlib.NewWriter(&buffer)
+	if _, err := zw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
+}
+
+func compressBrotli(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	bw := brotli.NewWriter(&buffer)
+	if _, err := bw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := bw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
+}
+
+// decodeContent 行为规则：无编码文本按原文，gzip/deflate/br 解回原文后按 MIME 归文本或 base64，二进制 MIME 或不可解码字节 base64。
 func TestCapture_DecodeContentMimeRule(t *testing.T) {
-	if text, enc := decodeContent([]byte("plain"), "", "text/plain"); text != "plain" || enc != "" {
-		t.Fatalf("decodeContent(text/plain, no encoding) = (%q, %q), want plaintext no encoding", text, enc)
+	if text, enc, _ := decodeContent([]byte("plain"), "", "text/plain"); text != "plain" || enc != "" {
+		t.Fatalf("decodeContent(text/plain) = (%q, %q), want plaintext no encoding", text, enc)
 	}
-	if text, enc := decodeContent([]byte(`{"a":1}`), "", "application/json"); text != `{"a":1}` || enc != "" {
-		t.Fatalf("decodeContent(json, no encoding) = (%q, %q), want plaintext no encoding", text, enc)
+	if text, enc, _ := decodeContent([]byte(`{"a":1}`), "", "application/json"); text != `{"a":1}` || enc != "" {
+		t.Fatalf("decodeContent(application/json) = (%q, %q), want plaintext no encoding", text, enc)
 	}
-	if _, enc := decodeContent([]byte("gz-bytes"), "gzip", "text/plain"); enc != "base64" {
-		t.Fatalf("decodeContent(gzip) encoding = %q, want base64 (compressed not plaintext)", enc)
+	if _, enc, _ := decodeContent([]byte("\x89PNG\x00"), "", "image/png"); enc != "base64" {
+		t.Fatalf("decodeContent(image/png) encoding = %q, want base64 (binary mime)", enc)
 	}
-	if _, enc := decodeContent([]byte("br-bytes"), "br", "application/json"); enc != "base64" {
-		t.Fatalf("decodeContent(br) encoding = %q, want base64", enc)
-	}
-	if _, enc := decodeContent([]byte("\x89PNG\x00"), "", "image/png"); enc != "base64" {
-		t.Fatalf("decodeContent(png) encoding = %q, want base64 (binary mime)", enc)
-	}
-}
 
-// 不支持编码（br 等）的字节即使恰为有效 UTF-8（无 NULL）也按二进制 base64 处理，不得当文本。
-func TestCapture_UnsupportedEncodingNeverText(t *testing.T) {
-	asciiLike := []byte("Brotli compressed stream that looks like text without null bytes")
-	text, enc := decodeContent(asciiLike, "br", "text/plain")
-	if enc != "base64" {
-		t.Fatalf("decodeContent(br-like) encoding = %q, want base64 (never text)", enc)
+	if text, enc, size := decodeContent(compressGzip(t, []byte("gzip hello")), "gzip", "text/plain"); text != "gzip hello" || enc != "" || size != len("gzip hello") {
+		t.Fatalf("decodeContent(gzip text) = (%q, %q, %d), want decoded plaintext", text, enc, size)
 	}
-	decoded, err := base64.StdEncoding.DecodeString(text)
-	if err != nil || !bytes.Equal(decoded, asciiLike) {
-		t.Fatalf("decodeContent(br-like) text should be base64 of original bytes, got %d bytes err=%v", len(decoded), err)
+	if text, enc, _ := decodeContent(compressDeflate(t, []byte("deflate hello")), "deflate", "text/plain"); text != "deflate hello" || enc != "" {
+		t.Fatalf("decodeContent(deflate text) = (%q, %q), want decoded plaintext", text, enc)
+	}
+	if text, enc, _ := decodeContent(compressBrotli(t, []byte("brotli hello")), "br", "text/plain"); text != "brotli hello" || enc != "" {
+		t.Fatalf("decodeContent(br text) = (%q, %q), want decoded plaintext", text, enc)
+	}
+
+	// 压缩的二进制内容解压后仍按 base64 记录
+	if text, enc, _ := decodeContent(compressGzip(t, []byte("\x89PNG\x00")), "gzip", "image/png"); enc != "base64" {
+		t.Fatalf("decodeContent(gzip image) encoding = %q, want base64", enc)
+	} else if decoded, err := base64.StdEncoding.DecodeString(text); err != nil || !bytes.Equal(decoded, []byte("\x89PNG\x00")) {
+		t.Fatalf("decodeContent(gzip image) should base64 the decompressed bytes, got %d bytes err=%v", len(decoded), err)
+	}
+
+	// 声称 gzip/br 但流无法解码时回退为原始字节 base64，不当文本
+	for _, tc := range []struct {
+		encoding string
+		data     []byte
+	}{
+		{"gzip", []byte("not gzip data")},
+		{"br", []byte("Brotli-like text without null bytes")},
+	} {
+		if _, enc, _ := decodeContent(tc.data, tc.encoding, "text/plain"); enc != "base64" {
+			t.Fatalf("decodeContent(invalid %s) encoding = %q, want base64 fallback", tc.encoding, enc)
+		}
 	}
 }
 
