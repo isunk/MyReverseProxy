@@ -114,10 +114,16 @@ func New(handler http.Handler) *http.Server {
 // StatusRecorder 记录响应状态码供请求日志使用，其余能力透传给底层 writer；Unwrap 使 flusher/hijacker 等接口继续可用。
 type StatusRecorder struct {
 	http.ResponseWriter
-	Status int
+	Status      int
+	wroteHeader bool
 }
 
+// WriteHeader 记录首个写入的状态码：http 语义下多余写头被忽略，这里同样只保留第一次，避免日志记录到被丢弃的第二次状态。
 func (w *StatusRecorder) WriteHeader(code int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
 	w.Status = code
 	w.ResponseWriter.WriteHeader(code)
 }

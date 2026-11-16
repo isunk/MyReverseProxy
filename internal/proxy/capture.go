@@ -111,6 +111,7 @@ func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, 
 			Headers:     headersFrom(request.Header),
 			QueryString: []capture.Query{},
 			PostData:    postData,
+			HeadersSize: -1, // 未计算请求头字节数，按 HAR 规范以 -1 表示未知，避免误导性 0
 			BodySize:    bodySize,
 		},
 		Response: capture.Response{
@@ -126,7 +127,8 @@ func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, 
 				Encoding:  responseEnc,
 				Truncated: response.truncated,
 			},
-			BodySize: response.total,
+			HeadersSize: -1, // 未计算响应头字节数，按 HAR 规范以 -1 表示未知，避免误导性 0
+			BodySize:    response.total,
 		},
 		Timings: capture.Timings{Wait: elapsed},
 	}

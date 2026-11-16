@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -170,5 +171,15 @@ func TestServe_TracksInFlightConnections(t *testing.T) {
 	case <-waited:
 	case <-time.After(5 * time.Second):
 		t.Fatal("connections did not drain after handler released")
+	}
+}
+
+// TestStatusRecorder_KeepsFirstStatus 多余写头在 http 语义下被忽略，记录器同样只保留第一次状态码，供请求日志使用。
+func TestStatusRecorder_KeepsFirstStatus(t *testing.T) {
+	status := &StatusRecorder{ResponseWriter: httptest.NewRecorder(), Status: http.StatusOK}
+	status.WriteHeader(http.StatusNotFound)
+	status.WriteHeader(http.StatusInternalServerError)
+	if status.Status != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d (first write wins)", status.Status, http.StatusNotFound)
 	}
 }

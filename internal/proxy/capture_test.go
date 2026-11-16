@@ -154,6 +154,12 @@ func TestCapture_RecordsPlainHTTP(t *testing.T) {
 	if entry.ServerName != "api.example.com" {
 		t.Fatalf("serverName = %q, want api.example.com", entry.ServerName)
 	}
+	if entry.Request.HeadersSize != -1 {
+		t.Fatalf("request headersSize = %d, want -1 (unknown)", entry.Request.HeadersSize)
+	}
+	if entry.Response.HeadersSize != -1 {
+		t.Fatalf("response headersSize = %d, want -1 (unknown)", entry.Response.HeadersSize)
+	}
 }
 
 func TestCapture_TruncatesLargeBody(t *testing.T) {
