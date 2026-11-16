@@ -79,7 +79,8 @@ func Parse(data []byte) (*Config, error) {
 func buildTable(config *Config) (*route.Table, error) {
 	table := route.NewTable()
 	for i, server := range config.Servers {
-		name := strings.ToLower(strings.TrimSpace(server.Domain))
+		// 剥离 FQDN 尾点，与请求侧 normalizeDomain 对齐：配置 example.org. 与请求域 example.org 视为同一域
+		name := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(server.Domain)), ".")
 		if name == "" {
 			return nil, fmt.Errorf("servers[%d]: domain is required", i)
 		}

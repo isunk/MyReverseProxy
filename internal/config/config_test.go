@@ -119,6 +119,38 @@ func TestLoadTable_LocalPathUpstream(t *testing.T) {
 	}
 }
 
+// TestLoadTable_NormalizesTrailingDot 配置域名的 FQDN 绝对形式（尾点）与请求侧归一一致：剥离尾点后按精确/通配符命中
+func TestLoadTable_NormalizesTrailingDot(t *testing.T) {
+	path := testutil.ConfigFile(t, "fqdn.yaml",
+		"servers:\n  - domain: api.example.com.\n    routes:\n      - prefix: /\n        upstream: http://up-a\n  - domain: \"*.wild.example.com.\"\n    routes:\n      - prefix: /\n        upstream: http://up-w\n")
+	table, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !table.Has("", 0, "api.example.com") {
+		t.Fatal("exact FQDN domain should match without trailing dot")
+	}
+	if !table.Has("", 0, "a.wild.example.com") {
+		t.Fatal("wildcard FQDN suffix should match single-label subdomain")
+	}
+	if table.Has("", 0, "wild.example.com") {
+		t.Fatal("bare wildcard suffix should not match")
+	}
+}
+
+// TestLoadTable_FQDNWildcardAll catch-all 尾点归一后等价于 *，匹配任意域名
+func TestLoadTable_FQDNWildcardAll(t *testing.T) {
+	path := testutil.ConfigFile(t, "all.yaml",
+		"servers:\n  - domain: \"*.\"\n    routes:\n      - prefix: /\n        upstream: http://up-a\n")
+	table, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !table.Has("", 0, "anything.example.com") {
+		t.Fatal("*. should normalize to * and match any domain")
+	}
+}
+
 func TestLoadTable_NormalizesDomainCase(t *testing.T) {
 	path := testutil.ConfigFile(t, "r.yaml",
 		"servers:\n  - domain: API.Example.COM\n    routes:\n      - prefix: /\n        upstream: http://up-a\n")
@@ -171,7 +203,7 @@ func TestLoadTable_WildcardAllDomains(t *testing.T) {
 
 // TestLoadTable_RejectsInvalidWildcard 通配符仅允许 * 与 *.suffix，其余位置出现 * 一律拒绝加载
 func TestLoadTable_RejectsInvalidWildcard(t *testing.T) {
-	for _, domain := range []string{"*.", "a.*.com", "*example.com", "*.*", "**", "a*.com", "*.example.*", "x.*.y"} {
+	for _, domain := range []string{"a.*.com", "*example.com", "*.*", "**", "a*.com", "*.example.*", "x.*.y"} {
 		content := "servers:\n  - domain: \"" + domain + "\"\n    routes:\n      - prefix: /\n        upstream: http://up-x\n"
 		path := testutil.ConfigFile(t, "bad.yaml", content)
 		if _, _, err := Load(path); err == nil {
