@@ -525,12 +525,14 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     return host.exec('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase().indexOf(MRP_EXE.toLowerCase()) >= 0;
   }
 
-  // 每秒探测 isUp，最多 seconds 秒；ok/no 为结果日志文案
+  // 每秒探测 isUp 最多 seconds 秒，setTimeout 轮询避免冻结面板；ok/no 为结果日志文案
   function mrpUp(isUp, seconds, ok, no) {
-    var i;
-    for (i = 0; i < seconds; i++) { host.run('timeout /t 1 >nul'); if (isUp()) { host.log(ok, 'ok'); return true; } }
-    host.log(no, 'err');
-    return false;
+    var i = 0;
+    setTimeout(function() {
+      if (isUp()) { host.log(ok, 'ok'); return; }
+      if (++i >= seconds) { host.log(no, 'err'); return; }
+      setTimeout(arguments.callee, 1000);
+    }, 1000);
   }
 
   function mrpWindowsStart() {
@@ -539,9 +541,10 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   }
 
   // 设备侧后台启动：cmd 为 shell 启动命令，poll 每秒探测设备端进程，devDir 为设备日志目录
+  // </dev/null 让后台进程不继承 shell 标准输入，否则 adb 会话不结束、面板等待其返回而冻结
   function mrpStart(cmd, poll, devDir) {
-    host.run(cmd);
-    mrpUp(poll, 5, 'mrp started on device, log in ' + devDir + '/mrp.log.', 'mrp did not start within 5 seconds.');
+    host.run(cmd, false, false);
+    mrpUp(poll, 5, 'mrp started on device, log in ' + devDir + '/mrp.log.', 'mrp did not start within 5 seconds, see ' + devDir + '/mrp.log.');
   }
 
   var modules = [
