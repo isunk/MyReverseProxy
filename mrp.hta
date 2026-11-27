@@ -26,8 +26,6 @@ a{color:#1677ff;text-decoration:none;cursor:pointer}
 button{background:none;border:0;color:#1677ff;padding:3px 10px;cursor:pointer;font:inherit}
 table{width:100%;border-collapse:collapse}
 td{border-bottom:1px solid #f5f5f5;padding:8px 4px}
-td a{margin-left:14px}
-td a.last{margin-left:0}
 #acts a{margin-right:16px}
 #con{position:absolute;left:14px;right:14px;top:330px;bottom:10px;margin:0;padding:0 12px 8px}
 pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid #eee;overflow-y:auto;font:12px/19px Consolas,monospace;margin:0;white-space:pre-wrap;word-break:break-all;box-sizing:border-box}
@@ -54,7 +52,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           <tr v-for="r in rows">
             <td width="120">{{ r.name }}</td>
             <td><i v-class="toVClass(r.tone)">{{ dot }}</i> {{ r.text }}</td>
-            <td align="right"><a v-for="a in r.btns" v-class="{err: a.danger, last: a.last}" @click="rowAct(r, a)">{{ a.label }}</a></td>
+            <td align="right"><a v-if="r.act" v-class="{err: r.danger}" @click="rowAct(r)">{{ r.act }}</a></td>
           </tr>
         </table>
       </fieldset>
@@ -85,7 +83,6 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   // ---- 常量 ----
   var PORT = '9000',
       HTTP_PORT = '8080',
-      INSPECT_PORT = '9222',
       CA_HASH = 'd6cd00d8',
       CA_CN = 'DeviceProxy CA',
       CRT = 'ca.crt',
@@ -428,7 +425,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       });
     }
 
-    function setupFor(el, expr, outer) {
+    function setupFor(el, expr) {
       var m = expr.match(/^\s*([\w$]+)\s+in\s+(.+?)\s*$/), parent = el.parentNode;
       if (!m || !parent) return;
       var name = m[1], listExpr = m[2];
@@ -439,15 +436,14 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       tpl.removeAttribute('v-for');
       track(function() {
         try {
-          var list = evalExpr(listExpr, outer) || [], n, i;
+          var list = evalExpr(listExpr) || [], n, i;
           while ((n = anchor.nextSibling) && n._vfor) { dispose(n); parent.removeChild(n); }
           var after = anchor.nextSibling;
           for (i = 0; i < list.length; i++) {
             var node = tpl.cloneNode(true);
             node._vfor = 1;
             parent.insertBefore(node, after);
-            var $s = {}, k;
-            for (k in outer) $s[k] = outer[k];
+            var $s = {};
             $s[name] = list[i];
             compile(node, $s);
           }
@@ -458,7 +454,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     function compile(el, $s) {
       if (!el || !el.getAttribute) return;
       var vfor = el.getAttribute('v-for');
-      if (vfor) { setupFor(el, vfor, $s); return; }
+      if (vfor) { setupFor(el, vfor); return; }
       var nodes = el.childNodes, arr = [], i, n;
       for (i = 0; i < nodes.length; i++) arr.push(nodes[i]);
       for (i = 0; i < arr.length; i++) {
@@ -519,32 +515,9 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   if (!host.file.exists(KEY)) host.file.write(KEY, CA_KEY);
 
   // ---- 模块定义 ----
-
-  // states: get(data) 实时探测返回 [状态标识, 文案, 颜色]；state 按标识映射按钮 [文案, 事件, 危险]，给数组则渲染多个按钮；tools 固定工具；health 页签圆点；uninstall 顶部卸载
+  // states: get(data) 实时探测返回 [状态标识, 文案, 颜色]；state 按标识映射按钮 [文案, 事件, 危险]；tools 固定工具；health 页签圆点；uninstall 顶部卸载
   function mrpWindowsRunning() {
     return host.exec('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase().indexOf(MRP_EXE.toLowerCase()) >= 0;
-  }
-
-  // 每秒探测 isUp 最多 seconds 秒，setTimeout 轮询避免冻结面板；ok/no 为结果日志文案
-  function mrpUp(isUp, seconds, ok, no) {
-    var i = 0;
-    setTimeout(function() {
-      if (isUp()) { host.log(ok, 'ok'); return; }
-      if (++i >= seconds) { host.log(no, 'err'); return; }
-      setTimeout(arguments.callee, 1000);
-    }, 1000);
-  }
-
-  function mrpWindowsStart() {
-    host.run('start "mrp" /D "' + host.workdir + '" "' + host.workdir + MRP_EXE + '"', true);
-    mrpUp(mrpWindowsRunning, 5, 'mrp started in a new window.', 'mrp did not start within 5 seconds.');
-  }
-
-  // 设备侧后台启动：cmd 为 shell 启动命令，poll 每秒探测设备端进程，devDir 为设备日志目录
-  // </dev/null 让后台进程不继承 shell 标准输入，否则 adb 会话不结束、面板等待其返回而冻结
-  function mrpStart(cmd, poll, devDir) {
-    host.run(cmd, false, false);
-    mrpUp(poll, 5, 'mrp started on device, log in ' + devDir + '/mrp.log.', 'mrp did not start within 5 seconds, see ' + devDir + '/mrp.log.');
   }
 
   var modules = [
@@ -617,7 +590,10 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             }],
             FALSE: ['Start', function(data, vm) {
               if (mrpWindowsRunning()) { host.log('mrp already running.', 'ok'); return; }
-              mrpWindowsStart();
+              host.run('start "mrp" /D "' + host.workdir + '" "' + host.workdir + MRP_EXE + '"', true);
+              var up = false, i;
+              for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (mrpWindowsRunning()) { up = true; break; } }
+              host.log(up ? 'mrp started in a new window.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
             }],
           },
         },
@@ -779,17 +755,14 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               for (i = 0; i < 3; i++) { host.run('timeout /t 1 >nul'); if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') === '') { gone = true; break; } }
               host.log(gone ? 'mrp stopped.' : 'mrp stop not confirmed.', gone ? 'ok' : 'warn');
             }],
-            FALSE: [
-              ['Start', function(data, vm) {
-                if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on device.', 'ok'); return; }
-                // nohup 后台运行：adb 会话断开（拔 USB）不终止 mrp，输出落设备侧日志
-                mrpStart('adb shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' >mrp.log 2>&1 &"', function() { return host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== ''; }, data.devDir);
-              }],
-              ['Start with inspect', function(data, vm) {
-                if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on device.', 'ok'); return; }
-                mrpStart('adb shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' --capture :' + INSPECT_PORT + ' >mrp.log 2>&1 &"', function() { return host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== ''; }, data.devDir);
-              }],
-            ],
+            FALSE: ['Start', function(data, vm) {
+              if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on device.', 'ok'); return; }
+              // nohup 后台运行：adb 会话断开（拔 USB）不终止 mrp，输出落设备侧日志
+              host.run('adb shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' >mrp.log 2>&1 &"');
+              var up = false, i;
+              for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== '') { up = true; break; } }
+              host.log(up ? 'mrp started on device, log in ' + data.devDir + '/mrp.log.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
+            }],
           },
         },
         {
@@ -812,13 +785,6 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         },
       ],
       tools: [
-        {
-          name: 'Port forward :' + INSPECT_PORT,
-          run: function(data, vm) {
-            host.run('adb forward tcp:' + INSPECT_PORT + ' tcp:' + INSPECT_PORT);
-            host.log('forward port ' + INSPECT_PORT + ' active, inspect target 127.0.0.1:' + INSPECT_PORT + '.', 'ok');
-          },
-        },
         {
           name: 'Port forward :' + PORT,
           run: function(data, vm) {
@@ -877,7 +843,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       data: {
         devDir: '/data/local/mrp',
         certPath: '/etc/security/certificates/' + CA_HASH + '.0',
-        ready: false, desc: '', bin: false, cert: false, run: false,
+        ready: false, desc: '', bin: false, cert: false, run: false, proxy: false,
       },
       health: function(data) {
         return !data.ready ? 'dim' : (data.cert && data.bin && data.run ? 'ok' : (data.cert || data.bin ? 'warn' : 'err'));
@@ -968,48 +934,38 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               for (i = 0; i < 3; i++) { host.run('timeout /t 1 >nul'); if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') === '') { gone = true; break; } }
               host.log(gone ? 'mrp stopped.' : 'mrp stop not confirmed.', gone ? 'ok' : 'warn');
             }],
-            FALSE: [
-              ['Start', function(data, vm) {
-                if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on device.', 'ok'); return; }
-                // nohup 后台运行：hdc 会话断开（拔 USB）不终止 mrp，输出落设备侧日志
-                mrpStart('hdc shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' >mrp.log 2>&1 &"', function() { return host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== ''; }, data.devDir);
-              }],
-              ['Start with inspect', function(data, vm) {
-                if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on device.', 'ok'); return; }
-                mrpStart('hdc shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' --capture :' + INSPECT_PORT + ' >mrp.log 2>&1 &"', function() { return host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== ''; }, data.devDir);
-              }],
-            ],
+            FALSE: ['Start', function(data, vm) {
+              if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on device.', 'ok'); return; }
+              // nohup 后台运行：hdc 会话断开（拔 USB）不终止 mrp，输出落设备侧日志
+              host.run('hdc shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' >mrp.log 2>&1 &"');
+              var up = false, i;
+              for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== '') { up = true; break; } }
+              host.log(up ? 'mrp started on device, log in ' + data.devDir + '/mrp.log.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
+            }],
           },
         },
         {
           name: 'Proxy',
           get: function(data) {
             if (!data.ready) return null;
-            // hdc 无代理查询命令，状态固定未知；按钮仍给 Set/Clear 供手动切换
-            return ['UNKNOWN', 'Unknown', 'dim'];
+            // hdc 无代理查询命令，沿用最近一次 Set/Clear 结果
+            return [data.proxy ? 'TRUE' : 'FALSE', data.proxy ? 'Configured (127.0.0.1:' + PORT + ')' : 'Not set', data.proxy ? 'ok' : 'warn'];
           },
           state: {
-            UNKNOWN: [
-              ['Set', function(data, vm) {
-                host.run('hdc shell network-cfg set http_proxy 127.0.0.1:' + PORT);
-                host.log('device global proxy set to 127.0.0.1:' + PORT + '.', 'ok');
-              }],
-              ['Clear', function(data, vm) {
-                host.run('hdc shell network-cfg set http_proxy 0');
-                host.log('device global proxy cleared.', 'ok');
-              }],
-            ],
+            TRUE: ['Clear', function(data, vm) {
+              host.run('hdc shell network-cfg set http_proxy 0');
+              data.proxy = false;
+              host.log('device global proxy cleared.', 'ok');
+            }],
+            FALSE: ['Set', function(data, vm) {
+              host.run('hdc shell network-cfg set http_proxy 127.0.0.1:' + PORT);
+              data.proxy = true;
+              host.log('device global proxy set to 127.0.0.1:' + PORT + '.', 'ok');
+            }],
           },
         },
       ],
       tools: [
-        {
-          name: 'Port forward :' + INSPECT_PORT,
-          run: function(data, vm) {
-            host.run('hdc fport tcp:' + INSPECT_PORT + ' tcp:' + INSPECT_PORT);
-            host.log('forward port ' + INSPECT_PORT + ' active, inspect target 127.0.0.1:' + INSPECT_PORT + '.', 'ok');
-          },
-        },
         {
           name: 'Port forward :' + PORT,
           run: function(data, vm) {
@@ -1056,6 +1012,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         host.run('hdc shell network-cfg set http_proxy 0');
         host.run('hdc shell rm -f ' + data.certPath);
         host.run('hdc shell rm -rf ' + data.devDir);
+        data.proxy = false;
         host.log('harmonyos uninstalled.', 'ok');
       },
     },
@@ -1140,15 +1097,15 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         if (a.danger) this.confirm('Confirm', 'Run "' + a.name + '" on ' + m.name + '?', a.name, go);
         else go();
       },
-      rowAct: function(r, a) {
-        if (!r || !a || !a.fn) return;
+      rowAct: function(r) {
+        if (!r || !r.fn) return;
         var self = this, m = this.cur;
         var go = function() {
-          host.log('>> ' + a.label, 'dim');
-          try { a.fn(m.data, self); }
+          host.log('>> ' + r.act, 'dim');
+          try { r.fn(m.data, self); }
           finally { self.render(); }
         };
-        if (a.danger) this.confirm('Confirm', 'Run "' + a.label + '" on ' + m.name + '?', a.label, go);
+        if (r.danger) this.confirm('Confirm', 'Run "' + r.act + '" on ' + m.name + '?', r.act, go);
         else go();
       },
       render: function() {
@@ -1159,15 +1116,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           catch (ex) { host.log('probe ' + st.name + ' failed: ' + (ex && ex.message ? ex.message : ex), 'err'); continue; }
           if (!v) continue;
           var btn = st.state ? st.state[v[0]] : null;
-          if (btn) {
-            // [文案, 事件, 危险] 是单个按钮，其余视为按钮数组；一个状态只占一行
-            var list = typeof btn[1] === 'function' ? [btn] : btn, btns = [], k;
-            for (k = 0; k < list.length; k++) {
-              var one = { label: list[k][0], danger: !!list[k][2], fn: list[k][1], last: k === list.length - 1 };
-              btns.push(one);
-            }
-            out.push({ name: st.name, tone: v[2], text: v[1], btns: btns });
-          }
+          out.push({ name: st.name, tone: v[2], text: v[1], act: btn ? btn[0] : '', danger: btn ? !!btn[2] : false, fn: btn ? btn[1] : null });
         }
         this.rowSet[this.tab] = out;
         this.tones[this.tab] = m.health(m.data);
