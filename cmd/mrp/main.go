@@ -57,7 +57,7 @@ func parseStartupOptions() (startupOptions, error) {
 	flag.StringVar(&levelName, "log", "info", "log level: debug, info, warn or error")
 	flag.DurationVar(&opts.dnsTimeout, "dns-timeout", dns.AttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
 	flag.DurationVar(&opts.dnsTTL, "dns-ttl", dns.TTL, "ttl of cached upstream resolutions, 0 disables the cache")
-	flag.StringVar(&opts.captureTarget, "capture", "", "capture target (default off): host:port for live DevTools, e.g. \":9222\"; .har path for offline file, e.g. \"capture.har\"; otherwise rejected")
+	flag.StringVar(&opts.captureTarget, "capture", "", "inspect or export http/https messages in mitm mode, such as \":9222\" or \"cap.har\"")
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
