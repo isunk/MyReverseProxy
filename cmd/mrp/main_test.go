@@ -117,6 +117,7 @@ func TestResolveCapture(t *testing.T) {
 	}{
 		{"", "", ""},
 		{"capture.har", "", "capture.har"},
+		{"Capture.HAR", "", "Capture.HAR"},
 		{"/data/local/mrp/traffic.har", "", "/data/local/mrp/traffic.har"},
 		{":9222", ":9222", ""},
 		{"0.0.0.0:9100", "0.0.0.0:9100", ""},

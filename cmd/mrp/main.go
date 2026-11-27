@@ -87,13 +87,13 @@ func parseStartupOptions() (startupOptions, error) {
 	return opts, nil
 }
 
-// resolveCapture 解析 --capture 取值：以 .har 结尾按离线 HAR 文件路径处理，其余按 host:port 暴露 Chrome DevTools 目标，
+// resolveCapture 解析 --capture 取值：以 .har 结尾（大小写不敏感）按离线 HAR 文件路径处理，其余按 host:port 暴露 Chrome DevTools 目标，
 // 仅给端口号时补全为监听所有网卡；返回的两个值恰好一个非空，取值为空表示关闭抓包。
 func resolveCapture(value string) (addr string, path string) {
 	if value == "" {
 		return "", ""
 	}
-	if strings.HasSuffix(value, ".har") {
+	if strings.HasSuffix(strings.ToLower(value), ".har") {
 		return "", value
 	}
 	if strings.Contains(value, ":") {
