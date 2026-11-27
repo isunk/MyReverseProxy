@@ -9,7 +9,7 @@
 - **SOCKS5 代理**：与 HTTP 代理共用单端口，无认证 CONNECT 字节透传到任意 TCP 目标，UDP ASSOCIATE 中继 UDP 数据报
 - **DNS 代理解析**：上游域名解析支持指定 DNS 服务器，按序故障切换
 - **配置热加载**：路由与 DNS 配置修改即时生效
-- **抓包**：把 MITM 解密后的 HTTPS 与直连明文 HTTP 记录为 HAR，默认以 CDP 端点接入 chrome://inspect 在 Chrome DevTools 网络面板实时查看，也可写入 `.har` 文件离线分析
+- **抓包**：把 MITM 解密后的 HTTPS 与直连明文 HTTP 记录为 HAR，默认关闭；开启后以 CDP 端点接入 chrome://inspect 在 Chrome DevTools 网络面板实时查看，或写入 `.har` 文件离线分析
 - **多端部署**：覆盖 Android / HarmonyOS / Windows / Linux，PC 可借道设备网络出口
 
 ## 原理
@@ -243,7 +243,7 @@ mrp-windows-amd64.exe
 | `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书与私钥，缺省时无法 MITM |
 | `--log` | `info` | 日志级别：debug / info / warn / error |
 | `--dns-timeout` / `--dns-ttl` | `1s` / `30s` | 单次 DNS 解析超时、解析结果缓存时长（`0` 关闭缓存） |
-| `--capture` | `:9222` | 抓包目标：`host:port` 以 CDP 接入 chrome://inspect 实时查看（仅端口号时监听所有网卡）；`.har` 路径离线写文件；空则关闭。三种之外的取值直接报错 |
+| `--capture` | 空（关闭） | 抓包目标：`host:port` 以 CDP 接入 chrome://inspect 实时查看（仅端口号时监听所有网卡）；`.har` 路径离线写文件。三种之外的取值直接报错 |
 
 Windows 也可双击 `mrp.hta` 部署面板：内置固定 CA 免 openssl，提供 CA 导入、进程启停、系统代理设置，及 Android(adb) / HarmonyOS(hdc) 设备的安装、启动、配置同步与卸载，设备工作目录 `/data/local/mrp`。
 
@@ -308,16 +308,16 @@ adb forward tcp:9000 tcp:9000
 
 ## 抓包
 
-联调时把代理可见的明文交互记录为 HAR 1.2。一个 `--capture` 参数按取值选择两种方式，默认走实时：
+联调时把代理可见的明文交互记录为 HAR 1.2。抓包默认关闭，给 `--capture` 传值即开启，按取值分两种方式：
 
-- **实时调试**（默认 `:9222`）：以 CDP 目标接入 chrome://inspect，在桌面 Chrome 原生 DevTools 网络面板实时查看，无需自建面板
+- **实时调试**：`--capture :9222` 以 CDP 目标接入 chrome://inspect，在桌面 Chrome 原生 DevTools 网络面板实时查看，无需自建面板
 - **离线文件**：`--capture capture.har` 写入设备本地文件，事后用 Charles / Fiddler，或 Chrome DevTools（F12 → Network → 导入 HAR）分析
 
 取值只允许三种，其它取值直接报错退出：以 `.har` 结尾（大小写不敏感）视为离线文件路径；`host:port` 作为 CDP 监听地址（仅给端口号时补全为监听所有网卡）；空值关闭抓包。
 
 ```bash
-# 实时调试（默认，远程 Chrome 用设备 IP 发现）
-./mrp-linux-arm64
+# 实时调试（远程 Chrome 用设备 IP 发现）
+./mrp-linux-arm64 --capture :9222
 
 # 离线抓包
 ./mrp-linux-arm64 --capture capture.har
@@ -329,7 +329,7 @@ adb forward tcp:9000 tcp:9000
 
 ### 接入 chrome://inspect 实时查看
 
-1. mrp 运行时 `--capture <host:port>`；默认 `:9222` 已监听所有网卡，`host` 填 `127.0.0.1` 则仅本机
+1. mrp 运行时 `--capture <host:port>`；`:9222` 已监听所有网卡，`host` 填 `127.0.0.1` 则仅本机
 2. 桌面 Chrome 地址栏打开 `chrome://inspect`，点「Discover network targets」→「Add」
 3. 填入 `<设备IP>:<端口>`（如 `192.168.1.100:9222`），列表出现「mrp proxy traffic」目标
 4. 点目标的「inspect」弹出 DevTools，切到 **Network** 面板即可实时看全部接口请求/响应
@@ -341,7 +341,7 @@ adb forward tcp:9000 tcp:9000
 - 离线文件每次运行截断同名文件从头记录，累计最多 256 MiB，达到后停止追加
 - 实时会话在内存中保留最近 5000 条、累计 body 最多 64 MiB，超出按最旧丢弃
 
-正常退出（SIGINT/SIGTERM）自动补全离线文件 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，可手动补全或重新开始抓包。记录含 `Authorization` 等敏感头与业务数据，安全由使用者自行管理；`--capture` 默认开启并监听所有网卡，暴露到公网前请自行评估鉴权或改用 `127.0.0.1:<端口>`。
+正常退出（SIGINT/SIGTERM）自动补全离线文件 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，可手动补全或重新开始抓包。记录含 `Authorization` 等敏感头与业务数据，安全由使用者自行管理；在线调试端点无鉴权且 `:9222` 监听所有网卡，暴露到公网前请自行评估鉴权或改用 `127.0.0.1:<端口>`。
 
 ## 从源码构建
 

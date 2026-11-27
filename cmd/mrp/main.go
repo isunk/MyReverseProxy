@@ -26,8 +26,6 @@ import (
 
 const (
 	defaultListenPort = 9000
-	// defaultCapture 默认抓包目标：以 :9222 暴露 Chrome DevTools 目标，远程可直接发现。
-	defaultCapture = ":9222"
 
 	// 收到退出信号后等待 in-flight 连接自行结束的时间窗口，超时强制退出；长连接通常不会在此窗口内自然结束。
 	shutdownGracePeriod = 10 * time.Second
@@ -59,7 +57,7 @@ func parseStartupOptions() (startupOptions, error) {
 	flag.StringVar(&levelName, "log", "info", "log level: debug, info, warn or error")
 	flag.DurationVar(&opts.dnsTimeout, "dns-timeout", dns.AttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
 	flag.DurationVar(&opts.dnsTTL, "dns-ttl", dns.TTL, "ttl of cached upstream resolutions, 0 disables the cache")
-	flag.StringVar(&opts.captureTarget, "capture", defaultCapture, "capture target: host:port exposes a Chrome DevTools target for chrome://inspect, .har path writes an offline HAR file, empty disables capture")
+	flag.StringVar(&opts.captureTarget, "capture", "", "capture target (default off): host:port exposes a Chrome DevTools target for chrome://inspect, a .har path writes an offline HAR file, any other value is rejected")
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -159,7 +157,6 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, *inspect.Server, error) {
 		session := capture.NewSession(capture.MaxEntries, capture.MaxBytes)
 		proxyInstance.SetSession(session)
 		inspector = inspect.New(session, captureAddr)
-		log.Info("devtools listening addr=%s targets=chrome://inspect", captureAddr)
 	}
 	// 首次 reload 已让配置文件里的 nameservers 生效；未配置时为空，按系统默认 DNS 解析。
 	log.Info("dns configured nameservers=%s ttl=%s", nameservers.Describe(), opts.dnsTTL)
@@ -198,6 +195,8 @@ func run(listener net.Listener, proxyInstance *proxy.Proxy, inspector *inspect.S
 		if err := inspector.Start(); err != nil {
 			// 调试端点可选，端口被占只降级不终止代理；代理端口监听失败才 Fatal。
 			log.Warn("devtools disabled addr=%s err=%v", inspector.Addr(), err)
+		} else {
+			log.Info("devtools listening addr=%s targets=chrome://inspect", inspector.Addr())
 		}
 	}
 	serveSignals(listener, proxyInstance, &connections, serveDone)

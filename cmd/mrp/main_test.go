@@ -88,8 +88,8 @@ func TestParseStartupOptions_Capture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseStartupOptions: %v", err)
 	}
-	if opts.captureTarget != defaultCapture {
-		t.Fatalf("default captureTarget = %q, want %q", opts.captureTarget, defaultCapture)
+	if opts.captureTarget != "" {
+		t.Fatalf("default captureTarget = %q, want empty (capture off)", opts.captureTarget)
 	}
 	for _, tc := range []struct {
 		value string
