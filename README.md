@@ -243,7 +243,7 @@ mrp-windows-amd64.exe
 | `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书与私钥，缺省时无法 MITM |
 | `--log` | `info` | 日志级别：debug / info / warn / error |
 | `--dns-timeout` / `--dns-ttl` | `1s` / `30s` | 单次 DNS 解析超时、解析结果缓存时长（`0` 关闭缓存） |
-| `--capture` | `:9222` | 抓包目标：`host:port` 以 CDP 接入 chrome://inspect 实时查看（仅端口号时监听所有网卡）；`.har` 路径离线写文件；空则关闭 |
+| `--capture` | `:9222` | 抓包目标：`host:port` 以 CDP 接入 chrome://inspect 实时查看（仅端口号时监听所有网卡）；`.har` 路径离线写文件；空则关闭。三种之外的取值直接报错 |
 
 Windows 也可双击 `mrp.hta` 部署面板：内置固定 CA 免 openssl，提供 CA 导入、进程启停、系统代理设置，及 Android(adb) / HarmonyOS(hdc) 设备的安装、启动、配置同步与卸载，设备工作目录 `/data/local/mrp`。
 
@@ -313,7 +313,7 @@ adb forward tcp:9000 tcp:9000
 - **实时调试**（默认 `:9222`）：以 CDP 目标接入 chrome://inspect，在桌面 Chrome 原生 DevTools 网络面板实时查看，无需自建面板
 - **离线文件**：`--capture capture.har` 写入设备本地文件，事后用 Charles / Fiddler，或 Chrome DevTools（F12 → Network → 导入 HAR）分析
 
-取值规则：以 `.har` 结尾视为离线文件路径，其余按 `host:port` 作为 CDP 监听地址（仅给端口号时补全为监听所有网卡），空值关闭抓包。
+取值只允许三种，其它取值直接报错退出：以 `.har` 结尾（大小写不敏感）视为离线文件路径；`host:port` 作为 CDP 监听地址（仅给端口号时补全为监听所有网卡）；空值关闭抓包。
 
 ```bash
 # 实时调试（默认，远程 Chrome 用设备 IP 发现）

@@ -24,7 +24,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 | 文件 | 职责 | 不应包含 |
 |------|------|----------|
-| `cmd/mrp/main.go` | flags 解析（`parseStartupOptions`，含唯一监听端口 `--port` 与 `defaultListenPort=9000`、抓包目标 `--capture` 与 `defaultCapture=":9222"`）、`resolveCapture`（`.har` 走离线文件，其余按 `host:port` 暴露 DevTools 目标）、`buildProxy`、信号循环、`run` | 路由/转发逻辑、监听细节、`os.Exit`（不可恢复失败走 `log.Fatal`） |
+| `cmd/mrp/main.go` | flags 解析（`parseStartupOptions`，含唯一监听端口 `--port` 与 `defaultListenPort=9000`、抓包目标 `--capture` 与 `defaultCapture=":9222"`）、`resolveCapture`（`.har` 走离线文件，其余按 `host:port` 暴露 DevTools 目标，其它取值由 `validateCapture` 拒绝）、`buildProxy`、信号循环、`run` | 路由/转发逻辑、监听细节、`os.Exit`（不可恢复失败走 `log.Fatal`） |
 | `internal/config/config.go` | YAML 配置结构（`Config`/`Server`/`Route`/`Headers`）、`Load`、`Parse`、`Ensure`、`buildTable`、`validateDomainPattern`、`buildServerEntry`、`buildRoutes` | 任何运行期依赖、转发逻辑 |
 | `internal/route/route.go` | `Route`、`Entry`、`Table`（`groups []*DomainGroup`）、`DomainGroup`、`Pick`/`Has`/`Add`/`InstallHandlers`/`Fingerprint`/`protocolLabel`/`pathHasPrefix` | I/O、日志以外的运行期编排 |
 | `internal/route/target.go` | `Target`、`ParseTarget`/`validateURLHost`/`parseTargetHost`/`isLocalPath` | I/O、日志以外的运行期编排 |

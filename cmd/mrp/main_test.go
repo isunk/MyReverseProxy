@@ -96,7 +96,10 @@ func TestParseStartupOptions_Capture(t *testing.T) {
 		want  string
 	}{
 		{"capture.har", "capture.har"},
+		{"Capture.HAR", "Capture.HAR"},
+		{":9222", ":9222"},
 		{"0.0.0.0:9100", "0.0.0.0:9100"},
+		{"9100", "9100"},
 		{"", ""},
 	} {
 		opts, err = parseArgs(t, "--capture", tc.value)
@@ -105,6 +108,20 @@ func TestParseStartupOptions_Capture(t *testing.T) {
 		}
 		if opts.captureTarget != tc.want {
 			t.Fatalf("captureTarget(%q) = %q, want %q", tc.value, opts.captureTarget, tc.want)
+		}
+	}
+}
+
+func TestParseStartupOptions_CaptureRejected(t *testing.T) {
+	for _, value := range []string{
+		"capture.txt",
+		"9222x",
+		"0.0.0.0:notaport",
+		":99999",
+		"example.com",
+	} {
+		if _, err := parseArgs(t, "--capture", value); err == nil {
+			t.Fatalf("--capture %q accepted, want rejection", value)
 		}
 	}
 }

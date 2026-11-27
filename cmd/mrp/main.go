@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -58,7 +59,7 @@ func parseStartupOptions() (startupOptions, error) {
 	flag.StringVar(&levelName, "log", "info", "log level: debug, info, warn or error")
 	flag.DurationVar(&opts.dnsTimeout, "dns-timeout", dns.AttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
 	flag.DurationVar(&opts.dnsTTL, "dns-ttl", dns.TTL, "ttl of cached upstream resolutions, 0 disables the cache")
-	flag.StringVar(&opts.captureTarget, "capture", defaultCapture, "capture target: host:port serves a Chrome DevTools target for chrome://inspect, a .har path writes an offline HAR file, empty disables capture")
+	flag.StringVar(&opts.captureTarget, "capture", defaultCapture, "capture target: host:port exposes a Chrome DevTools target for chrome://inspect, .har path writes an offline HAR file, empty disables capture")
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -84,11 +85,29 @@ func parseStartupOptions() (startupOptions, error) {
 	if opts.dnsTTL < 0 {
 		return opts, fmt.Errorf("--dns-ttl %v: must be >= 0", opts.dnsTTL)
 	}
+	if err := validateCapture(opts.captureTarget); err != nil {
+		return opts, fmt.Errorf("invalid --capture %q: %w", opts.captureTarget, err)
+	}
 	return opts, nil
 }
 
+// validateCapture 校验 --capture 取值：只接受 .har 离线文件路径或 host:port 监听地址（仅端口号视为监听所有网卡），其余拒绝。
+func validateCapture(value string) error {
+	if value == "" || strings.HasSuffix(strings.ToLower(value), ".har") {
+		return nil
+	}
+	port := value
+	if _, rest, ok := strings.Cut(value, ":"); ok {
+		port = rest
+	}
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+		return fmt.Errorf("listen port %q must be a number from 0 to 65535", port)
+	}
+	return nil
+}
+
 // resolveCapture 解析 --capture 取值：以 .har 结尾（大小写不敏感）按离线 HAR 文件路径处理，其余按 host:port 暴露 Chrome DevTools 目标，
-// 仅给端口号时补全为监听所有网卡；返回的两个值恰好一个非空，取值为空表示关闭抓包。
+// 仅给端口号时补全为监听所有网卡；返回的两个值恰好一个非空，取值为空表示关闭抓包。取值合法性由 parseStartupOptions 先行校验。
 func resolveCapture(value string) (addr string, path string) {
 	if value == "" {
 		return "", ""
