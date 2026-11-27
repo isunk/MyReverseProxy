@@ -18,7 +18,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 ## 文件组织
 
-- `mrp.hta` 为 UTF-8 编码的 Windows HTA 部署面板（MRP Helper），仓库按原始字节存储。渲染路径刻意保持全 ASCII：中文用数字实体、圆点用 `fromCharCode`，规避 HTA 宿主在不同系统区域设置下的编码错位；链接不带 `href`（`NAVIGABLE=no` 下 `javascript:` 会被交给默认浏览器），`@` 事件统一 `preventDefault`。双击运行生效，拖入浏览器仅显示界面、动作不可用。修改后自检：仍是 UTF-8 无 BOM、渲染文本全 ASCII（无中文字面量）。
+- `mrp.hta` 为 UTF-8 编码的 Windows HTA 部署面板（MRP Helper），仓库按原始字节存储。渲染路径刻意保持全 ASCII：中文用数字实体、圆点用 `fromCharCode`，规避 HTA 宿主在不同系统区域设置下的编码错位；链接不带 `href`（`NAVIGABLE=no` 下 `javascript:` 会被交给默认浏览器），`@` 事件统一 `preventDefault`。双击运行生效，拖入浏览器仅显示界面、动作不可用；`state` 映射值可为单个按钮，也可给数组渲染多个按钮（如 Windows 进程同时提供 Start 与 Start with inspect）。修改后自检：仍是 UTF-8 无 BOM、渲染文本全 ASCII（无中文字面量）。
 
 代码按业界标准布局分层：`cmd/mrp` 是入口，业务逻辑全部在 `internal/*`，包之间单向依赖（`log`、`cache`、`capture`、`singleflight` 无内部依赖；`netutil`→`log`；`route`→`log,netutil`；`config`→`route,log,netutil`；`dns`→`cache,log,singleflight,netutil`；`ca`→`cache,log,singleflight,netutil`；`frontend`→`netutil`；`inspect`→`capture`；`proxy`→`ca,capture,config,frontend,log,netutil,route`），禁止反向引用形成环。
 

@@ -83,6 +83,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   // ---- 常量 ----
   var PORT = '9000',
       HTTP_PORT = '8080',
+      INSPECT_PORT = '9222',
       CA_HASH = 'd6cd00d8',
       CA_CN = 'DeviceProxy CA',
       CRT = 'ca.crt',
@@ -515,9 +516,25 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   if (!host.file.exists(KEY)) host.file.write(KEY, CA_KEY);
 
   // ---- 模块定义 ----
-  // states: get(data) 实时探测返回 [状态标识, 文案, 颜色]；state 按标识映射按钮 [文案, 事件, 危险]；tools 固定工具；health 页签圆点；uninstall 顶部卸载
+  // states: get(data) 实时探测返回 [状态标识, 文案, 颜色]；state 按标识映射按钮 [文案, 事件, 危险]，给数组则渲染多个按钮；tools 固定工具；health 页签圆点；uninstall 顶部卸载
   function mrpWindowsRunning() {
     return host.exec('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase().indexOf(MRP_EXE.toLowerCase()) >= 0;
+  }
+
+  // 至多等几秒确认 Windows 侧 mrp 已起来，用于判断启动结果
+  function mrpWindowsUp(seconds) {
+    var i;
+    for (i = 0; i < seconds; i++) { host.run('timeout /t 1 >nul'); if (mrpWindowsRunning()) return true; }
+    return false;
+  }
+
+  // 启动 Windows 侧 mrp，capture 为 --capture 取值，空则不带参数
+  function mrpWindowsStart(capture) {
+    var cmd = 'start "mrp" /D "' + host.workdir + '" "' + host.workdir + MRP_EXE + '"';
+    if (capture) cmd += ' --capture ' + capture;
+    host.run(cmd, true);
+    var up = mrpWindowsUp(5);
+    host.log(up ? 'mrp started in a new window.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
   }
 
   var modules = [
@@ -588,13 +605,16 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
               }
               host.log('mrp stopped.', 'ok');
             }],
-            FALSE: ['Start', function(data, vm) {
-              if (mrpWindowsRunning()) { host.log('mrp already running.', 'ok'); return; }
-              host.run('start "mrp" /D "' + host.workdir + '" "' + host.workdir + MRP_EXE + '"', true);
-              var up = false, i;
-              for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (mrpWindowsRunning()) { up = true; break; } }
-              host.log(up ? 'mrp started in a new window.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
-            }],
+            FALSE: [
+              ['Start', function(data, vm) {
+                if (mrpWindowsRunning()) { host.log('mrp already running.', 'ok'); return; }
+                mrpWindowsStart(null);
+              }],
+              ['Start with inspect', function(data, vm) {
+                if (mrpWindowsRunning()) { host.log('mrp already running.', 'ok'); return; }
+                mrpWindowsStart(':' + INSPECT_PORT);
+              }],
+            ],
           },
         },
         {
@@ -758,7 +778,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             FALSE: ['Start', function(data, vm) {
               if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on device.', 'ok'); return; }
               // nohup 后台运行：adb 会话断开（拔 USB）不终止 mrp，输出落设备侧日志
-              host.run('adb shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' >mrp.log 2>&1 &"');
+              host.run('adb shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' --capture :' + INSPECT_PORT + ' >mrp.log 2>&1 &"');
               var up = false, i;
               for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (host.exec('adb shell pidof ' + DEV_BIN + ' 2>nul') !== '') { up = true; break; } }
               host.log(up ? 'mrp started on device, log in ' + data.devDir + '/mrp.log.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
@@ -785,6 +805,13 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         },
       ],
       tools: [
+        {
+          name: 'Port forward :' + INSPECT_PORT,
+          run: function(data, vm) {
+            host.run('adb forward tcp:' + INSPECT_PORT + ' tcp:' + INSPECT_PORT);
+            host.log('forward port ' + INSPECT_PORT + ' active, inspect target 127.0.0.1:' + INSPECT_PORT + '.', 'ok');
+          },
+        },
         {
           name: 'Port forward :' + PORT,
           run: function(data, vm) {
@@ -937,7 +964,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
             FALSE: ['Start', function(data, vm) {
               if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== '') { host.log('mrp already running on device.', 'ok'); return; }
               // nohup 后台运行：hdc 会话断开（拔 USB）不终止 mrp，输出落设备侧日志
-              host.run('hdc shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' >mrp.log 2>&1 &"');
+              host.run('hdc shell "cd ' + data.devDir + '; nohup ./' + DEV_BIN + ' --capture :' + INSPECT_PORT + ' >mrp.log 2>&1 &"');
               var up = false, i;
               for (i = 0; i < 5; i++) { host.run('timeout /t 1 >nul'); if (host.exec('hdc shell pidof ' + DEV_BIN + ' 2>nul') !== '') { up = true; break; } }
               host.log(up ? 'mrp started on device, log in ' + data.devDir + '/mrp.log.' : 'mrp did not start within 5 seconds.', up ? 'ok' : 'err');
@@ -966,6 +993,13 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         },
       ],
       tools: [
+        {
+          name: 'Port forward :' + INSPECT_PORT,
+          run: function(data, vm) {
+            host.run('hdc fport tcp:' + INSPECT_PORT + ' tcp:' + INSPECT_PORT);
+            host.log('forward port ' + INSPECT_PORT + ' active, inspect target 127.0.0.1:' + INSPECT_PORT + '.', 'ok');
+          },
+        },
         {
           name: 'Port forward :' + PORT,
           run: function(data, vm) {
@@ -1116,7 +1150,16 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           catch (ex) { host.log('probe ' + st.name + ' failed: ' + (ex && ex.message ? ex.message : ex), 'err'); continue; }
           if (!v) continue;
           var btn = st.state ? st.state[v[0]] : null;
-          out.push({ name: st.name, tone: v[2], text: v[1], act: btn ? btn[0] : '', danger: btn ? !!btn[2] : false, fn: btn ? btn[1] : null });
+          if (btn && !(btn.length === 3 && typeof btn[2] === 'boolean')) {
+            var list = [], k;
+            for (k = 0; k < btn.length; k++) list.push(btn[k]);
+            btn = list;
+          }
+          if (btn) {
+            var acts = [];
+            for (k = 0; k < btn.length; k++) acts.push({ name: st.name, tone: v[2], text: v[1], act: btn[k][0], danger: !!btn[k][2], fn: btn[k][1] });
+            out = out.concat(acts);
+          }
         }
         this.rowSet[this.tab] = out;
         this.tones[this.tab] = m.health(m.data);

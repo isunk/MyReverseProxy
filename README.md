@@ -245,7 +245,7 @@ mrp-windows-amd64.exe
 | `--dns-timeout` / `--dns-ttl` | `1s` / `30s` | 单次 DNS 解析超时、解析结果缓存时长（`0` 关闭缓存） |
 | `--capture` | 空（关闭） | 抓包目标：`host:port` 以 CDP 接入 chrome://inspect 实时查看（仅端口号时监听所有网卡）；`.har` 路径离线写文件。三种之外的取值直接报错 |
 
-Windows 也可双击 `mrp.hta` 部署面板：内置固定 CA 免 openssl，提供 CA 导入、进程启停、系统代理设置，及 Android(adb) / HarmonyOS(hdc) 设备的安装、启动、配置同步与卸载，设备工作目录 `/data/local/mrp`。
+Windows 也可双击 `mrp.hta` 部署面板：内置固定 CA 免 openssl，提供 CA 导入、进程启停（含带实时抓包的启动）、系统代理设置，及 Android(adb) / HarmonyOS(hdc) 设备的安装、启动、配置同步与卸载，设备工作目录 `/data/local/mrp`。
 
 ### 4. 验证
 
