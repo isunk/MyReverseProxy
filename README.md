@@ -9,7 +9,7 @@
 - **SOCKS5 代理**：与 HTTP 代理共用单端口，无认证 CONNECT 字节透传到任意 TCP 目标，UDP ASSOCIATE 中继 UDP 数据报
 - **DNS 代理解析**：上游域名解析支持指定 DNS 服务器，按序故障切换
 - **配置热加载**：路由与 DNS 配置修改即时生效
-- **抓包**：把 MITM 解密后的 HTTPS 与直连明文 HTTP 记录为 HAR，离线写入文件，或以 HTTP 实时导出供 Chrome DevTools 网络面板原生导入分析
+- **抓包**：把 MITM 解密后的 HTTPS 与直连明文 HTTP 记录为 HAR，离线写入文件，或以 CDP 端点接入 chrome://inspect，在 Chrome DevTools 网络面板原生实时查看
 - **多端部署**：覆盖 Android / HarmonyOS / Windows / Linux，PC 可借道设备网络出口
 
 ## 原理
@@ -244,7 +244,7 @@ mrp-windows-amd64.exe
 | `--log` | `info` | 日志级别：debug / info / warn / error |
 | `--dns-timeout` / `--dns-ttl` | `1s` / `30s` | 单次 DNS 解析超时、解析结果缓存时长（`0` 关闭缓存） |
 | `--capture` | 空 | 抓包写入 HAR 文件，指定即开启；空则关闭（离线分析用） |
-| `--capture-serve` | 空 | 以 HTTP 实时导出抓包的监听地址（`host:port`），供 Chrome DevTools 导入；空则关闭 |
+| `--inspect` | 空 | Chrome DevTools 目标监听地址（`host:port`），供 chrome://inspect 接入实时流量；空则关闭 |
 
 Windows 也可双击 `mrp.hta` 部署面板：内置固定 CA 免 openssl，提供 CA 导入、进程启停、系统代理设置，及 Android(adb) / HarmonyOS(hdc) 设备的安装、启动、配置同步与卸载，设备工作目录 `/data/local/mrp`。
 
@@ -312,22 +312,22 @@ adb forward tcp:9000 tcp:9000
 联调时把代理可见的明文交互记录为 HAR 1.2，供标准工具分析。两种互补的方式：
 
 - **离线文件**：`--capture capture.har` 写入设备本地文件，事后用 Charles / Fiddler，或 Chrome DevTools（F12 → Network → 导入 HAR）分析
-- **实时导出**：`--capture-serve 0.0.0.0:9100` 以 HTTP 提供实时 HAR，在桌面 Chrome 原生 DevTools 里直接查看，无需自建面板
+- **远程调试**：`--inspect 0.0.0.0:9222` 以 CDP 目标接入 chrome://inspect，在桌面 Chrome 原生 DevTools 网络面板实时查看，无需自建面板
 
 ```bash
 # 离线抓包
 ./mrp-linux-arm64 --capture capture.har
 
-# 实时 HAR（远程 Chrome 用设备 IP 访问）
-./mrp-linux-arm64 --capture-serve 0.0.0.0:9100
+# 远程调试（远程 Chrome 用设备 IP 发现）
+./mrp-linux-arm64 --inspect 0.0.0.0:9222
 ```
 
-### 实时导出到 Chrome DevTools
+### 接入 chrome://inspect 实时查看
 
-1. mrp 运行时加 `--capture-serve <host:port>`；`host` 填 `0.0.0.0` 允许远程访问，或用 `127.0.0.1` 仅本机
-2. 桌面 Chrome 打开 DevTools（F12）→ Network 面板
-3. 访问 `http://<设备IP>:<端口>/` 下载 `mrp.har`（每次访问返回截至此刻的累计抓包）
-4. 把下载的 `mrp.har` 拖入 Network 面板，即原生渲染全部接口请求/响应；重新访问 URL 再次导入即可刷新
+1. mrp 运行时加 `--inspect <host:port>`；`host` 填 `0.0.0.0` 允许远程访问，或用 `127.0.0.1` 仅本机
+2. 桌面 Chrome 地址栏打开 `chrome://inspect`，点「Discover network targets」→「Add」
+3. 填入 `<设备IP>:<端口>`（如 `192.168.1.100:9222`），列表出现「mrp proxy traffic」目标
+4. 点目标的「inspect」弹出 DevTools，切到 **Network** 面板即可实时看全部接口请求/响应
 
 ### 记录范围与限制
 
@@ -336,7 +336,7 @@ adb forward tcp:9000 tcp:9000
 - 离线文件每次运行截断同名文件从头记录，累计最多 256 MiB，达到后停止追加
 - 实时会话在内存中保留最近 5000 条、累计 body 最多 64 MiB，超出按最旧丢弃
 
-正常退出（SIGINT/SIGTERM）自动补全离线文件 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，可手动补全或重新开始抓包。记录含 `Authorization` 等敏感头与业务数据，安全由使用者自行管理；`--capture-serve` 暴露到公网前请自行评估鉴权。
+正常退出（SIGINT/SIGTERM）自动补全离线文件 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，可手动补全或重新开始抓包。记录含 `Authorization` 等敏感头与业务数据，安全由使用者自行管理；`--inspect` 暴露到公网前请自行评估鉴权。
 
 ## 从源码构建
 
@@ -404,8 +404,8 @@ internal/
   frontend/     单端口监听与协议嗅探（HTTP/SOCKS5）、单连接复用（MITM 内层服务）
   netutil/      通用网络原语：BufferPool、双向 Relay、ServeListener（Accept 退避）
   ca/           自签 CA 按名字现场签发证书（域名 SAN / IP SAN），并发合并
-  capture/      HAR 抓包：增量写盘、body 截断、文件上限，内存会话（实时 HAR）
-  inspect/      以 HTTP 提供实时 HAR，供 Chrome DevTools 原生导入
+  capture/      HAR 抓包：增量写盘、body 截断、文件上限，内存会话（带序号的增量订阅）
+  inspect/      CDP 端点（/json 发现 + WebSocket），供 chrome://inspect 接入实时流量
   dns/          上游 DNS 解析与故障切换、结果缓存
   cache/        通用并发缓存
   singleflight/ 泛型并发合并（ca 签发与 dns 解析共用）

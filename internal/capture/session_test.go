@@ -58,6 +58,70 @@ func TestSession_EvictsByBytes(t *testing.T) {
 	}
 }
 
+func TestSession_TailReturnsSeqOrdered(t *testing.T) {
+	session := NewSession(0, 0)
+	session.Add(markerEntry("a"))
+	session.Add(markerEntry("b"))
+	session.Add(markerEntry("c"))
+
+	records, latest := session.Tail(0)
+	if latest != 3 {
+		t.Fatalf("latest = %d, want 3", latest)
+	}
+	if len(records) != 3 {
+		t.Fatalf("records = %d, want 3", len(records))
+	}
+	for i, want := range []uint64{1, 2, 3} {
+		if records[i].Seq != want {
+			t.Fatalf("records[%d].Seq = %d, want %d", i, records[i].Seq, want)
+		}
+	}
+
+	records, latest = session.Tail(2)
+	if latest != 3 {
+		t.Fatalf("latest after tail(2) = %d, want 3", latest)
+	}
+	if len(records) != 1 || records[0].Seq != 3 {
+		t.Fatalf("tail(2) = %+v, want single seq 3", records)
+	}
+}
+
+func TestSession_TailSkipsEvicted(t *testing.T) {
+	session := NewSession(3, 0)
+	for _, marker := range []string{"a", "b", "c", "d", "e"} {
+		session.Add(markerEntry(marker))
+	}
+	records, latest := session.Tail(0)
+	if latest != 5 {
+		t.Fatalf("latest = %d, want 5", latest)
+	}
+	if len(records) != 3 {
+		t.Fatalf("records = %d, want 3", len(records))
+	}
+	for i, want := range []uint64{3, 4, 5} {
+		if records[i].Seq != want {
+			t.Fatalf("records[%d].Seq = %d, want %d", i, records[i].Seq, want)
+		}
+	}
+}
+
+func TestSession_EntryBySeq(t *testing.T) {
+	session := NewSession(0, 0)
+	session.Add(markerEntry("a"))
+	session.Add(markerEntry("b"))
+
+	entry, ok := session.EntryBySeq(2)
+	if !ok {
+		t.Fatal("EntryBySeq(2) not found")
+	}
+	if entry.Response.Content.Text != "b" {
+		t.Fatalf("entry = %q, want b", entry.Response.Content.Text)
+	}
+	if _, ok := session.EntryBySeq(999); ok {
+		t.Fatal("EntryBySeq(999) should not exist")
+	}
+}
+
 func TestSession_HARValid(t *testing.T) {
 	session := NewSession(0, 0)
 	session.Add(markerEntry("payload"))

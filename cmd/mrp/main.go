@@ -39,7 +39,7 @@ type startupOptions struct {
 	dnsTimeout      time.Duration
 	dnsTTL          time.Duration
 	capturePath     string
-	captureServe    string
+	inspectAddr     string
 	configSpecified bool
 	certSpecified   bool
 	keySpecified    bool
@@ -57,7 +57,7 @@ func parseStartupOptions() (startupOptions, error) {
 	flag.DurationVar(&opts.dnsTimeout, "dns-timeout", dns.AttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
 	flag.DurationVar(&opts.dnsTTL, "dns-ttl", dns.TTL, "ttl of cached upstream resolutions, 0 disables the cache")
 	flag.StringVar(&opts.capturePath, "capture", "", "write captured traffic to a HAR file, empty disables file capture")
-	flag.StringVar(&opts.captureServe, "capture-serve", "", "serve captured traffic as HAR over HTTP for Chrome DevTools import (host:port), empty disables")
+	flag.StringVar(&opts.inspectAddr, "inspect", "", "Chrome DevTools target listen address for chrome://inspect (host:port), empty disables")
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -86,7 +86,7 @@ func parseStartupOptions() (startupOptions, error) {
 	return opts, nil
 }
 
-// buildProxy 组装代理实例：初始化配置与 DNS 服务器、构建上游连接池与路由表；capture-serve 开启时附带实时 HAR 服务。
+// buildProxy 组装代理实例：初始化配置与 DNS 服务器、构建上游连接池与路由表；inspect 开启时附带 CDP 调试端点。
 func buildProxy(opts startupOptions) (*proxy.Proxy, *inspect.Server, error) {
 	if !opts.configSpecified {
 		if err := config.Ensure(opts.configPath); err != nil {
@@ -119,11 +119,11 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, *inspect.Server, error) {
 		}
 	}
 	var inspector *inspect.Server
-	if opts.captureServe != "" {
+	if opts.inspectAddr != "" {
 		session := capture.NewSession(capture.MaxEntries, capture.MaxBytes)
 		proxyInstance.SetSession(session)
-		inspector = inspect.New(session, opts.captureServe)
-		log.Info("capture served addr=%s", opts.captureServe)
+		inspector = inspect.New(session, opts.inspectAddr)
+		log.Info("devtools listening addr=%s targets=chrome://inspect", opts.inspectAddr)
 	}
 	// 首次 reload 已让配置文件里的 nameservers 生效；未配置时为空，按系统默认 DNS 解析。
 	log.Info("dns configured nameservers=%s ttl=%s", nameservers.Describe(), opts.dnsTTL)
@@ -160,7 +160,7 @@ func run(listener net.Listener, proxyInstance *proxy.Proxy, inspector *inspect.S
 	go proxyInstance.WatchFile(time.Second, nil)
 	if inspector != nil {
 		if err := inspector.Start(); err != nil {
-			log.Fatal("capture serve listen failed addr=%s err=%v", inspector.Addr(), err)
+			log.Fatal("inspect listen failed addr=%s err=%v", inspector.Addr(), err)
 		}
 	}
 	serveSignals(listener, proxyInstance, &connections, serveDone)

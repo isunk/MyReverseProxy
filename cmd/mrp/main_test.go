@@ -100,37 +100,37 @@ func TestParseStartupOptions_Capture(t *testing.T) {
 	}
 }
 
-func TestParseStartupOptions_CaptureServe(t *testing.T) {
+func TestParseStartupOptions_Inspect(t *testing.T) {
 	opts, err := parseArgs(t)
 	if err != nil {
 		t.Fatalf("parseStartupOptions: %v", err)
 	}
-	if opts.captureServe != "" {
-		t.Fatalf("default captureServe = %q, want empty", opts.captureServe)
+	if opts.inspectAddr != "" {
+		t.Fatalf("default inspectAddr = %q, want empty", opts.inspectAddr)
 	}
-	opts, err = parseArgs(t, "--capture-serve", "0.0.0.0:9100")
+	opts, err = parseArgs(t, "--inspect", "0.0.0.0:9100")
 	if err != nil {
 		t.Fatalf("parseStartupOptions: %v", err)
 	}
-	if opts.captureServe != "0.0.0.0:9100" {
-		t.Fatalf("captureServe = %q, want 0.0.0.0:9100", opts.captureServe)
+	if opts.inspectAddr != "0.0.0.0:9100" {
+		t.Fatalf("inspectAddr = %q, want 0.0.0.0:9100", opts.inspectAddr)
 	}
 }
 
-func TestBuildProxy_CaptureServeEnablesInspector(t *testing.T) {
+func TestBuildProxy_InspectEnablesInspector(t *testing.T) {
 	opts := startupOptions{
-		configPath:   filepath.Join(t.TempDir(), "mrp.yaml"),
-		captureServe: "127.0.0.1:0",
-		logLevel:     log.ErrorLevel,
-		dnsTimeout:   dns.AttemptTimeout,
-		dnsTTL:       dns.TTL,
+		configPath:  filepath.Join(t.TempDir(), "mrp.yaml"),
+		inspectAddr: "127.0.0.1:0",
+		logLevel:    log.ErrorLevel,
+		dnsTimeout:  dns.AttemptTimeout,
+		dnsTTL:      dns.TTL,
 	}
 	_, inspector, err := buildProxy(opts)
 	if err != nil {
 		t.Fatalf("buildProxy: %v", err)
 	}
 	if inspector == nil {
-		t.Fatal("inspector must be non-nil when --capture-serve is set")
+		t.Fatal("inspector must be non-nil when --inspect is set")
 	}
 	if inspector.Addr() != "127.0.0.1:0" {
 		t.Fatalf("inspector addr = %q, want 127.0.0.1:0", inspector.Addr())

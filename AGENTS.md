@@ -33,7 +33,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 | `internal/proxy/proxy.go` | `Proxy` 结构、`reload` 编排、`Handler`/`Socks5`/`routeHandler`/`routeTarget`/`serveRequest`、`WatchFile` 热加载、`Reload`、`NewTransport`、`resetCaches`、`newPassthroughProxy`/`passthroughURL` | CONNECT 隧道与 MITM 握手细节、目标解析 |
 | `internal/proxy/target.go` | `targetOf`/`normalizeProtocol`/`absoluteTarget`/`hostAndPort`/`hostOnly`/`trimIPv6Brackets`/`defaultPort`/`effectivePort`（请求目标解析） | 路由决策逻辑 |
 | `internal/proxy/connect.go` | `handleConnect`/`hijackConn`/`serveConnect`/`dialTunnel`/`tunnel`/`mitmTLSConfig` | 路由决策逻辑 |
-| `internal/proxy/capture.go` | `SetCapture`/`Close`、`recordCapture`（HAR entry 组装） | 路由决策逻辑 |
+| `internal/proxy/capture.go` | `SetCapture`/`SetSession`/`Close`、`recordCapture`（HAR entry 组装，文件记录器与内存会话双路写入） | 路由决策逻辑 |
 | `internal/proxy/body.go` | `countingReadCloser`、`forwardedBody`、`newCapturedRequest`、`captureWriter`/`newCaptureWriter`、`captureRequestBody`（请求/响应体透传与抓包计数，上限用 `capture.BodyLimit`） | 路由决策逻辑 |
 | `internal/proxy/resolver.go` | `resolver` 接口（`Update`/`Resolve`/`DialContext`/`ClearCache`），proxy 依赖抽象以注入测试替身 | 路由决策逻辑 |
 | `internal/proxy/socks.go` | `serveSocks5`/`serveSocks5Connect`、`socks5Greeting`/`socks5ReadCommand`/`socks5ReadAddr`/`socks5DecodeHost` | 路由决策逻辑 |
@@ -47,24 +47,24 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 | `internal/capture/capture.go` | `Recorder` 增量写盘（`New`/`Record`/`Close`/`Path`）、文件大小上限、停用短路（`json.Marshal` 在锁外完成，`stopped` 为 `atomic.Bool`） | 具体业务逻辑 |
 | `internal/capture/decode.go` | `HeadersFrom`/`contentEncodings`/`DecodeContent`/`ContentTypeOf`（HAR 头与内容解码）、`BodyLimit` | 具体业务逻辑 |
 | `internal/capture/har.go` | HAR 1.2 结构体（`Har`/`Log`/`Entry`/`Request`/`Response`/`Content` 等） | 具体业务逻辑 |
-| `internal/capture/session.go` | `Session` 内存环形会话（`NewSession`/`Add`/`Entries`/`HAR`，按条数 `MaxEntries` 与字节 `MaxBytes` 双重上限回收，供实时 HAR 导出） | 具体业务逻辑 |
-| `internal/inspect/inspect.go` | `Server`（`New`/`Start`/`Close`，GET 提供实时 HAR 附件，`Content-Disposition` 固定文件名，供 Chrome DevTools 原生导入） | 具体业务逻辑 |
+| `internal/capture/session.go` | `Session` 内存环形会话（`NewSession`/`Add`/`Entries`/`Tail`/`EntryBySeq`/`HAR`，按条数 `MaxEntries` 与字节 `MaxBytes` 双重上限回收，`Record` 带单调序号供增量订阅） | 具体业务逻辑 |
+| `internal/inspect/inspect.go` | `Server`（`New`/`Addr`/`Start`/`Close`，CDP 发现端点 `/json/version`、`/json/list` 与 `/devtools/page/mrp` WebSocket 会话，`hub` 轮询会话记录并广播 Network 域事件） | 具体业务逻辑 |
 | `internal/log/log.go` | console 日志（`Debug`/`Info`/`Warn`/`Error`/`Fatal` 模板字符串、`Init` 级别过滤、`DebugEnabled` 门控、按级别整行着色、TTY 检测、`SetOutput`、`ParseLevel`） | 路由/转发逻辑 |
 | `internal/netutil/netutil.go` | `BufferPool`（32KB 拷贝缓冲池）、`Relay`（双向字节搬运）、`ServeListener`（Accept 循环与退避）、`UDPBufferSize` | 具体业务逻辑 |
 | `internal/netutil/normalize.go` | `NormalizeDomain`/`ParsePort`/`ValidPortInt`（域名与端口归一校验，config 与 proxy 共用） | 具体业务逻辑 |
 | `internal/testutil/` | 跨包共享测试替身：`ConfigFile`、`SelfSignedCert`、`AuthorityCA`、`WriteCertFiles`、`NewStub`/`NewStubWithTTL`（DNS）、`EchoServer`、`UDPEchoServer`、`FreePort`、`MustURL`、`ClosedUDPPort`/`SilentUDPPort`、`CompressGzip`/`CompressDeflate`/`CompressBrotli` | 生产代码依赖（不得被非测试代码引用） |
 
-每个包内配套 `<name>_test.go` 测试；`internal/proxy` 按主题拆分为 `proxy_test.go`、`connect_test.go`、`reload_test.go`、`transport_test.go`、`capture_test.go`、`socks_test.go`、`socks_udp_test.go`、`proxy_bench_test.go`（HTTP/MITM/隧道性能基准）；`internal/capture` 配套 `decode_test.go`（HAR 内容解码单元测试）。新增文件时保持单一职责，文件名单词式小写。
+每个包内配套 `<name>_test.go` 测试；`internal/proxy` 按主题拆分为 `proxy_test.go`、`connect_test.go`、`reload_test.go`、`transport_test.go`、`capture_test.go`、`socks_test.go`、`socks_udp_test.go`、`proxy_bench_test.go`（HTTP/MITM/隧道性能基准）；`internal/capture` 配套 `decode_test.go`（HAR 内容解码单元测试）与 `session_test.go`（环形会话回收与增量订阅）。新增文件时保持单一职责，文件名单词式小写。
 
 ## 代码风格
 
 - `gofmt -w` 必须通过，提交前自检。
 - `go vet ./...` 必须无告警。
-- import 分组：标准库在前，内部包（`internal/*`）与第三方（`gopkg.in/yaml.v3`）同组在后，组间空行。
+- import 分组：标准库在前，内部包（`internal/*`）与第三方（`gopkg.in/yaml.v3`、`github.com/gorilla/websocket`）同组在后，组间空行。
 - 错误处理：可恢复错误 `return err` 并由调用方决策；不可恢复（启动失败、监听失败）走 `log.Fatal`，禁止在请求热路径内 `os.Exit`。
 - 日志统一用 `log` 包的模板字符串方法输出（`Debug`/`Info`/`Warn`/`Error`/`Fatal`，`时间\t级别\t消息`），键值内嵌格式 `key=value`（`domain=%s`、`status=%d`），禁止 `fmt.Println` 调试残留。
 - 热路径禁止注释，仅在解释"为什么"时保留简短中文注释；禁止冗余注释。
-- 不引入额外依赖除非必要；当前依赖 `gopkg.in/yaml.v3`、`github.com/andybalholm/brotli`（HAR 抓包 br 解压）与标准库。
+- 不引入额外依赖除非必要；当前依赖 `gopkg.in/yaml.v3`、`github.com/andybalholm/brotli`（HAR 抓包 br 解压）、`github.com/gorilla/websocket`（CDP WebSocket 会话）与标准库。
 - **禁止纯委托包装方法**：方法体仅转发到另一函数（仅绑定字段或逐参透传）属多余封装，在调用点直接调用。合法委托仅三种：未导出字段的访问器（`Route.Handler()` 返回 `r.handler`、`Resolver.ClearCache()` 转发 `r.cache.Clear()`）、接口方法实现（`net.Listener.Close`/`Addr`、`net.Conn.Read`）、exported/unexported API 边界（须注释说明意图，如 `Proxy.Reload`→`reload`）。
 - **禁止冗余闭包**：方法签名与目标类型一致时直接用方法值，不包匿名闭包。如 `http.HandlerFunc(p.serveRequest)` 优于 `http.HandlerFunc(func(w,r){ p.serveRequest(w,r) })`。
 - **跨类型共享辅助用自由函数**：被多个类型复用的辅助操作用包级自由函数，不挂为单一类型的方法。如 `setHeaders` 同时服务于 `Route.rewriteRequest`、`buildProxy` 的 `ModifyResponse`、`staticHandler`、`statusHandler`，故为自由函数而非 `HeaderRewrite` 方法。
