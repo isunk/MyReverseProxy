@@ -88,49 +88,61 @@ func TestParseStartupOptions_Capture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseStartupOptions: %v", err)
 	}
-	if opts.capturePath != "" {
-		t.Fatalf("default capturePath = %q, want empty", opts.capturePath)
+	if opts.captureTarget != defaultCapture {
+		t.Fatalf("default captureTarget = %q, want %q", opts.captureTarget, defaultCapture)
 	}
-	opts, err = parseArgs(t, "--capture", "capture.har")
-	if err != nil {
-		t.Fatalf("parseStartupOptions: %v", err)
-	}
-	if opts.capturePath != "capture.har" {
-		t.Fatalf("capturePath = %q, want capture.har", opts.capturePath)
-	}
-}
-
-func TestParseStartupOptions_Inspect(t *testing.T) {
-	opts, err := parseArgs(t)
-	if err != nil {
-		t.Fatalf("parseStartupOptions: %v", err)
-	}
-	if opts.inspectAddr != "" {
-		t.Fatalf("default inspectAddr = %q, want empty", opts.inspectAddr)
-	}
-	opts, err = parseArgs(t, "--inspect", "0.0.0.0:9100")
-	if err != nil {
-		t.Fatalf("parseStartupOptions: %v", err)
-	}
-	if opts.inspectAddr != "0.0.0.0:9100" {
-		t.Fatalf("inspectAddr = %q, want 0.0.0.0:9100", opts.inspectAddr)
+	for _, tc := range []struct {
+		value string
+		want  string
+	}{
+		{"capture.har", "capture.har"},
+		{"0.0.0.0:9100", "0.0.0.0:9100"},
+		{"", ""},
+	} {
+		opts, err = parseArgs(t, "--capture", tc.value)
+		if err != nil {
+			t.Fatalf("parseStartupOptions %q: %v", tc.value, err)
+		}
+		if opts.captureTarget != tc.want {
+			t.Fatalf("captureTarget(%q) = %q, want %q", tc.value, opts.captureTarget, tc.want)
+		}
 	}
 }
 
-func TestBuildProxy_InspectEnablesInspector(t *testing.T) {
+func TestResolveCapture(t *testing.T) {
+	for _, tc := range []struct {
+		value    string
+		wantAddr string
+		wantPath string
+	}{
+		{"", "", ""},
+		{"capture.har", "", "capture.har"},
+		{"/data/local/mrp/traffic.har", "", "/data/local/mrp/traffic.har"},
+		{":9222", ":9222", ""},
+		{"0.0.0.0:9100", "0.0.0.0:9100", ""},
+		{"9100", ":9100", ""},
+	} {
+		addr, path := resolveCapture(tc.value)
+		if addr != tc.wantAddr || path != tc.wantPath {
+			t.Fatalf("resolveCapture(%q) = (%q, %q), want (%q, %q)", tc.value, addr, path, tc.wantAddr, tc.wantPath)
+		}
+	}
+}
+
+func TestBuildProxy_CaptureTargetEnablesInspector(t *testing.T) {
 	opts := startupOptions{
-		configPath:  filepath.Join(t.TempDir(), "mrp.yaml"),
-		inspectAddr: "127.0.0.1:0",
-		logLevel:    log.ErrorLevel,
-		dnsTimeout:  dns.AttemptTimeout,
-		dnsTTL:      dns.TTL,
+		configPath:    filepath.Join(t.TempDir(), "mrp.yaml"),
+		captureTarget: "127.0.0.1:0",
+		logLevel:      log.ErrorLevel,
+		dnsTimeout:    dns.AttemptTimeout,
+		dnsTTL:        dns.TTL,
 	}
 	_, inspector, err := buildProxy(opts)
 	if err != nil {
 		t.Fatalf("buildProxy: %v", err)
 	}
 	if inspector == nil {
-		t.Fatal("inspector must be non-nil when --inspect is set")
+		t.Fatal("inspector must be non-nil when --capture is a listen address")
 	}
 	if inspector.Addr() != "127.0.0.1:0" {
 		t.Fatalf("inspector addr = %q, want 127.0.0.1:0", inspector.Addr())
@@ -140,11 +152,11 @@ func TestBuildProxy_InspectEnablesInspector(t *testing.T) {
 func TestBuildProxy_CaptureClosesValidHAR(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "capture.har")
 	opts := startupOptions{
-		configPath:  filepath.Join(t.TempDir(), "mrp.yaml"),
-		capturePath: capturePath,
-		logLevel:    log.ErrorLevel,
-		dnsTimeout:  dns.AttemptTimeout,
-		dnsTTL:      dns.TTL,
+		configPath:    filepath.Join(t.TempDir(), "mrp.yaml"),
+		captureTarget: capturePath,
+		logLevel:      log.ErrorLevel,
+		dnsTimeout:    dns.AttemptTimeout,
+		dnsTTL:        dns.TTL,
 	}
 	proxyInstance, _, err := buildProxy(opts)
 	if err != nil {

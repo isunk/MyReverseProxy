@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,6 +25,8 @@ import (
 
 const (
 	defaultListenPort = 9000
+	// defaultCapture 默认抓包目标：以 :9222 暴露 Chrome DevTools 目标，远程可直接发现。
+	defaultCapture = ":9222"
 
 	// 收到退出信号后等待 in-flight 连接自行结束的时间窗口，超时强制退出；长连接通常不会在此窗口内自然结束。
 	shutdownGracePeriod = 10 * time.Second
@@ -38,8 +41,7 @@ type startupOptions struct {
 	logLevel        log.Level
 	dnsTimeout      time.Duration
 	dnsTTL          time.Duration
-	capturePath     string
-	inspectAddr     string
+	captureTarget   string
 	configSpecified bool
 	certSpecified   bool
 	keySpecified    bool
@@ -56,8 +58,7 @@ func parseStartupOptions() (startupOptions, error) {
 	flag.StringVar(&levelName, "log", "info", "log level: debug, info, warn or error")
 	flag.DurationVar(&opts.dnsTimeout, "dns-timeout", dns.AttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
 	flag.DurationVar(&opts.dnsTTL, "dns-ttl", dns.TTL, "ttl of cached upstream resolutions, 0 disables the cache")
-	flag.StringVar(&opts.capturePath, "capture", "", "write captured traffic to a HAR file, empty disables file capture")
-	flag.StringVar(&opts.inspectAddr, "inspect", "", "Chrome DevTools target listen address for chrome://inspect (host:port), empty disables")
+	flag.StringVar(&opts.captureTarget, "capture", defaultCapture, "capture target: host:port serves a Chrome DevTools target for chrome://inspect, a .har path writes an offline HAR file, empty disables capture")
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -86,7 +87,22 @@ func parseStartupOptions() (startupOptions, error) {
 	return opts, nil
 }
 
-// buildProxy 组装代理实例：初始化配置与 DNS 服务器、构建上游连接池与路由表；inspect 开启时附带 CDP 调试端点。
+// resolveCapture 解析 --capture 取值：以 .har 结尾按离线 HAR 文件路径处理，其余按 host:port 暴露 Chrome DevTools 目标，
+// 仅给端口号时补全为监听所有网卡；返回的两个值恰好一个非空，取值为空表示关闭抓包。
+func resolveCapture(value string) (addr string, path string) {
+	if value == "" {
+		return "", ""
+	}
+	if strings.HasSuffix(value, ".har") {
+		return "", value
+	}
+	if strings.Contains(value, ":") {
+		return value, ""
+	}
+	return ":" + value, ""
+}
+
+// buildProxy 组装代理实例：初始化配置与 DNS 服务器、构建上游连接池与路由表；在线抓包开启时附带 CDP 调试端点。
 func buildProxy(opts startupOptions) (*proxy.Proxy, *inspect.Server, error) {
 	if !opts.configSpecified {
 		if err := config.Ensure(opts.configPath); err != nil {
@@ -109,21 +125,22 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, *inspect.Server, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if opts.capturePath != "" {
-		recorder, err := capture.New(opts.capturePath, capture.FileSizeLimit)
+	captureAddr, capturePath := resolveCapture(opts.captureTarget)
+	if capturePath != "" {
+		recorder, err := capture.New(capturePath, capture.FileSizeLimit)
 		if err != nil {
-			log.Warn("capture disabled path=%s err=%v", opts.capturePath, err)
+			log.Warn("capture disabled path=%s err=%v", capturePath, err)
 		} else {
 			proxyInstance.SetCapture(recorder)
-			log.Info("capture started path=%s", opts.capturePath)
+			log.Info("capture started path=%s", capturePath)
 		}
 	}
 	var inspector *inspect.Server
-	if opts.inspectAddr != "" {
+	if captureAddr != "" {
 		session := capture.NewSession(capture.MaxEntries, capture.MaxBytes)
 		proxyInstance.SetSession(session)
-		inspector = inspect.New(session, opts.inspectAddr)
-		log.Info("devtools listening addr=%s targets=chrome://inspect", opts.inspectAddr)
+		inspector = inspect.New(session, captureAddr)
+		log.Info("devtools listening addr=%s targets=chrome://inspect", captureAddr)
 	}
 	// 首次 reload 已让配置文件里的 nameservers 生效；未配置时为空，按系统默认 DNS 解析。
 	log.Info("dns configured nameservers=%s ttl=%s", nameservers.Describe(), opts.dnsTTL)
@@ -160,7 +177,8 @@ func run(listener net.Listener, proxyInstance *proxy.Proxy, inspector *inspect.S
 	go proxyInstance.WatchFile(time.Second, nil)
 	if inspector != nil {
 		if err := inspector.Start(); err != nil {
-			log.Fatal("inspect listen failed addr=%s err=%v", inspector.Addr(), err)
+			// 调试端点可选，端口被占只降级不终止代理；代理端口监听失败才 Fatal。
+			log.Warn("devtools disabled addr=%s err=%v", inspector.Addr(), err)
 		}
 	}
 	serveSignals(listener, proxyInstance, &connections, serveDone)
