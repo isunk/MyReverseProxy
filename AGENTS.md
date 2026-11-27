@@ -20,7 +20,7 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 
 - `mrp.hta` 为 UTF-8 编码的 Windows HTA 部署面板（MRP Helper），仓库按原始字节存储。渲染路径刻意保持全 ASCII：中文用数字实体、圆点用 `fromCharCode`，规避 HTA 宿主在不同系统区域设置下的编码错位；链接不带 `href`（`NAVIGABLE=no` 下 `javascript:` 会被交给默认浏览器），`@` 事件统一 `preventDefault`。双击运行生效，拖入浏览器仅显示界面、动作不可用。修改后自检：仍是 UTF-8 无 BOM、渲染文本全 ASCII（无中文字面量）。
 
-代码按业界标准布局分层：`cmd/mrp` 是入口，业务逻辑全部在 `internal/*`，包之间单向依赖（`log`、`cache`、`capture`、`singleflight` 无内部依赖；`netutil`→`log`；`route`→`log,netutil`；`config`→`route,log,netutil`；`dns`→`cache,log,singleflight,netutil`；`ca`→`cache,log,singleflight,netutil`；`frontend`→`netutil`；`proxy`→`ca,capture,config,frontend,log,netutil,route`），禁止反向引用形成环。
+代码按业界标准布局分层：`cmd/mrp` 是入口，业务逻辑全部在 `internal/*`，包之间单向依赖（`log`、`cache`、`capture`、`singleflight` 无内部依赖；`netutil`→`log`；`route`→`log,netutil`；`config`→`route,log,netutil`；`dns`→`cache,log,singleflight,netutil`；`ca`→`cache,log,singleflight,netutil`；`frontend`→`netutil`；`inspect`→`capture`；`proxy`→`ca,capture,config,frontend,log,netutil,route`），禁止反向引用形成环。
 
 | 文件 | 职责 | 不应包含 |
 |------|------|----------|
@@ -47,6 +47,8 @@ mrp 项目代码规范。任何对本仓库的修改都应遵循以下约定。
 | `internal/capture/capture.go` | `Recorder` 增量写盘（`New`/`Record`/`Close`/`Path`）、文件大小上限、停用短路（`json.Marshal` 在锁外完成，`stopped` 为 `atomic.Bool`） | 具体业务逻辑 |
 | `internal/capture/decode.go` | `HeadersFrom`/`contentEncodings`/`DecodeContent`/`ContentTypeOf`（HAR 头与内容解码）、`BodyLimit` | 具体业务逻辑 |
 | `internal/capture/har.go` | HAR 1.2 结构体（`Har`/`Log`/`Entry`/`Request`/`Response`/`Content` 等） | 具体业务逻辑 |
+| `internal/capture/session.go` | `Session` 内存环形会话（`NewSession`/`Add`/`Entries`/`HAR`，按条数 `MaxEntries` 与字节 `MaxBytes` 双重上限回收，供实时 HAR 导出） | 具体业务逻辑 |
+| `internal/inspect/inspect.go` | `Server`（`New`/`Start`/`Close`，GET 提供实时 HAR 附件，`Content-Disposition` 固定文件名，供 Chrome DevTools 原生导入） | 具体业务逻辑 |
 | `internal/log/log.go` | console 日志（`Debug`/`Info`/`Warn`/`Error`/`Fatal` 模板字符串、`Init` 级别过滤、`DebugEnabled` 门控、按级别整行着色、TTY 检测、`SetOutput`、`ParseLevel`） | 路由/转发逻辑 |
 | `internal/netutil/netutil.go` | `BufferPool`（32KB 拷贝缓冲池）、`Relay`（双向字节搬运）、`ServeListener`（Accept 循环与退避）、`UDPBufferSize` | 具体业务逻辑 |
 | `internal/netutil/normalize.go` | `NormalizeDomain`/`ParsePort`/`ValidPortInt`（域名与端口归一校验，config 与 proxy 共用） | 具体业务逻辑 |

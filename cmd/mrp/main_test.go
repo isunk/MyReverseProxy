@@ -100,6 +100,43 @@ func TestParseStartupOptions_Capture(t *testing.T) {
 	}
 }
 
+func TestParseStartupOptions_CaptureServe(t *testing.T) {
+	opts, err := parseArgs(t)
+	if err != nil {
+		t.Fatalf("parseStartupOptions: %v", err)
+	}
+	if opts.captureServe != "" {
+		t.Fatalf("default captureServe = %q, want empty", opts.captureServe)
+	}
+	opts, err = parseArgs(t, "--capture-serve", "0.0.0.0:9100")
+	if err != nil {
+		t.Fatalf("parseStartupOptions: %v", err)
+	}
+	if opts.captureServe != "0.0.0.0:9100" {
+		t.Fatalf("captureServe = %q, want 0.0.0.0:9100", opts.captureServe)
+	}
+}
+
+func TestBuildProxy_CaptureServeEnablesInspector(t *testing.T) {
+	opts := startupOptions{
+		configPath:   filepath.Join(t.TempDir(), "mrp.yaml"),
+		captureServe: "127.0.0.1:0",
+		logLevel:     log.ErrorLevel,
+		dnsTimeout:   dns.AttemptTimeout,
+		dnsTTL:       dns.TTL,
+	}
+	_, inspector, err := buildProxy(opts)
+	if err != nil {
+		t.Fatalf("buildProxy: %v", err)
+	}
+	if inspector == nil {
+		t.Fatal("inspector must be non-nil when --capture-serve is set")
+	}
+	if inspector.Addr() != "127.0.0.1:0" {
+		t.Fatalf("inspector addr = %q, want 127.0.0.1:0", inspector.Addr())
+	}
+}
+
 func TestBuildProxy_CaptureClosesValidHAR(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "capture.har")
 	opts := startupOptions{
@@ -109,7 +146,7 @@ func TestBuildProxy_CaptureClosesValidHAR(t *testing.T) {
 		dnsTimeout:  dns.AttemptTimeout,
 		dnsTTL:      dns.TTL,
 	}
-	proxyInstance, err := buildProxy(opts)
+	proxyInstance, _, err := buildProxy(opts)
 	if err != nil {
 		t.Fatalf("buildProxy: %v", err)
 	}
@@ -132,7 +169,7 @@ func TestBuildProxy_NoCaptureWhenDisabled(t *testing.T) {
 		dnsTimeout: dns.AttemptTimeout,
 		dnsTTL:     dns.TTL,
 	}
-	proxyInstance, err := buildProxy(opts)
+	proxyInstance, _, err := buildProxy(opts)
 	if err != nil {
 		t.Fatalf("buildProxy: %v", err)
 	}
@@ -164,7 +201,7 @@ func TestBuildProxy_EnsuresConfigWhenNotSpecified(t *testing.T) {
 		dnsTimeout: dns.AttemptTimeout,
 		dnsTTL:     dns.TTL,
 	}
-	if _, err := buildProxy(opts); err != nil {
+	if _, _, err := buildProxy(opts); err != nil {
 		t.Fatalf("buildProxy: %v", err)
 	}
 	if _, err := os.Stat(opts.configPath); err != nil {
@@ -183,7 +220,7 @@ func TestBuildProxy_RejectsUnpairedCert(t *testing.T) {
 		dnsTimeout:      dns.AttemptTimeout,
 		dnsTTL:          dns.TTL,
 	}
-	if _, err := buildProxy(opts); err == nil {
+	if _, _, err := buildProxy(opts); err == nil {
 		t.Fatal("unpaired --cert must be rejected")
 	}
 }
@@ -323,7 +360,7 @@ func TestBuildProxy_LogsConfiguredNameservers(t *testing.T) {
 	var out syncBuffer
 	log.SetOutput(&out)
 	t.Cleanup(func() { log.SetOutput(io.Discard) })
-	if _, err := buildProxy(opts); err != nil {
+	if _, _, err := buildProxy(opts); err != nil {
 		t.Fatalf("buildProxy: %v", err)
 	}
 	wantNameservers := "dns configured nameservers=" + stub.Address() + " ttl="

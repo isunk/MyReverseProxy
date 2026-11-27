@@ -9,7 +9,7 @@
 - **SOCKS5 代理**：与 HTTP 代理共用单端口，无认证 CONNECT 字节透传到任意 TCP 目标，UDP ASSOCIATE 中继 UDP 数据报
 - **DNS 代理解析**：上游域名解析支持指定 DNS 服务器，按序故障切换
 - **配置热加载**：路由与 DNS 配置修改即时生效
-- **抓包**：把 MITM 解密后的 HTTPS 与直连明文 HTTP 记录为 HAR 文件，离线用 Chrome DevTools / Charles / Fiddler 分析
+- **抓包**：把 MITM 解密后的 HTTPS 与直连明文 HTTP 记录为 HAR，离线写入文件，或以 HTTP 实时导出供 Chrome DevTools 网络面板原生导入分析
 - **多端部署**：覆盖 Android / HarmonyOS / Windows / Linux，PC 可借道设备网络出口
 
 ## 原理
@@ -236,12 +236,15 @@ mrp-windows-amd64.exe
 
 参数：
 
-- `--port`（默认 `9000`）：唯一监听端口，须与客户端代理端口一致
-- `--config`（默认 `mrp.yaml`）：路由配置文件，缺失自动创建
-- `--cert` / `--key`（默认 `ca.crt` / `ca.key`）：CA 证书与私钥，缺省时无法 MITM
-- `--log`（默认 `info`）：debug / info / warn / error
-- `--dns-timeout` / `--dns-ttl`（默认 `1s` / `30s`）：单次 DNS 解析超时、解析结果缓存时长（`0` 关闭缓存）
-- `--capture`（默认空）：HAR 抓包输出文件，指定即开启，空则关闭
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--port` | `9000` | 唯一代理监听端口，须与客户端代理端口一致 |
+| `--config` | `mrp.yaml` | 路由配置文件，缺失自动创建 |
+| `--cert` / `--key` | `ca.crt` / `ca.key` | CA 证书与私钥，缺省时无法 MITM |
+| `--log` | `info` | 日志级别：debug / info / warn / error |
+| `--dns-timeout` / `--dns-ttl` | `1s` / `30s` | 单次 DNS 解析超时、解析结果缓存时长（`0` 关闭缓存） |
+| `--capture` | 空 | 抓包写入 HAR 文件，指定即开启；空则关闭（离线分析用） |
+| `--capture-serve` | 空 | 以 HTTP 实时导出抓包的监听地址（`host:port`），供 Chrome DevTools 导入；空则关闭 |
 
 Windows 也可双击 `mrp.hta` 部署面板：内置固定 CA 免 openssl，提供 CA 导入、进程启停、系统代理设置，及 Android(adb) / HarmonyOS(hdc) 设备的安装、启动、配置同步与卸载，设备工作目录 `/data/local/mrp`。
 
@@ -306,20 +309,34 @@ adb forward tcp:9000 tcp:9000
 
 ## 抓包
 
-联调时把代理可见的明文交互记录为 HAR 1.2 文件，供标准工具离线分析。
+联调时把代理可见的明文交互记录为 HAR 1.2，供标准工具分析。两种互补的方式：
+
+- **离线文件**：`--capture capture.har` 写入设备本地文件，事后用 Charles / Fiddler，或 Chrome DevTools（F12 → Network → 导入 HAR）分析
+- **实时导出**：`--capture-serve 0.0.0.0:9100` 以 HTTP 提供实时 HAR，在桌面 Chrome 原生 DevTools 里直接查看，无需自建面板
 
 ```bash
+# 离线抓包
 ./mrp-linux-arm64 --capture capture.har
+
+# 实时 HAR（远程 Chrome 用设备 IP 访问）
+./mrp-linux-arm64 --capture-serve 0.0.0.0:9100
 ```
 
-- 指定 `--capture <文件>` 即开启，输出文件落设备本地；不加该参数即关闭，关闭时零抓包开销、不产生文件
-- 每次运行截断同名文件从头记录，一次运行对应一份独立文件
-- 记录范围只含 mrp 可见的明文：MITM 解密后的 HTTPS 内层请求与客户端直连的明文 HTTP；tunnel 端到端加密字节不产生记录
-- body 单个请求/响应最多记 1 MiB 前缀（超出截断并在 entry 里标注原始大小），文件累计最多 256 MiB，达到后停止追加
-- 打开：Chrome DevTools（F12 → Network → 导入 HAR）、Charles（File → Import）、Fiddler（File → Import Sessions）
-- 记录含 `Authorization` 等敏感头与业务数据，文件保留在设备本地，安全由使用者自行管理
+### 实时导出到 Chrome DevTools
 
-正常退出（SIGINT/SIGTERM）自动补全 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，可手动补全或重新开始抓包。
+1. mrp 运行时加 `--capture-serve <host:port>`；`host` 填 `0.0.0.0` 允许远程访问，或用 `127.0.0.1` 仅本机
+2. 桌面 Chrome 打开 DevTools（F12）→ Network 面板
+3. 访问 `http://<设备IP>:<端口>/` 下载 `mrp.har`（每次访问返回截至此刻的累计抓包）
+4. 把下载的 `mrp.har` 拖入 Network 面板，即原生渲染全部接口请求/响应；重新访问 URL 再次导入即可刷新
+
+### 记录范围与限制
+
+- 记录范围只含 mrp 可见的明文：MITM 解密后的 HTTPS 内层请求与客户端直连的明文 HTTP；tunnel 端到端加密字节不产生记录
+- body 单个请求/响应最多记 1 MiB 前缀，超出截断并在 entry 里标注原始大小
+- 离线文件每次运行截断同名文件从头记录，累计最多 256 MiB，达到后停止追加
+- 实时会话在内存中保留最近 5000 条、累计 body 最多 64 MiB，超出按最旧丢弃
+
+正常退出（SIGINT/SIGTERM）自动补全离线文件 JSON 尾部；进程被强杀时文件缺少末尾的 `]}}`，可手动补全或重新开始抓包。记录含 `Authorization` 等敏感头与业务数据，安全由使用者自行管理；`--capture-serve` 暴露到公网前请自行评估鉴权。
 
 ## 从源码构建
 
@@ -387,7 +404,8 @@ internal/
   frontend/     单端口监听与协议嗅探（HTTP/SOCKS5）、单连接复用（MITM 内层服务）
   netutil/      通用网络原语：BufferPool、双向 Relay、ServeListener（Accept 退避）
   ca/           自签 CA 按名字现场签发证书（域名 SAN / IP SAN），并发合并
-  capture/      HAR 抓包：增量写盘、body 截断、文件上限
+  capture/      HAR 抓包：增量写盘、body 截断、文件上限，内存会话（实时 HAR）
+  inspect/      以 HTTP 提供实时 HAR，供 Chrome DevTools 原生导入
   dns/          上游 DNS 解析与故障切换、结果缓存
   cache/        通用并发缓存
   singleflight/ 泛型并发合并（ca 签发与 dns 解析共用）

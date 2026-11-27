@@ -431,3 +431,34 @@ func TestCapture_ChunkedBodySizeAccurate(t *testing.T) {
 		t.Fatalf("large chunked body should be marked truncated")
 	}
 }
+
+// 未开文件记录器、仅注入内存会话时，抓包路径仍应生效并把交互写入会话，供实时 HAR 导出。
+func TestCapture_SessionRecordedWithoutFile(t *testing.T) {
+	upstream := recordingServer(t, "session")
+	configPath := testutil.ConfigFile(t, "r.yaml",
+		"servers:\n  - domain: api.example.com\n    routes:\n      - prefix: /\n        upstream: "+upstream.URL+"\n")
+	servers := testNameservers(t)
+	proxyInstance, err := New(configPath, NewTransport(servers.DialContext), nil, nil, servers)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	session := capture.NewSession(capture.MaxEntries, capture.MaxBytes)
+	proxyInstance.SetSession(session)
+	proxyURL := startListener(t, proxyInstance)
+	client := proxyClient(proxyURL)
+
+	if got := requestBody(t, client, "http://api.example.com/hello"); !strings.Contains(got, "session:/hello") {
+		t.Fatalf("proxy response: %q", got)
+	}
+
+	entries := session.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("session entries = %d, want 1", len(entries))
+	}
+	if !strings.Contains(entries[0].Request.URL, "api.example.com") || !strings.Contains(entries[0].Request.URL, "/hello") {
+		t.Fatalf("url = %q", entries[0].Request.URL)
+	}
+	if !strings.Contains(entries[0].Response.Content.Text, "session:/hello") {
+		t.Fatalf("response text = %q", entries[0].Response.Content.Text)
+	}
+}

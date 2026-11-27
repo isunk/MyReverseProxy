@@ -17,6 +17,11 @@ func (p *Proxy) SetCapture(recorder *capture.Recorder) {
 	p.capture.Store(recorder)
 }
 
+// SetSession 注入内存抓包会话供实时 HAR 导出，nil 表示关闭；须在开始接受请求前调用一次。
+func (p *Proxy) SetSession(session *capture.Session) {
+	p.session.Store(session)
+}
+
 // Close 关闭抓包记录器补全 HAR 文件尾部，未开启时为空操作。
 func (p *Proxy) Close() error {
 	if recorder := p.capture.Load(); recorder != nil {
@@ -28,7 +33,8 @@ func (p *Proxy) Close() error {
 // recordCapture 在响应回传后组装一条 HAR entry 并追加；记录失败或达上限时告警一次并停用，不影响转发。
 func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, response *captureWriter) {
 	recorder := p.capture.Load()
-	if recorder == nil {
+	session := p.session.Load()
+	if recorder == nil && session == nil {
 		return
 	}
 	elapsed := float64(time.Since(captured.start).Milliseconds())
@@ -81,10 +87,15 @@ func (p *Proxy) recordCapture(captured *capturedRequest, request *http.Request, 
 		},
 		Timings: capture.Timings{Wait: elapsed},
 	}
-	switch err := recorder.Record(entry); {
-	case errors.Is(err, capture.ErrLimitReached):
-		log.Warn("capture stopped path=%s: file size limit reached", recorder.Path())
-	case err != nil:
-		log.Warn("capture stopped path=%s err=%v", recorder.Path(), err)
+	if recorder != nil {
+		switch err := recorder.Record(entry); {
+		case errors.Is(err, capture.ErrLimitReached):
+			log.Warn("capture stopped path=%s: file size limit reached", recorder.Path())
+		case err != nil:
+			log.Warn("capture stopped path=%s err=%v", recorder.Path(), err)
+		}
+	}
+	if session != nil {
+		session.Add(entry)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"mrp/internal/config"
 	"mrp/internal/dns"
 	"mrp/internal/frontend"
+	"mrp/internal/inspect"
 	"mrp/internal/log"
 	"mrp/internal/netutil"
 	"mrp/internal/proxy"
@@ -38,6 +39,7 @@ type startupOptions struct {
 	dnsTimeout      time.Duration
 	dnsTTL          time.Duration
 	capturePath     string
+	captureServe    string
 	configSpecified bool
 	certSpecified   bool
 	keySpecified    bool
@@ -54,7 +56,8 @@ func parseStartupOptions() (startupOptions, error) {
 	flag.StringVar(&levelName, "log", "info", "log level: debug, info, warn or error")
 	flag.DurationVar(&opts.dnsTimeout, "dns-timeout", dns.AttemptTimeout, "per-nameserver attempt timeout before failing over to the next")
 	flag.DurationVar(&opts.dnsTTL, "dns-ttl", dns.TTL, "ttl of cached upstream resolutions, 0 disables the cache")
-	flag.StringVar(&opts.capturePath, "capture", "", "HAR capture output file, empty disables capture")
+	flag.StringVar(&opts.capturePath, "capture", "", "write captured traffic to a HAR file, empty disables file capture")
+	flag.StringVar(&opts.captureServe, "capture-serve", "", "serve captured traffic as HAR over HTTP for Chrome DevTools import (host:port), empty disables")
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -83,28 +86,28 @@ func parseStartupOptions() (startupOptions, error) {
 	return opts, nil
 }
 
-// buildProxy 组装代理实例：初始化配置与 DNS 服务器、构建上游连接池与路由表。
-func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
+// buildProxy 组装代理实例：初始化配置与 DNS 服务器、构建上游连接池与路由表；capture-serve 开启时附带实时 HAR 服务。
+func buildProxy(opts startupOptions) (*proxy.Proxy, *inspect.Server, error) {
 	if !opts.configSpecified {
 		if err := config.Ensure(opts.configPath); err != nil {
-			return nil, fmt.Errorf("ensure config: %w", err)
+			return nil, nil, fmt.Errorf("ensure config: %w", err)
 		}
 	}
 	if opts.certSpecified != opts.keySpecified {
-		return nil, errors.New("--cert and --key must be set together")
+		return nil, nil, errors.New("--cert and --key must be set together")
 	}
 	nameservers, err := dns.New(opts.dnsTimeout, opts.dnsTTL, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	transport := proxy.NewTransport(nameservers.DialContext)
 	tlsConfig, authority, err := ca.Load(opts.certPath, opts.keyPath, opts.certSpecified)
 	if err != nil {
-		return nil, fmt.Errorf("load tls config: %w", err)
+		return nil, nil, fmt.Errorf("load tls config: %w", err)
 	}
 	proxyInstance, err := proxy.New(opts.configPath, transport, tlsConfig, authority, nameservers)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if opts.capturePath != "" {
 		recorder, err := capture.New(opts.capturePath, capture.FileSizeLimit)
@@ -115,9 +118,16 @@ func buildProxy(opts startupOptions) (*proxy.Proxy, error) {
 			log.Info("capture started path=%s", opts.capturePath)
 		}
 	}
+	var inspector *inspect.Server
+	if opts.captureServe != "" {
+		session := capture.NewSession(capture.MaxEntries, capture.MaxBytes)
+		proxyInstance.SetSession(session)
+		inspector = inspect.New(session, opts.captureServe)
+		log.Info("capture served addr=%s", opts.captureServe)
+	}
 	// 首次 reload 已让配置文件里的 nameservers 生效；未配置时为空，按系统默认 DNS 解析。
 	log.Info("dns configured nameservers=%s ttl=%s", nameservers.Describe(), opts.dnsTTL)
-	return proxyInstance, nil
+	return proxyInstance, inspector, nil
 }
 
 func main() {
@@ -131,15 +141,15 @@ func main() {
 		log.Fatal("listen failed addr=:%d err=%v", opts.port, err)
 	}
 	log.Info("listening addr=:%d", opts.port)
-	proxyInstance, err := buildProxy(opts)
+	proxyInstance, inspector, err := buildProxy(opts)
 	if err != nil {
 		log.Fatal("proxy init failed err=%v", err)
 	}
-	run(listener, proxyInstance)
+	run(listener, proxyInstance, inspector)
 }
 
 // run 在唯一代理端口上常驻服务：监听不随热加载变化，轮询配置并等待信号；退出先关监听器再 drain 连接。
-func run(listener net.Listener, proxyInstance *proxy.Proxy) {
+func run(listener net.Listener, proxyInstance *proxy.Proxy, inspector *inspect.Server) {
 	var connections sync.WaitGroup
 	serveDone := make(chan struct{})
 	go func() {
@@ -148,7 +158,15 @@ func run(listener net.Listener, proxyInstance *proxy.Proxy) {
 	}()
 	// stop 传 nil 表示热加载常驻到进程退出，由下面的退出信号关闭监听来结束。
 	go proxyInstance.WatchFile(time.Second, nil)
+	if inspector != nil {
+		if err := inspector.Start(); err != nil {
+			log.Fatal("capture serve listen failed addr=%s err=%v", inspector.Addr(), err)
+		}
+	}
 	serveSignals(listener, proxyInstance, &connections, serveDone)
+	if inspector != nil {
+		_ = inspector.Close()
+	}
 }
 
 func serveSignals(listener net.Listener, proxyInstance *proxy.Proxy, connections *sync.WaitGroup, serveDone <-chan struct{}) {

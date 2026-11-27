@@ -40,6 +40,7 @@ type Proxy struct {
 	passthrough *httputil.ReverseProxy
 	nameservers resolver
 	capture     atomic.Pointer[capture.Recorder]
+	session     atomic.Pointer[capture.Session]
 
 	udpIdleTimeout time.Duration
 
@@ -178,7 +179,7 @@ func (p *Proxy) serveRequest(writer http.ResponseWriter, request *http.Request) 
 	logRequest := func(status int) {
 		log.Info("request domain=%s protocol=%s port=%d method=%s path=%s status=%d elapsed=%s", domain, protocol, port, request.Method, request.URL.Path, status, time.Since(start))
 	}
-	if p.capture.Load() == nil {
+	if p.capture.Load() == nil && p.session.Load() == nil {
 		status := &frontend.StatusRecorder{ResponseWriter: writer, Status: http.StatusOK}
 		defer func() { logRequest(status.Status) }()
 		handler.ServeHTTP(status, request)
