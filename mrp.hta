@@ -516,6 +516,15 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   if (!host.file.exists(KEY)) host.file.write(KEY, CA_KEY);
 
   // ---- 模块定义 ----
+  // 把 state 映射结果转为行：[文案, 事件, 危险] 是单个按钮，其余视为按钮数组
+  function actionsToRows(name, text, tone, btn) {
+    var list = typeof btn[1] === 'function' ? [btn] : btn, acts = [], k;
+    for (k = 0; k < list.length; k++) {
+      acts.push({ name: name, tone: tone, text: text, act: list[k][0], danger: !!list[k][2], fn: list[k][1] });
+    }
+    return acts;
+  }
+
   // states: get(data) 实时探测返回 [状态标识, 文案, 颜色]；state 按标识映射按钮 [文案, 事件, 危险]，给数组则渲染多个按钮；tools 固定工具；health 页签圆点；uninstall 顶部卸载
   function mrpWindowsRunning() {
     return host.exec('tasklist /fi "imagename eq ' + MRP_EXE + '" /nh 2>nul').toLowerCase().indexOf(MRP_EXE.toLowerCase()) >= 0;
@@ -1149,14 +1158,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           catch (ex) { host.log('probe ' + st.name + ' failed: ' + (ex && ex.message ? ex.message : ex), 'err'); continue; }
           if (!v) continue;
           var btn = st.state ? st.state[v[0]] : null;
-          if (btn && !(btn.length === 3 && typeof btn[2] === 'boolean')) {
-            var list = [], k;
-            for (k = 0; k < btn.length; k++) list.push(btn[k]);
-            btn = list;
-          }
           if (btn) {
-            var acts = [];
-            for (k = 0; k < btn.length; k++) acts.push({ name: st.name, tone: v[2], text: v[1], act: btn[k][0], danger: !!btn[k][2], fn: btn[k][1] });
+            var acts = actionsToRows(st.name, v[1], v[2], btn);
             out = out.concat(acts);
           }
         }
