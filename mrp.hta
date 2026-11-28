@@ -136,18 +136,21 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       s = s.replace(/^file:\/\/\//i, '').replace(/\//g, '\\');
       return s.substring(0, s.lastIndexOf('\\') + 1);
     })(),
-    log: function(text, lv) {
+    // 柯里化闭包：日志框在构造时解析一次，后续写入直接复用
+    log: (function() {
       var box = doc.getElementById('log');
-      if (!box) return;
-      var d = doc.createElement('div');
-      if (lv) d.className = lv;
-      var t = new Date();
-      d.innerHTML = '<i class="dim">[' + t.toTimeString().substring(0, 8) + ']</i> ' +
-        String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      box.appendChild(d);
-      while (box.children.length > 300) box.removeChild(box.firstChild);
-      box.scrollTop = box.scrollHeight;
-    },
+      return function(text, lv) {
+        if (!box) return;
+        var d = doc.createElement('div');
+        if (lv) d.className = lv;
+        var t = new Date();
+        d.innerHTML = '<i class="dim">[' + t.toTimeString().substring(0, 8) + ']</i> ' +
+          String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        box.appendChild(d);
+        while (box.children.length > 300) box.removeChild(box.firstChild);
+        box.scrollTop = box.scrollHeight;
+      };
+    })(),
     run: function(cmd, show, wait) {
       if (cmd.indexOf('timeout ') !== 0) host.log('> ' + cmd, 'dim');
       try { return shell.Run('%comspec% /c "' + cmd + '"', show ? 1 : 0, wait !== false); }
