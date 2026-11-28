@@ -117,14 +117,6 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
   // ---- 日志 ----
   var logBox = null;
-  function pad2(n) {
-    n = String(n);
-    return n.length < 2 ? '0' + n : n;
-  }
-
-  function logClear() {
-    if (logBox) logBox.innerHTML = '';
-  }
 
   // ---- 宿主接口 ----
   // ActiveX 实例只创建一次并复用；创建失败说明运行在浏览器，后续操作静默失效
@@ -153,7 +145,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       var d = doc.createElement('div');
       if (lv) d.className = lv;
       var t = new Date();
-      d.innerHTML = '<i class="dim">[' + pad2(t.getHours()) + ':' + pad2(t.getMinutes()) + ':' + pad2(t.getSeconds()) + ']</i> ' +
+      d.innerHTML = '<i class="dim">[' + t.toTimeString().substring(0, 8) + ']</i> ' +
         String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       box.appendChild(d);
       while (box.children.length > 300) box.removeChild(box.firstChild);
@@ -1218,7 +1210,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         }, 50);
       },
       onConsoleClear: function() {
-        logClear();
+        if (logBox) logBox.innerHTML = '';
       },
       onDialogConfirm: function() {
         var m = this.modal;
