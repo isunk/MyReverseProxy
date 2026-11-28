@@ -26,8 +26,8 @@ a{color:#1677ff;text-decoration:none;cursor:pointer}
 button{background:none;border:0;color:#1677ff;padding:3px 10px;cursor:pointer;font:inherit}
 table{width:100%;border-collapse:collapse}
 td{border-bottom:1px solid #f5f5f5;padding:8px 4px}
-td a{margin-left:14px}
-td a.last{margin-left:0}
+td a{margin-right:14px}
+td a.last{margin-right:0}
 #acts a{margin-right:16px}
 #con{position:absolute;left:14px;right:14px;top:330px;bottom:10px;margin:0;padding:0 12px 8px}
 pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid #eee;overflow-y:auto;font:12px/19px Consolas,monospace;margin:0;white-space:pre-wrap;word-break:break-all;box-sizing:border-box}
@@ -423,7 +423,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         if (!m2) { report('bad handler: ' + spec.value); return; }
         var fn2 = self._ctx[m2[1]];
         if (!fn2) { report('handler not found: ' + spec.value); return; }
-        try { fn2(argFn ? evalExpr(argFn, $s) : e); }
+        var args = argFn ? argFn.split(',').map(function(s) { return evalExpr(s.replace(/^\s+|\s+$/g, ''), $s); }) : null;
+        try { if (args) fn2.apply(null, args); else fn2(e); }
         catch (ex) { report(spec.value + ' -> ' + (ex && ex.message ? ex.message : ex)); }
       });
     }
