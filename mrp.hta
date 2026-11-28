@@ -49,22 +49,22 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
   <main id="main">
     <div id="top">
       <fieldset>
-        <legend>STATUS &#183; <a v-class="{dim: busy}" @click="refresh">{{ busy ? 'Refreshing...' : 'Refresh' }}</a> &#183; <a class="err" @click="askUninstall">Uninstall</a></legend>
+        <legend>STATUS &#183; <a v-class="{dim: busy}" @click="onStatusRefresh">{{ busy ? 'Refreshing...' : 'Refresh' }}</a> &#183; <a class="err" @click="onStatusUninstall">Uninstall</a></legend>
         <table>
           <tr v-for="r in rows">
             <td width="120">{{ r.name }}</td>
             <td><i v-class="toVClass(r.tone)">{{ dot }}</i> {{ r.text }}</td>
-            <td align="right"><a v-for="a in r.btns" v-class="{last: a.last}" @click="rowAct(r, a)">{{ a.label }}</a></td>
+            <td align="right"><a v-for="a in r.btns" v-class="{last: a.last}" @click="onStatusAction(r, a)">{{ a.label }}</a></td>
           </tr>
         </table>
       </fieldset>
       <fieldset>
         <legend>TOOLS</legend>
-        <p id="acts"><a v-for="a in tools" v-class="{err: a.danger}" @click="runAction(a)">{{ a.name }}</a></p>
+        <p id="acts"><a v-for="a in tools" v-class="{err: a.danger}" @click="onToolsAction(a)">{{ a.name }}</a></p>
       </fieldset>
     </div>
     <fieldset id="con">
-      <legend>CONSOLE &#183; <a @click="clearLog">Clear</a></legend>
+      <legend>CONSOLE &#183; <a @click="onConsoleClear">Clear</a></legend>
       <pre id="log"></pre>
     </fieldset>
   </main>
@@ -72,8 +72,8 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
     <div id="box">
       <b>{{ modal ? modal.title : '' }}</b>
       <p>{{ modal ? modal.text : '' }}</p>
-      <input v-if="modal && modal.input" v-model="draft" @keydown.enter="modalOk" />
-      <p align="right"><button v-class="{err: modal && modal.danger}" @click="modalOk">{{ modal ? modal.okText : 'OK' }}</button> <button @click="modalNo">Cancel</button></p>
+      <input v-if="modal && modal.input" v-model="draft" @keydown.enter="onDialogConfirm" />
+      <p align="right"><button v-class="{err: modal && modal.danger}" @click="onDialogConfirm">{{ modal ? modal.okText : 'OK' }}</button> <button @click="modalNo">Cancel</button></p>
     </div>
   </div>
 </div>
@@ -1157,7 +1157,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           }
         };
       },
-      askUninstall: function() {
+      onStatusUninstall: function() {
         var self = this, m = this.cur;
         this.confirm('Confirm', 'Remove all files and reset ' + m.name + '?\n\nThis cannot be undone.', 'Uninstall', function() {
           host.log('>> Uninstall', 'dim');
@@ -1166,7 +1166,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           self.render();
         });
       },
-      runAction: function(a) {
+      onToolsAction: function(a) {
         var self = this, m = this.cur;
         var go = function() {
           host.log('>> ' + a.name, 'dim');
@@ -1176,7 +1176,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         if (a.danger) this.confirm('Confirm', 'Run "' + a.name + '" on ' + m.name + '?', a.name, go);
         else go();
       },
-      rowAct: function(r, a) {
+      onStatusAction: function(r, a) {
         if (!r || !a || !a.fn) return;
         var m = this.cur;
         host.log('>> ' + a.label, 'dim');
@@ -1203,7 +1203,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         this.rowSet[this.tab] = out;
         this.tones[this.tab] = m.health(m.data);
       },
-      refresh: function() {
+      onStatusRefresh: function() {
         if (this.busy) return;
         var self = this, m = this.cur;
         this.busy = true;
@@ -1217,10 +1217,10 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
           }
         }, 50);
       },
-      clearLog: function() {
+      onConsoleClear: function() {
         logClear();
       },
-      modalOk: function() {
+      onDialogConfirm: function() {
         var m = this.modal;
         this.modal = null;
         if (m && m.onOk) m.onOk.call(this);
@@ -1243,7 +1243,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         if (tag === 'input' || tag === 'textarea') return;
         if (c === 116 || (c === 82 && (e.ctrlKey || e.metaKey))) {
           if (e.preventDefault) e.preventDefault(); else e.returnValue = false;
-          self.refresh();
+          self.onStatusRefresh();
         }
       };
       if (doc.addEventListener) doc.addEventListener('keydown', keyfn, false);
