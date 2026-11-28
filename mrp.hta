@@ -42,7 +42,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 
 <div id="app">
   <nav id="nav">
-    <a v-for="t in tabs" v-class="{act: t.act}" @click="switchTab(t.key)">
+    <a v-for="t in tabs" v-class="{act: t.act}" @click="onDeviceSwitch(t.key)">
       <span>{{ t.label }}</span> <i v-class="toVClass(t.tone)">{{ dot }}</i>
     </a>
   </nav>
@@ -73,7 +73,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       <b>{{ modal ? modal.title : '' }}</b>
       <p>{{ modal ? modal.text : '' }}</p>
       <input v-if="modal && modal.input" v-model="draft" @keydown.enter="onDialogConfirm" />
-      <p align="right"><button v-class="{err: modal && modal.danger}" @click="onDialogConfirm">{{ modal ? modal.okText : 'OK' }}</button> <button @click="modalNo">Cancel</button></p>
+      <p align="right"><button v-class="{err: modal && modal.danger}" @click="onDialogConfirm">{{ modal ? modal.okText : 'OK' }}</button> <button @click="onDialogCancel">Cancel</button></p>
     </div>
   </div>
 </div>
@@ -1134,7 +1134,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         o[t] = true;
         return o;
       },
-      switchTab: function(k) {
+      onDeviceSwitch: function(k) {
         k = Number(k);
         if (isNaN(k) || k === this.tab) return;
         // 切换页签只切换缓存引用，不重新探测；状态仅在 Refresh 时更新
@@ -1225,7 +1225,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
         this.modal = null;
         if (m && m.onOk) m.onOk.call(this);
       },
-      modalNo: function() {
+      onDialogCancel: function() {
         this.modal = null;
       }
     },
@@ -1238,7 +1238,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
       var keyfn = function(e) {
         e = e || win.event;
         var c = e.keyCode || e.which || e.charCode;
-        if (self.modal) { if (c === 27) self.modalNo(); return; }
+        if (self.modal) { if (c === 27) self.onDialogCancel(); return; }
         var tag = ((e.target && e.target.tagName) || '').toLowerCase();
         if (tag === 'input' || tag === 'textarea') return;
         if (c === 116 || (c === 82 && (e.ctrlKey || e.metaKey))) {
