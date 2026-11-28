@@ -16,7 +16,7 @@
 <style>
 html,body{height:100%;margin:0;font:14px/1.7 "Segoe UI","Microsoft YaHei",sans-serif}
 #nav{position:absolute;left:0;top:0;bottom:0;width:140px;border-right:1px solid #eee;padding-top:8px;overflow-y:auto}
-#nav a{display:block;padding:8px 16px;border-left:3px solid transparent;color:#333;text-decoration:none}
+#nav a{display:block;padding:8px 16px;border-left:3px solid transparent;color:#333}
 #nav a.act{border-left-color:#1677ff;background:#f5f8ff;color:#1677ff;font-weight:bold}
 #main{position:absolute;left:141px;top:0;right:0;bottom:0;display:flex;flex-direction:column}
 #top{flex:0 1 auto;padding-top:6px;overflow-y:auto}
@@ -26,14 +26,13 @@ a{color:#1677ff;text-decoration:none;cursor:pointer}
 button{background:none;border:0;color:#1677ff;padding:3px 10px;cursor:pointer;font:inherit}
 table{width:100%;border-collapse:collapse}
 td{border-bottom:1px solid #f5f5f5;padding:8px 4px}
-td a{margin-right:14px}
-td a.last{margin-right:0}
-#acts a{margin-right:16px}
+td a:not(.last){margin-right:14px}
+#acts{margin:0}#acts a{margin-right:14px}
 #con{flex:1 1 auto;min-height:0;position:relative}
 pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid #eee;overflow-y:auto;font:12px/19px Consolas,monospace;margin:0;white-space:pre-wrap;word-break:break-all;box-sizing:border-box}
 .dim{color:#999}.ok{color:#52c41a}.warn{color:#e6a23c}.err{color:#ff4d4f}
 #mask{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.3)}
-#box{position:fixed;top:30%;left:50%;width:330px;margin-left:-165px;background:#fff;border:1px solid #bbb;padding:12px}
+#box{position:fixed;top:30%;left:50%;width:330px;transform:translateX(-50%);background:#fff;border:1px solid #bbb;padding:12px}
 #box p{white-space:pre-line}
 #box input{width:100%;margin:8px 0;box-sizing:border-box}
 </style>
@@ -43,7 +42,7 @@ pre{position:absolute;left:12px;right:12px;top:24px;bottom:8px;border:1px solid 
 <div id="app">
   <nav id="nav">
     <a v-for="t in tabs" v-class="{act: t.act}" @click="onDeviceSwitch(t.key)">
-      <span>{{ t.label }}</span> <i v-class="toVClass(t.tone)">{{ dot }}</i>
+      {{ t.label }} <i v-class="toVClass(t.tone)">{{ dot }}</i>
     </a>
   </nav>
   <main id="main">
